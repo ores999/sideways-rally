@@ -293,15 +293,31 @@ function roadMeshes(W) {
 }
 
 // ---------- prop geometry ----------
-function pineGeo(V, snowy) {
+// three pine shapes so a forest isn't one tree cloned: the classic four tiers, a slimmer spruce with five, and an
+// older tree, broad at the foot with a sparse top. Each tier is turned a little against the one below, so the
+// facets don't line up into ridges. [radius, height, base] per tier.
+const PINE_TIERS = [
+  [[1.75, 3.0, 1.2], [1.4, 2.7, 2.6], [1.0, 2.4, 3.9], [0.6, 1.9, 5.0]],
+  [[1.5, 2.6, 1.0], [1.28, 2.4, 2.2], [1.05, 2.2, 3.3], [0.8, 2.0, 4.3], [0.5, 1.7, 5.2]],
+  [[2.0, 2.6, 1.4], [1.5, 2.5, 2.9], [0.95, 2.3, 4.2], [0.45, 1.6, 5.6]],
+];
+function turnNew(g, from, a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  for (let i = from; i < g.p.length; i += 3) {
+    const x = g.p[i], z = g.p[i + 2]; g.p[i] = x * c - z * s; g.p[i + 2] = x * s + z * c;
+    const nx = g.n[i], nz = g.n[i + 2]; g.n[i] = nx * c - nz * s; g.n[i + 2] = nx * s + nz * c;
+  }
+}
+function pineGeo(V, snowy, variant) {
   const g = new Geo();
   const trunk = lin(V.trunk), green = [1, 1, 1];
   g.cyl(0, -0.3, 0, 0.2, 0.12, 2.4, 6, trunk, 0, 'y', false, -1);
-  const layers = [[1.75, 3.0, 1.2], [1.4, 2.7, 2.6], [1.0, 2.4, 3.9], [0.6, 1.9, 5.0]];
-  for (const [r, h, y] of layers) {
+  PINE_TIERS[variant || 0].forEach(([r, h, y], k) => {
+    const from = g.p.length;
     g.cyl(0, y, 0, r, 0, h, 7, green, 0, 'y', true, 0, scalec(green, 0.6));
     if (snowy) g.cyl(0, y + h * 0.42, 0, r * 0.62, 0, h * 0.58, 7, lin('#f4f7fc'), 0.1, 'y', false, -1);
-  }
+    turnNew(g, from, k * 0.47);
+  });
   // self-shading: the canopy darkens towards the trunk and the bottom tiers, tips catch the light
   for (let i = 0, v = 0; i < g.p.length; i += 3, v += 4) {
     const y = g.p[i + 1], r = Math.hypot(g.p[i], g.p[i + 2]);
@@ -313,10 +329,10 @@ function pineGeo(V, snowy) {
 }
 // distant pine: same tiers and colours as pineGeo, but bare cones (5 sides, no undersides) and a stub trunk,
 // about a quarter of the vertices. Drawn past ~80 m where the difference is lost in the haze.
-function pineFarGeo(V, snowy) {
+function pineFarGeo(V, snowy, variant) {
   const g = new Geo();
   g.cyl(0, -0.3, 0, 0.2, 0.12, 2.4, 3, lin(V.trunk), 0, 'y', false, -1);
-  const layers = [[1.75, 3.0, 1.2], [1.4, 2.7, 2.6], [1.0, 2.4, 3.9], [0.6, 1.9, 5.0]], N = 5;
+  const layers = PINE_TIERS[variant || 0], N = 5;
   for (const [r, h, y] of layers) {
     const cone = (rr, y0, hh, col) => { for (let i = 0; i < N; i++) { const a0 = i / N * Math.PI * 2 + y, a1 = (i + 1) / N * Math.PI * 2 + y;
       g.tri([Math.cos(a0) * rr, y0, Math.sin(a0) * rr], [Math.cos(a1) * rr, y0, Math.sin(a1) * rr], [0, y0 + hh, 0], col, 0, [0, y0 - 40, 0], [0, 0], [0, 0], [0, 0]); } };
@@ -407,6 +423,36 @@ function boardGeo() {
 // filtering never pulls in a dark halo
 // tiling detail map for the ground (neutral grey = no change; drawn as strokes and blots that wrap around the edges).
 // It multiplies the albedo, so the tile reads as blades of grass, pine litter, wind ripples or snow crust.
+// gravel stones for the road shader: two tileable Voronoi layers in one 512² texture covering a metre of road.
+// rgb = small stones (~4 cm): shade, gap (0 in the joints between stones), dome; a = bigger loose stones (~8 cm, in
+// about 45 % of the cells, set apart on the fines): mask × (0.25 + 0.75 shade), 0 where there is none. Built once and
+// shared by every gravel stage.
+let gravelTexData = null;
+function gravelTex() {
+  if (gravelTexData) return gravelTexData;
+  const N = 512, d = new Uint8Array(N * N * 4), R = C.rng(4242);
+  const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const layer = (cells, big) => {
+    const pts = new Float32Array(cells * cells * 2), sh = new Float32Array(cells * cells), on = new Uint8Array(cells * cells);
+    for (let i = 0; i < cells * cells; i++) { pts[i * 2] = 0.1 + R() * 0.8; pts[i * 2 + 1] = 0.1 + R() * 0.8; sh[i] = R(); on[i] = R() < 0.45 ? 1 : 0; }
+    const cs = N / cells;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const fx = (x + 0.5) / cs, fy = (y + 0.5) / cs, ix = Math.floor(fx), iy = Math.floor(fy);
+      let d1 = 9, d2 = 9, id = 0;
+      for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+        const cx = ix + ox, cy = iy + oy, k = ((cy + cells) % cells) * cells + (cx + cells) % cells;
+        const dx = cx + pts[k * 2] - fx, dy = cy + pts[k * 2 + 1] - fy, dd = dx * dx + dy * dy;
+        if (dd < d1) { d2 = d1; d1 = dd; id = k; } else if (dd < d2) d2 = dd;
+      }
+      d1 = Math.sqrt(d1); d2 = Math.sqrt(d2);
+      const dome = 1 - ss(0, 0.62, d1), gap = ss(0.02, 0.16, d2 - d1), o = (y * N + x) * 4;
+      if (!big) { d[o] = sh[id] * 255; d[o + 1] = gap * 255; d[o + 2] = dome * 255; }
+      else d[o + 3] = on[id] ? gap * ss(0.62, 0.4, d1) * (0.25 + 0.75 * sh[id]) * 255 : 0; // loose stones sit apart, on the fines
+    }
+  };
+  layer(26, false); layer(13, true);
+  return gravelTexData = { data: d, w: N, h: N };
+}
 function groundDetailCanvas(st) {
   const W = 512, R = C.rng(st.seed + 313), kind = st.id === 'forest' ? 'forest' : st.kind;
   return canvasTex(W, W, (g) => {
@@ -593,20 +639,54 @@ function farGeo(W) {
   let my = 0; for (let i = 0; i < T.n; i++) my += T.Y[i]; my /= T.n;
   const far = lin(V.far);
   if (st.kind === 'mesa') {
+    // buttes and mesas: an irregular outline (spurs and bays that carry straight up the cliff), a concave apron of
+    // scree melting into the desert, a sheer cliff in strata bands and a harder, darker caprock that juts out a
+    // little. Some are long mesas, some carry a second smaller tier. (Slender spires read as chimneys from this far.)
+    const sand = lin(V.skirt);
+    const butte = (x, z, w, h, kind) => {
+      const N = 18, el = kind === 'mesa' ? 0.35 + R() * 0.35 : R() * 0.15, th = R() * Math.PI;
+      const st4 = (V.strata || ['#a5502e', '#c46a3c', '#8a3f25', '#d18a57']).map(c => mixc(far, lin(c), 0.55 + R() * 0.2));
+      const out = [];
+      for (let j = 0; j < N; j++) {
+        const a = j / N * Math.PI * 2;
+        const rr = (1 + el * Math.cos(2 * (a - th))) * (0.78 + R() * 0.4) * (R() < 0.25 ? 0.74 : 1); // spurs, and the odd bay cut back
+        out.push([Math.sin(a), Math.cos(a), rr]);
+      }
+      const base = my - 34, ref = [x, base + h * 0.4, z];
+      const ring = (y, k, jit) => out.map(([sx, sz, rr]) => { const q = w * rr * k * (1 + (jit ? (R() - 0.5) * jit : 0)); return [x + sx * q, y, z + sz * q]; });
+      const band = (A, B, col) => { for (let j = 0; j < N; j++) { const j2 = (j + 1) % N; g.quad(A[j], A[j2], B[j2], B[j], col, 0, ref); } };
+      const cap = (A, y, col) => { const c0 = [x, y, z]; for (let j = 0; j < N; j++) g.tri(c0, A[j], A[(j + 1) % N], col, 0, [x, y - 50, z]); };
+      const scree = mixc(st4[2], far, 0.3), apron = mixc(scree, sand, 0.55);
+      // apron and scree: wide and low at the foot, steepening up to the cliff
+      const r0 = ring(base, 1.55, 0.12), r1 = ring(base + h * 0.1, 1.22, 0.1), r2 = ring(base + h * 0.24, 1.02, 0.06);
+      band(r0, r1, apron); band(r1, r2, scree);
+      // the cliff: strata bands, each a touch narrower, sharing the outline so spurs run straight up
+      let y = base + h * 0.24, prev = ring(y, 0.98, 0), kk = 0.98;
+      const bands = 3 + ((R() * 2) | 0), top = base + h * 0.9, bh = (top - y) / bands;
+      for (let k = 0; k < bands; k++) {
+        kk *= 0.97 + R() * 0.02;
+        const nxt = ring(y + bh, kk, 0);
+        band(prev, nxt, st4[k % 4]);
+        prev = nxt; y += bh;
+      }
+      // caprock: a hard, darker layer that overhangs the cliff a little, then the flat top
+      const capC = mixc(st4[2], [0.2, 0.12, 0.08], 0.25), topC = mixc(st4[3], [1, 0.92, 0.82], 0.15);
+      const c0 = ring(y, kk * 1.04, 0), c1 = ring(base + h, kk * 1.04, 0);
+      for (let j = 0; j < N; j++) { const j2 = (j + 1) % N; g.quad(prev[j], prev[j2], c0[j2], c0[j], capC, 0, [x, y + 30, z]); }
+      band(c0, c1, capC);
+      if (kind === 'tier') {
+        // a second, smaller tier set back on the top
+        const t0 = ring(base + h, kk * 0.55, 0), t1 = ring(base + h * 1.35, kk * 0.5, 0), t2 = ring(base + h * 1.4, kk * 0.52, 0);
+        cap(c1, base + h, topC);
+        band(t0, t1, st4[1]); band(t1, t2, capC); cap(t2, base + h * 1.4, topC);
+      } else cap(c1, base + h, topC);
+    };
     for (let i = 0; i < 34; i++) {
       const a = i / 34 * Math.PI * 2 + R() * 0.1, r = rad + R() * 700;
-      const w = 70 + R() * 160, h = 50 + R() * 110;
-      const x = cx + Math.sin(a) * r, z = cz + Math.cos(a) * r;
-      // butte: a talus skirt, then strata bands stepping in slightly, then a flat cap (same layers as the canyon walls)
-      const st4 = (V.strata || ['#a5502e', '#c46a3c', '#8a3f25', '#d18a57']).map(c => mixc(far, lin(c), 0.55 + R() * 0.2));
-      const seg = 7 + ((R() * 3) | 0), base = my - 20, talus = h * 0.22;
-      g.cyl(x, base, z, w * 1.35, w * 0.95, talus, seg, mixc(st4[2], far, 0.25), 0, 'y', false);
-      let y = base + talus, rr = w * 0.95; const bands = 3 + ((R() * 2) | 0), bh = (h - talus) / bands;
-      for (let k = 0; k < bands; k++) {
-        const r1 = rr * (0.93 + R() * 0.05);
-        g.cyl(x, y, z, rr, r1, bh, seg, st4[(k + i) % 4], 0, 'y', k === bands - 1, 0, mixc(st4[(k + i) % 4], [1, 0.92, 0.82], 0.18));
-        y += bh; rr = r1;
-      }
+      const x = cx + Math.sin(a) * r, z = cz + Math.cos(a) * r, p = R();
+      if (p < 0.32) butte(x, z, 120 + R() * 140, 45 + R() * 60, 'mesa');
+      else if (p < 0.68) butte(x, z, 70 + R() * 90, 60 + R() * 70, 'tier');
+      else butte(x, z, 70 + R() * 140, 55 + R() * 100, 'butte');
     }
   } else {
     // low-poly mountains: rings of jittered points under an off-centre peak, so each one has ridges and a
@@ -652,6 +732,7 @@ function farGeo(W) {
   // skirt under everything
   const sk = lin(V.skirt), E = 6000;
   g.quad([cx - E, my - 26, cz - E], [cx + E, my - 26, cz - E], [cx + E, my - 26, cz + E], [cx - E, my - 26, cz + E], sk, 0, [cx, my - 100, cz]);
+  g.my = my;
   return g;
 }
 
@@ -664,7 +745,7 @@ function buildScene(R, W) {
   const gtex = R.texture(groundDetailCanvas(st), { repeat: true, linear: true });
   add(R.mesh(terrainMesh(W)), { mode: 9, tex: gtex });
   const rm = roadMeshes(W);
-  S.road = add(R.mesh(rm.road), { mode: 1 });
+  S.road = add(R.mesh(rm.road), { mode: 1, tex: !V.lines && !V.icy ? R.texture(gravelTex(), { repeat: true, linear: true }) : undefined });
   for (const s of rm.sides) add(R.mesh(s), { mode: 9, tex: gtex });
   if (rm.banks) for (const b of rm.banks) add(R.mesh(b), { mode: 9, tex: gtex }, false);
   S.timing = { terrain: performance.now() - t0 };
@@ -674,12 +755,19 @@ function buildScene(R, W) {
   if (O.trees.length) {
     const pines = O.trees.filter(t => t.type === 0 || t.type === 2), birches = O.trees.filter(t => t.type === 1);
     const pc = V.pine.map(lin);
-    const pineInst = instData(pines, o => {
-      const c = pc[(o.c * 3) | 0], k = st.kind === 'frost' ? 2.4 : 1.9; return [o.x, o.y, o.z, o.rot, o.s, o.sy, 0, 0, c[0] * k, c[1] * k, c[2] * k];
-    });
-    const pg = R.mesh(pineGeo(V, st.kind === 'frost'), pineInst, cull);
-    pg.lod = { m: R.mesh(pineFarGeo(V, st.kind === 'frost'), pineInst, cull), dist: 80, shadowDist: 30 };
-    add(pg, { mode: 8, sway: 1 }, true);
+    // per tree: one of the three shapes, a little brighter or darker, and a slight drift towards yellow or blue
+    const hh = (o, k) => { const v = Math.sin(o.x * 12.9898 + o.z * 78.233 + k * 37.719) * 43758.5453; return v - Math.floor(v); };
+    for (let vi = 0; vi < PINE_TIERS.length; vi++) {
+      const set = pines.filter(o => Math.min(2, (hh(o, 0) * 3) | 0) === vi);
+      if (!set.length) continue;
+      const pineInst = instData(set, o => {
+        const c = pc[(o.c * 3) | 0], k = (st.kind === 'frost' ? 2.4 : 1.9) * (0.84 + hh(o, 1) * 0.3), hu = (hh(o, 2) - 0.5) * 0.18;
+        return [o.x, o.y, o.z, o.rot, o.s, o.sy, 0, 0, c[0] * k * (1 + hu), c[1] * k, c[2] * k * (1 - hu * 1.4)];
+      });
+      const pg = R.mesh(pineGeo(V, st.kind === 'frost', vi), pineInst, cull);
+      pg.lod = { m: R.mesh(pineFarGeo(V, st.kind === 'frost', vi), pineInst, cull), dist: 80, shadowDist: 30 };
+      add(pg, { mode: 8, sway: 1 }, true);
+    }
     if (birches.length) {
       const bc = V.birch.map(lin);
       const bg = R.mesh(birchGeo(V), instData(birches, o => { const c = bc[(o.c * 3) | 0]; return [o.x, o.y, o.z, o.rot, o.s, o.sy, 0, 0, c[0], c[1], c[2]]; }), cull);
@@ -752,7 +840,8 @@ function buildScene(R, W) {
     add(R.mesh(bgeo, instData(list, o => [o.x, o.y, o.z, o.rot, 1, 1, 0, 0, 1, 1, 1])), { mode: 2, tex: R.texture(boardCanvas(...ads[k])) }, true);
   }
   // far scenery
-  S.far = add(R.mesh(farGeo(W)), { mode: 0, farFog: true });
+  const fg = farGeo(W);
+  S.far = add(R.mesh(fg), { mode: 0, farFog: true }); S.farY = fg.my;
   S.timing.total = performance.now() - t0;
   return S;
 }

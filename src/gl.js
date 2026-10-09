@@ -194,7 +194,7 @@ uniform mat4 u_model, u_vp, u_svp, u_svp2;
 uniform vec2 u_shNo;
 uniform float u_sway, u_time;
 uniform vec3 u_hitPos; uniform float u_hitK;
-uniform vec3 u_sunDir; uniform float u_cld, u_csPx;
+uniform vec3 u_sunDir; uniform float u_cld;
 out vec3 v_wp; out vec3 v_n; out vec4 v_col; out vec2 v_uv; out vec4 v_sp; out vec3 v_ic; out vec3 v_lp; out vec4 v_sp2; out float v_cs;
 ${COMMON}
 ${CLOUDS}
@@ -223,10 +223,9 @@ void main(){
   vec3 nw = normalize(mat3(u_model) * n);
   v_sp = u_svp * vec4(wp.xyz + nw * u_shNo.x, 1.0);
   v_sp2 = u_svp2 * vec4(wp.xyz + nw * u_shNo.y, 1.0);
-  // cloud shadow: is there cloud between this point and the sun? (per vertex: the field is hundreds of metres wide;
-  // the far mountains' triangles are wider still, so they do it per pixel instead, see u_csPx)
+  // cloud shadow: is there cloud between this point and the sun? (per vertex: the field is hundreds of metres wide)
   v_cs = 1.0;
-  if (u_cld > 0.0 && u_csPx < 0.5) {
+  if (u_cld > 0.0) {
     float lo = cloudLo(u_cld);
     v_cs = 1.0 - smoothstep(lo - 0.005, lo + 0.03, cloudN(cloudUV(wp.xyz, u_sunDir, u_time), 1.0)) * (0.7 + 0.3 * u_cld) * 0.68;
   }
@@ -250,11 +249,10 @@ uniform vec3 u_hlPos, u_hlDir; uniform float u_hlOn;
 uniform float u_dirt, u_carY; uniform vec3 u_dirtCol;
 uniform vec3 u_zen, u_hor; uniform vec3 u_fol;
 uniform vec3 u_verge, u_tt;
-uniform vec3 u_glw; uniform float u_cld, u_time, u_gbump, u_csPx;
+uniform vec3 u_glw; uniform float u_cld, u_time, u_gbump; uniform vec4 u_fogLo;
 out vec4 o;
 ${COMMON}
 ${OUTC}
-${CLOUDS}
 // sky seen in a reflection: zenith to horizon above, dark ground bounce below, with a crisp horizon line
 vec3 envRefl(vec3 R){
   vec3 sky = mix(u_hor, u_zen, pow(clamp(R.y, 0.0, 1.0), 0.5));
@@ -282,20 +280,6 @@ float pcf(vec3 sp, float x0, float rad, float bias){
     s += textureLod(u_shadow, vec3(clamp(sp.x + o.x, 0.002, 0.998) * 0.5 + x0, sp.y + o.y, sp.z - bias), 0.0);
   }
   return s / 12.0;
-}
-// gravel: Voronoi cells, each one a rounded stone. x = the stone's own shade (0..1), y = its dome (1 in the
-// middle, 0 at the rim), z = 0 in the gaps between stones, 1 on a stone
-vec3 stones(vec2 p){
-  vec2 i = floor(p), f = fract(p);
-  float d1 = 8.0, d2 = 8.0; vec2 id = i;
-  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
-    vec2 g = vec2(float(x), float(y)), c = i + g;
-    vec2 r = g + vec2(hash12(c), hash12(c + 19.7)) * 0.8 + 0.1 - f;
-    float d = dot(r, r);
-    if (d < d1) { d2 = d1; d1 = d; id = c; } else if (d < d2) d2 = d;
-  }
-  d1 = sqrt(d1); d2 = sqrt(d2);
-  return vec3(hash12(id + 7.3), 1.0 - smoothstep(0.0, 0.62, d1), smoothstep(0.02, 0.16, d2 - d1));
 }
 float shadowF(){
   vec3 s1 = v_sp2.xyz / v_sp2.w * 0.5 + 0.5;
@@ -366,24 +350,22 @@ void main(){
       // stones are cells, not noise blobs: small gravel everywhere (pressed flat in the wheel lines), bigger loose
       // stones on the crown and the shoulders, darker fines in the gaps, each stone its own shade
       float loose = clamp(1.0 - rut*1.3, 0.0, 1.0) * (0.6 + 0.4*n1);
-      vec3 sa = vec3(0.5, 0.0, 1.0), sb = vec3(0.5, 0.0, 0.0);
-      float big = 0.0;
-      if (fine > 0.0) {
-        sa = stones(m * 24.0);
-        sb = stones(m * 8.5 + 3.1);
-        big = step(0.58, fract(sb.x * 7.13)) * smoothstep(0.1, 0.35, sb.y) * loose;
-      }
+      // stone cells come from a pre-computed Voronoi texture (world.js gravelTex): small stones in rgb (shade, joint,
+      // dome), sparse bigger ones in a, read through two different rotations so the tiles never line up
+      vec4 ga = texture(u_tex, vec2(m.x * 0.94 - m.y * 0.34, m.x * 0.34 + m.y * 0.94));
+      vec4 gb = texture(u_tex, vec2(m.x * 0.82 + m.y * 0.57, m.y * 0.82 - m.x * 0.57) + 0.37);
+      float big = smoothstep(0.03, 0.2, gb.a) * loose, bs = clamp((gb.a - 0.25) / 0.75, 0.0, 1.0);
       float flat0 = mix(1.0, 0.45, rut);  // wheels have pressed the small stones into the surface
-      c *= 1.0 + (sa.x - 0.5) * 0.26 * fine * flat0;
-      c *= mix(1.0, 0.8, (1.0 - sa.z) * fine * flat0 * (0.5 + 0.5*loose));
-      c = mix(c, mix(u_r3, u_r1 * 0.8, sb.x) * (0.9 + 0.25 * sb.y), big * 0.75 * fine);
+      c *= 1.0 + (ga.r - 0.5) * 0.36 * fine * flat0;
+      c *= mix(1.0, 0.74, (1.0 - ga.g) * fine * flat0 * (0.5 + 0.5*loose));
+      c = mix(c, c * (0.78 + 0.5 * bs), big * 0.8 * fine);
       c = mix(c, u_r3, 0.05 * (0.5 + 0.8*loose) * (1.0 - fine));  // far away: just the average lighter tone
       float streak = vnoise(vec2(m.x*22.0, m.y*0.35));
       c *= 1.0 - rut * (streak - 0.5) * 0.3 * mid;
       c *= 0.84 + 0.3*n3;
       c = mix(c, c * vec3(0.74, 0.72, 0.7), damp * 0.45);
       spec = damp * 0.08 * (1.0 - loose);
-      bh = (sa.y * sa.z * 0.55 * flat0 + big * (0.6 + 0.6 * sb.y)) * fine + loose * 0.5 * mid; bk = 0.006;
+      bh = (ga.b * ga.g * 0.5 * flat0 + gb.a * loose * 0.7) * fine + loose * 0.5 * mid; bk = 0.006;
     }
     // ragged edge where the surface meets the verge, instead of a ruled line
     float edge = au + (vnoise(vec2(v*0.5, 1.0)) - 0.5)*0.1 + (vnoise(m*2.5) - 0.5)*0.06;
@@ -511,9 +493,7 @@ void main(){
     n = normalize(abs(det) * n - sg);
   }
   float sh = u_shOn > 0.5 ? shadowF() : 1.0;
-  float cs = v_cs;
-  if (u_csPx > 0.5 && u_cld > 0.0) { float lo = cloudLo(u_cld); cs = 1.0 - smoothstep(lo - 0.005, lo + 0.03, cloudN(cloudUV(v_wp, u_sunDir, u_time), 0.0)) * (0.7 + 0.3 * u_cld) * 0.68; }
-  sh *= cs; // shadow of the actual clouds overhead (see CLOUDS)
+  sh *= v_cs; // shadow of the actual clouds overhead (see CLOUDS)
   float ndl = max(dot(n, u_sunDir), 0.0);
   vec3 amb = mix(u_gnd, u_sky, n.y*0.5 + 0.5);
   vec3 light = amb + u_sunCol * ndl * sh;
@@ -563,7 +543,11 @@ void main(){
   // fog with sun in-scatter: distant ground glows warm towards the sun, same term as the sky's horizon
   vec3 vd = (v_wp - u_cam) / max(dist, 1e-3);
   vec3 fc = u_fogCol + u_glw * pow(max(dot(vd, u_sunDir), 0.0), 5.0);
-  col = mix(col, fc, smoothstep(u_fog.x, u_fog.y, dist));
+  float fk = smoothstep(u_fog.x, u_fog.y, dist);
+  // far scenery: the haze is thick near the ground and thins with height, so mountains and mesas rise out of it
+  // (their feet as hazy as the terrain in front of them) instead of floating clear above a band of fog
+  if (u_fogLo.y > 0.0) fk = mix(max(fk, smoothstep(u_fogLo.x, u_fogLo.y, dist) * 0.8), fk, smoothstep(0.0, u_fogLo.z, v_wp.y - u_fogLo.w));
+  col = mix(col, fc, fk);
   o = outc(col, aOut);
 }`;
 
@@ -692,8 +676,12 @@ layout(location=2) in float a_size;
 uniform mat4 u_vp; uniform vec3 u_cam; uniform float u_ps;
 out vec4 v_col; out float v_d;
 void main(){
-  gl_Position = u_vp * vec4(a_pos, 1.0);
   float d = length(a_pos - u_cam); v_d = d;
+  // the sprite is flat, so tested at its centre's depth it cuts a hard line where it meets the road; test it at the
+  // depth of its front (half its size towards the camera) instead, keeping its place on screen
+  vec4 cc = u_vp * vec4(a_pos, 1.0);
+  vec4 cf = u_vp * vec4(a_pos + (u_cam - a_pos) / max(d, 1e-3) * min(a_size * 0.5, d * 0.8), 1.0);
+  gl_Position = vec4(cc.xy / cc.w * cf.w, cf.z, cf.w);
   gl_PointSize = clamp(a_size * u_ps / max(d, 0.3), 1.0, 320.0);
   v_col = a_col;
 }`;
@@ -825,7 +813,10 @@ void main(){
 }`;
 
 function createRenderer(canvas) {
-  const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance', depth: true });
+  // no antialiasing or depth on the canvas itself: the scene always renders into our own multisampled target (HDR
+  // with post, or a plain RGBA8 one without) and only the resolved picture reaches the canvas. A multisampled canvas
+  // cost a second full-screen MSAA buffer and its resolve every frame for nothing (~0.3 ms at 2560x1600).
+  const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance', depth: false, stencil: false });
   if (!gl) return null;
 
   function compile(vs, fs) {
@@ -887,8 +878,28 @@ function createRenderer(canvas) {
 
   // ---- HDR target + bloom chain ----
   const floatOK = !!gl.getExtension('EXT_color_buffer_float');
-  const ctxAA = !!(gl.getContextAttributes() || {}).antialias;
   const post = { ok: floatOK, w: 0, h: 0, samples: 0, maxSamples: 0, on: false, levels: [], bloomFmt: gl.RGBA16F };
+  // without post: an RGBA8 multisampled target, resolved straight onto the canvas
+  const ldr = { ok: true, w: 0, h: 0, samples: 0, maxSamples: 4, on: false, fbo: null, color: null, depth: null, rFbo: null, rColor: null };
+  try { const sc = gl.getInternalformatParameter(gl.RENDERBUFFER, gl.RGBA8, gl.SAMPLES); ldr.maxSamples = sc && sc.length ? Math.min(4, Math.max(...sc)) : 0; } catch (e) { ldr.maxSamples = 0; }
+  function buildLdr(w, h, ns) {
+    if (ldr.fbo) { gl.deleteFramebuffer(ldr.fbo); gl.deleteRenderbuffer(ldr.color); gl.deleteRenderbuffer(ldr.depth); gl.deleteFramebuffer(ldr.rFbo); gl.deleteRenderbuffer(ldr.rColor); }
+    // single-sample stage for the resolve: a multisample blit needs identical formats, and the canvas may be RGB8
+    ldr.rFbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, ldr.rFbo);
+    ldr.rColor = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, ldr.rColor);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.RGBA8, w, h);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, ldr.rColor);
+    ldr.w = w; ldr.h = h; ldr.samples = ns;
+    ldr.fbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, ldr.fbo);
+    ldr.color = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, ldr.color);
+    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, ns, gl.RGBA8, w, h);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, ldr.color);
+    ldr.depth = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, ldr.depth);
+    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, ns, gl.DEPTH_COMPONENT24, w, h);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, ldr.depth);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) ldr.ok = false;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+  }
   if (floatOK) {
     try {
       const sc = gl.getInternalformatParameter(gl.RENDERBUFFER, gl.RGBA16F, gl.SAMPLES);
@@ -952,7 +963,15 @@ function createRenderer(canvas) {
       if (post.w !== w || post.h !== h || post.samples !== ns) { post.samples = ns; buildPost(w, h); }
       if (post.ok) { gl.bindFramebuffer(gl.FRAMEBUFFER, post.msFbo || post.resFbo); post.on = true; }
     }
-    if (!post.on) gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    ldr.on = false;
+    if (!post.on) {
+      const ns = Math.min(ldr.maxSamples, samples || 4);
+      if (ldr.ok && ns > 1) {
+        if (ldr.w !== w || ldr.h !== h || ldr.samples !== ns) buildLdr(w, h, ns);
+        if (ldr.ok) { gl.bindFramebuffer(gl.FRAMEBUFFER, ldr.fbo); ldr.on = true; }
+      }
+      if (!ldr.on) gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
     env.hdr = post.on ? 1 : 0;
     gl.viewport(0, 0, w, h);
     return post.on;
@@ -960,6 +979,14 @@ function createRenderer(canvas) {
   function fsDraw() { gl.bindVertexArray(skyVao); gl.drawArrays(gl.TRIANGLES, 0, 3); }
   // rays: { uv: sun position on screen, col: shaft colour × strength } or null
   function endScene(G, time, blur, rays) {
+    if (ldr.on) {
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, ldr.fbo); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, ldr.rFbo);
+      gl.blitFramebuffer(0, 0, ldr.w, ldr.h, 0, 0, ldr.w, ldr.h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, ldr.rFbo); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      gl.blitFramebuffer(0, 0, ldr.w, ldr.h, 0, 0, ldr.w, ldr.h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      return;
+    }
     if (!post.on) return;
     const w = post.w, h = post.h;
     if (post.msFbo) {
@@ -1179,7 +1206,8 @@ function createRenderer(canvas) {
     const t = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, t);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-    gl.texImage2D(gl.TEXTURE_2D, 0, opts.linear ? gl.RGBA8 : gl.SRGB8_ALPHA8, gl.RGBA, gl.UNSIGNED_BYTE, canvasOrImg);
+    if (canvasOrImg.data && canvasOrImg.w) gl.texImage2D(gl.TEXTURE_2D, 0, opts.linear ? gl.RGBA8 : gl.SRGB8_ALPHA8, canvasOrImg.w, canvasOrImg.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, canvasOrImg.data);
+    else gl.texImage2D(gl.TEXTURE_2D, 0, opts.linear ? gl.RGBA8 : gl.SRGB8_ALPHA8, gl.RGBA, gl.UNSIGNED_BYTE, canvasOrImg);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.generateMipmap(gl.TEXTURE_2D);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
@@ -1249,7 +1277,7 @@ function createRenderer(canvas) {
     gl.uniform1f(u.u_exp, E.exp);
     gl.uniform1f(u.u_hdr, env.hdr || 0);
     gl.uniform3fv(u.u_zen, E.zen); gl.uniform3fv(u.u_hor, E.fogCol);
-    gl.uniform3fv(u.u_fol, [E.folFade ? E.folFade[0] : 60, E.folFade ? E.folFade[1] : 90, (post.on ? post.samples > 1 : ctxAA) ? 1 : 0]);
+    gl.uniform3fv(u.u_fol, [E.folFade ? E.folFade[0] : 60, E.folFade ? E.folFade[1] : 90, (post.on ? post.samples > 1 : ldr.on) ? 1 : 0]);
     gl.uniform1f(u.u_time, E.time);
     gl.uniform1f(u.u_shOn, E.shadows ? 1 : 0);
     gl.uniform2f(u.u_shTex, 1 / (2 * SHADOW), 1 / SHADOW);
@@ -1275,7 +1303,7 @@ function createRenderer(canvas) {
     gl.uniform1f(u.u_sway, o.sway || 0);
     if (o.dirt != null) { gl.uniform1f(u.u_dirt, o.dirt); gl.uniform1f(u.u_carY, o.carY || 0); gl.uniform3fv(u.u_dirtCol, o.dirtCol || [0.3, 0.25, 0.2]); }
     if (o.fog) gl.uniform2fv(u.u_fog, o.fog);
-    if (o.csPx) gl.uniform1f(u.u_csPx, 1);
+    if (o.fogLo) gl.uniform4fv(u.u_fogLo, o.fogLo);
     if (o.a2c) gl.enable(gl.SAMPLE_ALPHA_TO_COVERAGE);
     gl.bindTexture(gl.TEXTURE_2D, o.tex || white);
     gl.bindVertexArray(m.vao);
@@ -1289,7 +1317,7 @@ function createRenderer(canvas) {
       else gl.drawArrays(gl.TRIANGLES, 0, m.count);
     }
     if (o.fog) gl.uniform2fv(u.u_fog, o.fogRestore);
-    if (o.csPx) gl.uniform1f(u.u_csPx, 0);
+    if (o.fogLo) gl.uniform4f(u.u_fogLo, 0, 0, 1, 0);
     if (o.a2c) gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
     if (o.dirt != null) gl.uniform1f(u.u_dirt, 0);
   }

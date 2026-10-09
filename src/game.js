@@ -1781,7 +1781,7 @@ function render() {
   gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND);
   R.setLitFrame(E);
   for (const { m, o } of S.meshes) {
-    if (o.farFog) { R.drawLit(m, { mode: 0, fog: [380, 3200], fogRestore: E.fog, csPx: true }); continue; }
+    if (o.farFog) { R.drawLit(m, { mode: 0, fog: [380, 3200], fogRestore: E.fog, fogLo: [E.fog[0], E.fog[1], W.st.kind === 'mesa' ? 100 : 110, (S.farY || 0) - 30] }); continue; }
     if (m === S.road) { gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -2); R.drawLit(m, o); gl.disable(gl.POLYGON_OFFSET_FILL); continue; }
     R.drawLit(m, o);
   }
