@@ -790,14 +790,14 @@ function resetCar(W, c, s) {
   const p = sampleAt(T, s);
   c.x = p.x; c.z = p.z; c.h = p.h; c.idx = p.i;
   c.vx = c.vz = c.vy = c.w = c.vF = c.vR = 0; c.steer = 0; c.air = false; c.airT = 0; c.gear = 1; c.shiftT = 0;
-  c.spinV = 0; c.ax = 0; c.boost = 0; c.limiter = 0;
+  c.spinV = 0; c.ax = 0; c.boost = 0; c.limiter = 0; c.hbSlide = false; c.hbT = 0;
   locate(T, c);
   c.y = groundAt(W, c, c.x, c.z); c.gyPrev = c.y; c.slope = 0;
 }
 
 const tyreF = al => Math.sin(1.45 * Math.atan(al));
 const FEEL0 = { lag: 0, kick: 1, ayc: 0, push: 0, twitch: 1 };
-const TUNE = { assist: 0.5, yawDamp: 0.7, turnAssist: 0.55, frontGrip: 1.0, rearGrip: 1.08, Bmul: 1, lockK: 17, latGrip: 1.1, absF: 0.4, absR: 0.35, tcF: 0.4, tcR: 0.6, hold: 6, holdK: 1.4, wt: 0.6, spinMax: 4.5, holdB: 0.6, trail: 3, trailK: 1.2, lowGrip: 0.12, edgeA: -0.1, edgeB: 2.0, edgeMix: 0.5, edgeBin: 0, slideA: 0.03, slideB: 0.2, slideF: 1, spinK: 5, spinB: 0.5, spinV: 12, impactP: 0.6, rearSlide: 0.85, rsA: 0.15, rsB: 0.32, rsT0: 0.5, rsT1: 0.9, rsS0: 0.05, rsS1: 0.3, rsBA: 0.12, rsBB: 0.24 };
+const TUNE = { assist: 0.5, yawDamp: 0.7, turnAssist: 0.55, frontGrip: 1.0, rearGrip: 1.08, Bmul: 1, lockK: 17, latGrip: 1.1, absF: 0.4, absR: 0.35, tcF: 0.4, tcR: 0.6, hold: 6, holdK: 1.4, wt: 0.6, spinMax: 4.5, holdB: 0.6, trail: 3, trailK: 1.2, lowGrip: 0.12, edgeA: -0.1, edgeB: 2.0, edgeMix: 0.5, edgeBin: 0, slideA: 0.03, slideB: 0.2, slideF: 1, spinK: 5, spinB: 0.5, spinV: 12, impactP: 0.6, rearSlide: 0.85, rsA: 0.15, rsB: 0.32, rsT0: 0.5, rsT1: 0.9, rsS0: 0.05, rsS1: 0.3, rsBA: 0.12, rsBB: 0.24, rearSlideP: 0.92, rsPA: 0.16, rsPB: 0.3 };
 
 function stepCar(W, c, P, inp, dt) {
   const T = W.T;
@@ -963,8 +963,13 @@ function dynamics(W, c, P, inp, dt) {
   // Power on in a real slide (the tail well out, the wheel turned either way): the spinning rear tyres give up some of
   // their side grip, so the throttle holds the slide instead of the rear pulling the car straight. Off the throttle,
   // or with the wheel straight to come out of it, the rear grips as before.
-  const slideK = TUNE.rearSlide == null ? 0 : Math.max(sstep(TUNE.rsA, TUNE.rsB, Math.abs(ar)), sstep(TUNE.rsBA, TUNE.rsBB, Math.abs(beta))) * sstep(TUNE.rsT0, TUNE.rsT1, thr) * sstep(TUNE.rsS0, TUNE.rsS1, Math.abs(c.steer));
-  const rearK = lerp(TUNE.rearGrip, TUNE.rearSlide == null ? TUNE.rearGrip : TUNE.rearSlide, slideK);
+  // A slide started with the handbrake (a hairpin) keeps the looser rear until it is over; a power slide without
+  // it lets go a little less, so ordinary fast corners stay under control.
+  if (inp.hb) { c.hbSlide = true; c.hbT = 0.5; } // a tap counts too: the tail is still swinging out after it
+  else { c.hbT = Math.max(0, (c.hbT || 0) - dt); if (c.hbT <= 0 && Math.abs(beta) < 0.08) c.hbSlide = false; }
+  const hbS = c.hbSlide, rsLo = hbS ? TUNE.rearSlide : TUNE.rearSlideP;
+  const slideK = TUNE.rearSlide == null ? 0 : Math.max(sstep(TUNE.rsA, TUNE.rsB, Math.abs(ar)), hbS ? sstep(TUNE.rsBA, TUNE.rsBB, Math.abs(beta)) : sstep(TUNE.rsPA, TUNE.rsPB, Math.abs(beta))) * sstep(TUNE.rsT0, TUNE.rsT1, thr) * sstep(TUNE.rsS0, TUNE.rsS1, Math.abs(c.steer));
+  const rearK = lerp(TUNE.rearGrip, TUNE.rearSlide == null ? TUNE.rearGrip : rsLo, slideK);
   const FyR = -capR * tyreF(BtR * ar) * kR * rearK * (P.rearGrip || 1) * TUNE.latGrip * lowG;
   // ---- forces ----
   const cd = Math.cos(delta), sd = Math.sin(delta);
