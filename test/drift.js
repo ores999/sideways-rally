@@ -5,6 +5,7 @@
 //  2. throttle: in a held slide with the wheel fixed, step the throttle 0.4 → 1.0 and report how the slip angle
 //     moves over the next 0.8 s (positive = the throttle swings the tail out, which is what lets you steer a drift
 //     with your right foot).
+// Slides are started with a handbrake tap, so they run on the handbrake-slide rear (`rearSlide`, not `rearSlideP`).
 // Run: node drift.js [TUNE json] [grip] [tyreB]
 const C = require('../src/core.js');
 if (process.argv[2]) Object.assign(C.TUNE, JSON.parse(process.argv[2]));
