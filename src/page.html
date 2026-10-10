@@ -134,6 +134,24 @@ dl.spec dt { color: var(--mute); padding: 6px 0; border-top: 1px solid var(--lin
 dl.spec dd { margin: 0; padding: 6px 0; border-top: 1px solid var(--line); text-align: right; color: var(--paper); font-variant-numeric: tabular-nums; }
 dl.spec dd em { font-style: normal; color: var(--mute); }
 #specInline { display: none; }
+#timesInline { display: none; }
+.driver { align-self: flex-start; margin-top: -6px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 12.5px; color: var(--mute); letter-spacing: .04em; }
+.driver b { color: var(--paper); font-weight: 700; } .driver span { color: var(--signal); margin-left: 4px; }
+.driver:hover { border-color: var(--line-2); }
+.times { display: flex; flex-direction: column; gap: 10px; }
+.times .t-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.times .t-head h4 { margin: 0; font-family: var(--f-display); font-weight: 800; font-size: 22px; text-transform: uppercase; letter-spacing: .03em; }
+.times .btn { flex: none; min-width: 0; padding: 6px 10px; font-size: 12px; }
+.times .filters { display: grid; grid-template-columns: 1.6fr 1fr; gap: 6px; }
+.times select { font: inherit; font-size: 13.5px; color: var(--paper); background: rgba(0,0,0,.35); border: 1px solid var(--line-2); border-radius: 6px; padding: 7px 8px; min-width: 0; }
+.times .empty { margin: 4px 0; color: var(--mute); font-size: 13.5px; line-height: 1.4; }
+.tt.board td:nth-child(2), .tt.board th:nth-child(2) { text-align: left; font-family: var(--f-ui); color: var(--paper); padding-left: 8px; }
+.tt.board td:nth-child(3), .tt.board th:nth-child(3) { text-align: left; font-family: var(--f-ui); color: var(--paper-2); padding-left: 8px; font-size: 13px; }
+.tt.board tr.me td { color: var(--signal); } .tt.board tr.me td:nth-child(2) { color: var(--signal); font-weight: 700; }
+.tt.board tr.ai td { color: var(--mute); font-style: italic; }
+.tt.board td:first-child { width: 22px; }
+.welcome-p { margin: 0; color: var(--paper-2); line-height: 1.45; }
+#wName { font-size: 18px; padding: 10px 12px; }
 
 /* ---------- HUD ---------- */
 #hud { position: absolute; inset: 0; pointer-events: none; }
@@ -248,6 +266,7 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
 @media (max-width: 900px) {
   #garage .sheet { display: none; }
   #specInline { display: flex; flex-direction: column; gap: 14px; margin-top: 8px; padding: 14px; border: 1px solid var(--line); border-radius: var(--r); background: var(--raise); }
+  #timesInline { display: flex; margin-top: 8px; padding: 14px; border: 1px solid var(--line); border-radius: var(--r); background: var(--raise); }
 }
 @media (max-width: 760px) {
   #menu { top: auto; width: 100%; height: 64%; background: linear-gradient(0deg, rgba(9,11,15,.97) 86%, rgba(9,11,15,.0) 100%); }
@@ -318,6 +337,7 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
         <h1 class="logo">Sideways <span>Rally</span></h1>
         <a class="repo" href="https://github.com/ores999/sideways-rally" target="_blank" rel="noopener" title="Source code on GitHub">GitHub ↗</a>
       </div>
+      <button class="driver" id="driverChip" title="Change driver">Driver · <b id="driverName">—</b> <span>change</span></button>
       <div class="tabs" role="tablist" aria-label="Setup">
         <button class="tab" role="tab" id="tabStage" data-pane="paneStage" aria-selected="true">Stage</button>
         <button class="tab" role="tab" id="tabRally" data-pane="paneRally" aria-selected="false">Rally</button>
@@ -335,6 +355,7 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
         <div class="seg seg3" id="optCond"><button data-v="day" aria-pressed="true">Day</button><button data-v="night" aria-pressed="false">Night</button><button data-v="rain" aria-pressed="false">Rain</button></div>
         <p class="var-note" id="varNote" hidden>Direction and conditions apply to the four stages below.</p>
         <div class="pane" id="stageList"></div>
+        <div id="timesInline" class="times"></div>
       </section>
       <section class="pane" id="paneRally" role="tabpanel" aria-labelledby="tabRally" hidden>
         <div id="rallyNow"></div>
@@ -392,7 +413,8 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
       <h3 id="gName">Ford Focus RS WRC</h3>
       <p id="gNod">Ford's World Rally Car, built and run by M-Sport</p>
     </div>
-    <div class="sheet" id="gSheet"></div>
+    <div class="sheet" id="gSheet" hidden></div>
+    <div class="sheet times" id="gTimes"></div>
   </aside>
 
   <div id="pause" class="overlay" hidden>
@@ -446,6 +468,15 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
     </div>
   </div>
   <div id="toast" role="status" hidden></div>
+
+  <div id="welcome" class="overlay" hidden>
+    <div class="card">
+      <h2 class="pause-title">Who's driving?</h2>
+      <p class="welcome-p">Pick a driver name. It goes on your times, the leaderboard and the challenges you send, and this browser remembers it. You can change it later.</p>
+      <input type="text" id="wName" maxlength="20" placeholder="Driver name" autocomplete="nickname" spellcheck="false">
+      <div class="actions"><button class="btn primary" id="wGo">Let's go <kbd>Enter</kbd></button></div>
+    </div>
+  </div>
 
   <div id="loading" class="overlay" hidden><p id="loadingText">Building stage</p></div>
 

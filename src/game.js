@@ -22,10 +22,12 @@ const store = {
   set(k, v) { try { localStorage.setItem('sideways.' + k, JSON.stringify(v)); return true; } catch (e) { return false; } },
   del(k) { try { localStorage.removeItem('sideways.' + k); } catch (e) { /* storage unavailable */ } },
 };
-const settings = Object.assign({ voice: true, sound: true, ghost: true, shadows: true, post: !matchMedia('(pointer: coarse)').matches, cam: 0, stage: 0, car: 0, gearbox: 'auto', rev: false, cond: 'day', name: '' }, store.get('settings', {}));
+const settings = Object.assign({ voice: false, sound: true, ghost: false, shadows: true, post: !matchMedia('(pointer: coarse)').matches, cam: 0, stage: 0, car: 0, gearbox: 'auto', rev: false, cond: 'day', name: '' }, store.get('settings', {}));
 if (settings.stage !== 'daily') settings.stage = clamp(settings.stage | 0, 0, C.STAGES.length - 1);
 settings.car = clamp(settings.car | 0, 0, C.CARS.length - 1);
 if (!C.CONDS.includes(settings.cond)) settings.cond = 'day';
+// ghost cars and the co-driver's voice are off unless you turn them on (once for everyone who had them on before)
+if (!settings.v2) { settings.voice = false; settings.ghost = false; settings.v2 = 1; }
 settings.dailyKey = C.dailyKey(); // a new day, a new road
 const saveSettings = () => store.set('settings', settings);
 // ---- bytes <-> text (base64url) ----
@@ -154,7 +156,7 @@ function renderStageList() {
   $('varNote').hidden = fixed;
   updateSummary();
 }
-function renderStageInfo() { renderStageList(); renderRallyPane(); }
+function renderStageInfo() { renderStageList(); renderRallyPane(); renderTimes(); }
 function updateSummary() {
   const tab = document.querySelector('.tab[aria-selected="true"]');
   if (tab && tab.id === 'tabRally') {
@@ -295,6 +297,7 @@ for (const t of document.querySelectorAll('.tab')) {
   t.addEventListener('click', () => {
     for (const o of document.querySelectorAll('.tab')) { o.setAttribute('aria-selected', String(o === t)); $(o.dataset.pane).hidden = o !== t; }
     if (t.id === 'tabRally') renderRallyPane();
+    $('gSheet').hidden = t.id !== 'tabCar'; $('gTimes').hidden = t.id === 'tabCar';
     updateSummary();
   });
 }
@@ -317,6 +320,7 @@ function selectStage(i) {
   if (mode === 'loading') return;
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
   settings.stage = i; if (i === 'daily') settings.dailyKey = settings.dailyKey || C.dailyKey();
+  timesStage = null;
   saveSettings(); renderStageList();
   if (curKey() !== loadedKey) loadStage(curKey());
 }
@@ -471,12 +475,20 @@ async function readChallenge(text) {
 }
 let pendingChal = null;
 async function checkChallengeLink() {
+  const mb = /[#&]b=([A-Za-z0-9_-]+)/.exec(location.hash || '');
+  if (mb) {
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* file: */ }
+    try { const r = await readTimes(mb[1]); toast(r.added ? `Added ${r.added} of ${r.n}'s times to your leaderboard.` : `You already had ${r.n}'s times.`); renderTimes(); }
+    catch (e) { toast('That times link could not be read (' + e.message + ').'); }
+    return;
+  }
   const m = /[#&]c=([A-Za-z0-9_-]+)/.exec(location.hash || '');
   if (!m) return;
   try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* file: */ }
   try {
     const c = await readChallenge(m[1]);
     store.set('chal.' + c.k, c);
+    boardAdd([{ n: c.n, k: c.k, c: c.c, t: c.t, s: c.s, d: (c.d || 0) * 1000, f: 1 }]);
     pendingChal = c;
     $('tabStage').click();
     renderStageInfo();
@@ -530,7 +542,8 @@ $('shareCopy').addEventListener('click', async () => {
 });
 $('shareNative').addEventListener('click', async () => {
   if (!shareLink || !navigator.share) return;
-  try { await navigator.share({ title: 'Sideways Rally challenge', text: `Beat my ${fmt(lastRun.t)} on ${C.stageTitle(C.stageDef(lastRun.key))}`, url: shareLink }); } catch (e) { /* cancelled */ }
+  const text = shareLink.includes('#b=') ? `My Sideways Rally times` : `Beat my ${fmt(lastRun.t)} on ${C.stageTitle(C.stageDef(lastRun.key))}`;
+  try { await navigator.share({ title: 'Sideways Rally', text, url: shareLink }); } catch (e) { /* cancelled */ }
 });
 let toastT = 0;
 function toast(text) { const t = $('toast'); t.textContent = text; t.hidden = false; t.classList.remove('pop'); void t.offsetWidth; t.classList.add('pop'); clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 3200); }
@@ -642,6 +655,103 @@ function renderRallyPane() {
   updateSummary();
 }
 
+// ---------- leaderboard ----------
+// Every finished run goes on a board kept in this browser: one best per driver, stage and car. Friends' times get on
+// it through their challenge links and through "Share my times" links (#b=…, every best of one driver, no ghosts).
+const boardAll = () => { const b = store.get('board', []); return Array.isArray(b) ? b : []; };
+function boardAdd(list) {
+  const b = boardAll(); let added = 0;
+  for (const e of list) {
+    const i = b.findIndex(x => x.n.toLowerCase() === e.n.toLowerCase() && x.k === e.k && x.c === e.c);
+    if (i < 0) { b.push(e); added++; } else if (e.t < b[i].t - 1e-4) { b[i] = Object.assign({}, e, { f: b[i].f && e.f ? 1 : 0 }); added++; }
+  }
+  store.set('board', b.slice(-3000)); return added;
+}
+// the bests this browser already had before there were names belong to whoever names it first
+function seedBoard(name) {
+  const list = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const lk = localStorage.key(i); if (!lk || !lk.startsWith('sideways.pb.')) continue;
+      const rest = lk.slice('sideways.pb.'.length), dot = rest.lastIndexOf('.'); if (dot < 0) continue;
+      const k = rest.slice(0, dot), c = rest.slice(dot + 1), r = store.get('pb.' + rest, null);
+      if (r && r.t > 20 && C.stageDef(k) && carById(c)) list.push({ n: name, k, c, t: r.t, s: r.splits || [], d: r.at || Date.now() });
+    }
+  } catch (e) { /* storage unavailable */ }
+  boardAdd(list);
+}
+function renameOnBoard(from, to) { if (!from || from === to) return; const b = boardAll(); for (const e of b) if (!e.f && e.n === from) e.n = to; store.set('board', b); }
+let timesStage = null, timesCar = 'all';
+function renderTimes() {
+  for (const box of [$('gTimes'), $('timesInline')]) {
+    box.innerHTML = '';
+    const b = boardAll(), key = timesStage || curKeyMenu();
+    const head = el('div', 't-head'); head.append(el('h4', null, 'Times'));
+    const share = el('button', 'btn', 'Share my times'); share.addEventListener('click', shareTimes); head.append(share);
+    const f = el('div', 'filters'), ss = el('select'), cs = el('select');
+    ss.setAttribute('aria-label', 'Stage'); cs.setAttribute('aria-label', 'Car');
+    const keys = [...new Set([key, curKeyMenu(), ...b.map(e => e.k)])].filter(k => C.stageDef(k));
+    keys.sort((a, c) => (a === key ? -1 : c === key ? 1 : 0) || C.stageTitle(C.stageDef(a)).localeCompare(C.stageTitle(C.stageDef(c))));
+    for (const k of keys) { const o = el('option', null, C.stageTitle(C.stageDef(k)) + (/^daily-/.test(k) ? ' · ' + k.slice(12, 14) + '/' + k.slice(10, 12) : '')); o.value = k; o.selected = k === key; ss.append(o); }
+    for (const [v, t] of [['all', 'All cars'], ...C.CARS.map(c => [c.id, shortCar(c.id)])]) { const o = el('option', null, t); o.value = v; o.selected = v === timesCar; cs.append(o); }
+    ss.addEventListener('change', () => { timesStage = ss.value; renderTimes(); });
+    cs.addEventListener('change', () => { timesCar = cs.value; renderTimes(); });
+    f.append(ss, cs);
+    box.append(head, f);
+    let rows = b.filter(e => e.k === key && (timesCar === 'all' || e.c === timesCar)).sort((a, c) => a.t - c.t).slice(0, 40);
+    if (rival && loadedKey === key && (timesCar === 'all' || timesCar === P.id)) rows = [...rows, { n: W.st.rival + ' (AI)', c: P.id, t: rival.time, ai: 1 }].sort((a, c) => a.t - c.t);
+    if (!rows.length) { box.append(el('p', 'empty', 'No times on this stage yet. Set one, or open a friend\'s link.')); continue; }
+    const tb = el('table', 'tt board'), hr = el('tr');
+    ['', 'Driver', 'Car', 'Time', 'Gap'].forEach(h => hr.append(el('th', null, h))); tb.append(hr);
+    const lead = rows[0].t, me = driverName().toLowerCase();
+    rows.forEach((e, i) => {
+      const tr = el('tr', e.ai ? 'ai' : e.n.toLowerCase() === me ? 'me' : '');
+      tr.append(el('td', null, String(i + 1)), el('td', null, e.n), el('td', null, shortCar(e.c)), el('td', null, fmt(e.t)), el('td', null, i ? '+' + (e.t - lead).toFixed(2) : '—'));
+      tb.append(tr);
+    });
+    box.append(tb);
+  }
+}
+async function shareTimes() {
+  const mine = boardAll().filter(e => !e.f && e.n.toLowerCase() === driverName().toLowerCase());
+  if (!mine.length) { toast('No times to share yet: finish a stage first.'); return; }
+  const raw = utf8.encode(JSON.stringify({ v: 1, n: cleanName(driverName()), e: mine.slice(0, 300).map(e => [e.k, e.c, +e.t.toFixed(3), Math.floor((e.d || Date.now()) / 1000)]) }));
+  let body = null; try { body = await zip(raw, false); } catch (e) { body = null; }
+  const data = body || raw, out = new Uint8Array(1 + data.length); out[0] = body ? 0x81 : 0x01; out.set(data, 1);
+  shareLink = location.href.split('#')[0] + '#b=' + b64e(out);
+  $('shareText').textContent = `Whoever opens this link gets your ${mine.length} best time${mine.length > 1 ? 's' : ''} on their leaderboard.`;
+  $('shareLink').value = shareLink; $('shareNative').hidden = !navigator.share; $('share').hidden = false;
+}
+async function readTimes(text) {
+  const u8 = b64d(text);
+  if (u8.length < 4 || (u8[0] & 0x7f) !== 1) throw new Error('version');
+  let raw = u8.subarray(1);
+  if (u8[0] & 0x80) { raw = await zip(raw, true); if (!raw) throw new Error('this browser cannot unpack it'); }
+  const h = JSON.parse(utf8d.decode(raw)), n = cleanName(h.n);
+  if (!Array.isArray(h.e)) throw new Error('no times');
+  const list = h.e.slice(0, 300).filter(r => Array.isArray(r) && C.stageDef(r[0]) && carById(r[1]) && r[2] > 20 && r[2] < 1200).map(r => ({ n, k: r[0], c: r[1], t: r[2], s: [], d: (r[3] || 0) * 1000, f: 1 }));
+  return { n, added: boardAdd(list), total: list.length };
+}
+// ---------- driver name ----------
+function showWelcome(change) {
+  $('wName').value = change ? settings.name || '' : '';
+  $('welcome').hidden = false; setTimeout(() => $('wName').focus(), 50);
+}
+function confirmName() {
+  const v = cleanName($('wName').value);
+  const name = $('wName').value.trim() ? v : 'Driver ' + ((Math.random() * 900 + 100) | 0);
+  const old = settings.name;
+  settings.name = name; saveSettings();
+  $('optName').value = name;
+  if (!settings.boardSeeded) { seedBoard(name); settings.boardSeeded = 1; saveSettings(); } else renameOnBoard(old, name);
+  $('welcome').hidden = true;
+  updateDriver(); renderTimes();
+}
+function updateDriver() { $('driverName').textContent = settings.name || '—'; }
+$('wGo').addEventListener('click', confirmName);
+$('wName').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); confirmName(); } });
+$('driverChip').addEventListener('click', () => showWelcome(true));
+
 // ---------- race flow ----------
 const isTouch = matchMedia('(pointer: coarse)').matches;
 function setScreen(name) {
@@ -696,6 +806,7 @@ function finish() {
     pb = { t: finishT, car: P.id, splits: splitsHit.slice(), ghost }; pb.sArr = refCurve(ghost);
   }
   if (medal > store.get('medal.' + key, 0)) store.set('medal.' + key, medal);
+  if (settings.name) boardAdd([{ n: settings.name, k: key, c: P.id, t: finishT, s: splitsHit.slice(), d: Date.now() }]);
   rallyLeg = rallyOn() ? rallyFinishLeg(finishT) : null;
   center(`<div class="mid yel">Finish</div><div class="sub">${fmt(finishT)}</div>`, 2.4);
   sfx.beep(880, 0.12); setTimeout(() => sfx.beep(1320, 0.25), 140);
@@ -803,7 +914,8 @@ function showCamTag() { $('camTag').textContent = 'Camera · ' + CAM_NAMES[setti
 const keys = {};
 const touch = { left: false, right: false, gas: false, brake: false, hb: false };
 addEventListener('keydown', e => {
-  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
+  if (!$('welcome').hidden) return;
   const k = e.code;
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(k) && mode !== 'menu') e.preventDefault();
   if (k === 'Space' && mode === 'menu' && document.activeElement && document.activeElement.tagName === 'BUTTON') return;
@@ -849,7 +961,7 @@ function readInput() {
     thr = Math.max(thr, bv(7)); brk = Math.max(brk, bv(6));
     if (bv(0) > 0.5 || bv(2) > 0.5) hb = true;
     const edge = i => { const now = bv(i) > 0.5; const was = padPrev[p.index + ':' + i]; padPrev[p.index + ':' + i] = now; return now && !was; };
-    if (edge(9)) { if (mode === 'menu') menuGo(); else if (resultsShown && !$('results').hidden) retry(); else togglePause(); }
+    if (edge(9) && $('welcome').hidden) { if (mode === 'menu') menuGo(); else if (resultsShown && !$('results').hidden) retry(); else togglePause(); }
     if (edge(3) && mode !== 'menu') { settings.cam = (settings.cam + 1) % 4; saveSettings(); showCamTag(); }
     if (edge(8)) manualReset();
     if (edge(12)) toggleLights();
@@ -1028,17 +1140,49 @@ function initAudio() {
   A.noiseSrc = () => { const s = ctx.createBufferSource(); s.buffer = nb; s.loop = true; s.start(0, Math.random() * 2); return s; };
   A.gain = v => { const g = ctx.createGain(); g.gain.value = v; return g; };
   A.filt = (type, f, q) => { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b; };
+  // The car's own sounds go through A.car: distance from the camera (gain), air absorption (lowpass), left/right
+  // (pan), so on the TV camera the car is out there in the stage instead of in your ears. The world around it
+  // (crowd, birds, wind, rain) goes through A.env. Both feed a reverb shaped by the place: tree trunks and clearings
+  // in the forests, the far buttes in the desert, snow that swallows the highs, and a slapback echo between the
+  // walls of the gorge.
+  A.car = A.gain(1); A.carLp = A.filt('lowpass', 20000, 0.5); A.carPan = ctx.createStereoPanner ? ctx.createStereoPanner() : A.gain(1);
+  A.car.connect(A.carLp); A.carLp.connect(A.carPan); A.carPan.connect(master);
+  A.env = A.gain(1); A.envPan = ctx.createStereoPanner ? ctx.createStereoPanner() : A.gain(1); A.env.connect(master);
+  A.revIn = A.gain(0.0); A.conv = ctx.createConvolver(); A.revOut = A.gain(1);
+  A.carPan.connect(A.revIn); A.env.connect(A.revIn); A.revIn.connect(A.conv); A.conv.connect(A.revOut); A.revOut.connect(master);
+  A.slapIn = A.gain(0); A.slap = ctx.createDelay(0.2); A.slap.delayTime.value = 0.042; A.slapFb = A.gain(0.38); A.slapLp = A.filt('lowpass', 3200, 0.5);
+  A.carPan.connect(A.slapIn); A.slapIn.connect(A.slap); A.slap.connect(A.slapLp); A.slapLp.connect(A.slapFb); A.slapFb.connect(A.slap); A.slapLp.connect(master);
+  A.revKey = '';
   // surfaces and wind (shared)
-  A.gbp = A.filt('bandpass', 1100, 0.6); A.gg = A.gain(0); A.noiseSrc().connect(A.gbp); A.gbp.connect(A.gg); A.gg.connect(master);
-  A.sbp = A.filt('bandpass', 2400, 3.5); A.sg = A.gain(0); A.noiseSrc().connect(A.sbp); A.sbp.connect(A.sg); A.sg.connect(master);
-  A.wlp = A.filt('lowpass', 380, 0.5); A.wg = A.gain(0); A.noiseSrc().connect(A.wlp); A.wlp.connect(A.wg); A.wg.connect(master);
-  A.scbp = A.filt('bandpass', 1800, 2.2); A.scg = A.gain(0); A.noiseSrc().connect(A.scbp); A.scbp.connect(A.scg); A.scg.connect(master);
+  A.gbp = A.filt('bandpass', 1100, 0.6); A.gg = A.gain(0); A.noiseSrc().connect(A.gbp); A.gbp.connect(A.gg); A.gg.connect(A.car);
+  A.sbp = A.filt('bandpass', 2400, 3.5); A.sg = A.gain(0); A.noiseSrc().connect(A.sbp); A.sbp.connect(A.sg); A.sg.connect(A.car);
+  A.wlp = A.filt('lowpass', 380, 0.5); A.wg = A.gain(0); A.noiseSrc().connect(A.wlp); A.wlp.connect(A.wg); A.wg.connect(A.car);
+  A.scbp = A.filt('bandpass', 1800, 2.2); A.scg = A.gain(0); A.noiseSrc().connect(A.scbp); A.scbp.connect(A.scg); A.scg.connect(A.car);
   // tyre squeal on tarmac: a wavering tone rather than just hiss
   A.sqo = ctx.createOscillator(); A.sqo.type = 'triangle'; A.sqo.frequency.value = 820; A.sqo.start();
-  A.sqbp = A.filt('bandpass', 1000, 1.4); A.sqg = A.gain(0); A.sqo.connect(A.sqbp); A.sqbp.connect(A.sqg); A.sqg.connect(master);
+  A.sqbp = A.filt('bandpass', 1000, 1.4); A.sqg = A.gain(0); A.sqo.connect(A.sqbp); A.sqbp.connect(A.sqg); A.sqg.connect(A.car);
   // rain: a soft wide hiss, and water under the tyres that rises with speed
   A.rnf = A.filt('highpass', 1200, 0.4); A.rnl = A.filt('lowpass', 7500, 0.4); A.rng = A.gain(0); A.noiseSrc().connect(A.rnf); A.rnf.connect(A.rnl); A.rnl.connect(A.rng); A.rng.connect(master);
-  A.wsbp = A.filt('bandpass', 3000, 0.7); A.wsg = A.gain(0); A.noiseSrc().connect(A.wsbp); A.wsbp.connect(A.wsg); A.wsg.connect(master);
+  A.wsbp = A.filt('bandpass', 3000, 0.7); A.wsg = A.gain(0); A.noiseSrc().connect(A.wsbp); A.wsbp.connect(A.wsg); A.wsg.connect(A.car);
+  // the crowd: an applause bed (many random claps) and cheering voices (formants), level and side from the fans near
+  // the car; whistles and air horns as one-off events
+  A.crowd = A.gain(0); A.crowdPan = ctx.createStereoPanner ? ctx.createStereoPanner() : A.gain(1); A.crowd.connect(A.crowdPan); A.crowdPan.connect(A.env);
+  A.vox = A.gain(0.0);
+  for (const [f, q, k] of [[640, 5, 1], [1150, 6, 0.7], [2400, 7, 0.35]]) { const b = A.filt('bandpass', f, q), g = A.gain(k); A.noiseSrc().connect(b); b.connect(g); g.connect(A.vox); }
+  A.vox.connect(A.crowd);
+  // ambience: wind that comes and goes, leaves in the trees, crickets at night
+  A.ambW = A.gain(0); A.ambWlp = A.filt('lowpass', 520, 0.6); A.noiseSrc().connect(A.ambWlp); A.ambWlp.connect(A.ambW); A.ambW.connect(A.env);
+  A.ambL = A.gain(0); A.ambLhp = A.filt('highpass', 2600, 0.5); A.ambLbp = A.filt('peaking', 5200, 0.8); A.ambLbp.gain.value = 4; A.noiseSrc().connect(A.ambLhp); A.ambLhp.connect(A.ambLbp); A.ambLbp.connect(A.ambL); A.ambL.connect(A.env);
+  A.crick = A.gain(0); A.crick.connect(A.env);
+  for (const [f, r1, r2, pan] of [[4380, 31, 2.1, -0.6], [4650, 27, 1.6, 0.55]]) {
+    const o = ctx.createOscillator(); o.frequency.value = f; o.start();
+    const a1 = A.gain(0.5), m1 = ctx.createOscillator(); m1.type = 'square'; m1.frequency.value = r1; m1.start(); const d1 = A.gain(0.5); m1.connect(d1); d1.connect(a1.gain);
+    const a2 = A.gain(0.5), m2 = ctx.createOscillator(); m2.type = 'square'; m2.frequency.value = r2; m2.start(); const d2 = A.gain(0.5); m2.connect(d2); d2.connect(a2.gain);
+    const pn = ctx.createStereoPanner ? ctx.createStereoPanner() : A.gain(1); if (pn.pan) pn.pan.value = pan;
+    o.connect(a1); a1.connect(a2); a2.connect(pn); pn.connect(A.crick);
+  }
+  A.gust = 0; A.gustT = 0; A.birdT = 2; A.stoneT = 0; A.hornT = 0; A.whistleT = 0; A.thunderT = 20; A.hawkT = 15; A.voxT = 0;
+  A.camPrev = null; A.camVel = [0, 0, 0]; A.dopp = 1;
   A.alT = 0; A.popT = 0;
   buildVoice();
   loadWorklet(ctx);
@@ -1048,7 +1192,15 @@ function buildSurfaces() {
   try {
     A.cr = new AudioWorkletNode(ctx, 'crunch', { numberOfInputs: 0, outputChannelCount: [1] });
     A.crbp = A.filt('bandpass', 2000, 0.8); A.crlp = A.filt('lowpass', 5000, 0.5); A.crg = A.gain(0);
-    A.cr.connect(A.crbp); A.crbp.connect(A.crlp); A.crlp.connect(A.crg); A.crg.connect(A.master);
+    A.cr.connect(A.crbp); A.crbp.connect(A.crlp); A.crlp.connect(A.crg); A.crg.connect(A.car);
+    // gravel flung into the wheel arches and the floor: a hard, bright spray of tiny hits, loudest on board
+    A.sp = new AudioWorkletNode(ctx, 'crunch', { numberOfInputs: 0, outputChannelCount: [1] });
+    A.spbp = A.filt('bandpass', 3600, 0.9); A.sphp = A.filt('highpass', 1400, 0.5); A.spg = A.gain(0);
+    A.sp.connect(A.sphp); A.sphp.connect(A.spbp); A.spbp.connect(A.spg); A.spg.connect(A.car);
+    // applause: claps are the same kind of random clicks, slower and softer, filtered to the hands' band
+    A.cl = new AudioWorkletNode(ctx, 'crunch', { numberOfInputs: 0, outputChannelCount: [1] });
+    A.clbp = A.filt('bandpass', 1900, 0.7); A.clg = A.gain(0.9); A.cl.connect(A.clbp); A.clbp.connect(A.clg); A.clg.connect(A.crowd);
+    A.cl.parameters.get('rate').value = 0; A.cl.parameters.get('decay').value = 0.005;
   } catch (e) { A.cr = null; }
 }
 function buildVoice() {
@@ -1059,10 +1211,10 @@ function buildVoice() {
   const osc = (type) => { const o = ctx.createOscillator(); o.type = type; o.start(); nodes.push(o); return o; };
   // turbo: a whistle that rises with boost plus the rush of air through the compressor
   const turbo = () => {
-    const tw = osc('sine'); const tg = A.gain(0); nodes.push(tg); tw.connect(tg); tg.connect(A.master);
+    const tw = osc('sine'); const tg = A.gain(0); nodes.push(tg); tw.connect(tg); tg.connect(A.car);
     const ts = A.noiseSrc(); nodes.push(ts); const tbp = A.filt('bandpass', 3000, 6); nodes.push(tbp); const tng = A.gain(0); nodes.push(tng);
-    ts.connect(tbp); tbp.connect(tng); tng.connect(A.master);
-    const wh = osc('sine'); const whg = A.gain(0); nodes.push(whg); wh.connect(whg); whg.connect(A.master);
+    ts.connect(tbp); tbp.connect(tng); tng.connect(A.car);
+    const wh = osc('sine'); const whg = A.gain(0); nodes.push(whg); wh.connect(whg); whg.connect(A.car);
     return { tw, tg, tbp, tng, wh, whg };
   };
   if (A.wk) {
@@ -1075,7 +1227,7 @@ function buildVoice() {
       const body = A.filt('peaking', EN.body[0], 0.8); body.gain.value = EN.body[1]; nodes.push(body);
       const air = A.filt('highshelf', 4500, 0.7); air.gain.value = -1.5; nodes.push(air);
       const eg = A.gain(0); nodes.push(eg);
-      en.connect(body); body.connect(air); air.connect(eg); eg.connect(A.master);
+      en.connect(body); body.connect(air); air.connect(eg); eg.connect(A.car);
       A.voice = Object.assign({ id: P.id, ex: getTune(P.id).exhaust, V, EN, nodes, wk: en, prm: en.parameters, eg }, turbo());
       return;
     } catch (e) { A.wk = false; for (const n of nodes) { try { n.stop && n.stop(); } catch (e2) { /* ignore */ } try { n.disconnect(); } catch (e2) { /* ignore */ } } nodes.length = 0; }
@@ -1089,10 +1241,10 @@ function buildVoice() {
   const am = A.gain(1 - V.am * 0.5); nodes.push(am);
   const lfo = osc('sine'); const depth = A.gain(V.am * 0.5); nodes.push(depth); lfo.connect(depth); depth.connect(am.gain);
   const eg = A.gain(0); nodes.push(eg);
-  sum.connect(shaper); shaper.connect(lp); lp.connect(am); am.connect(eg); eg.connect(A.master);
+  sum.connect(shaper); shaper.connect(lp); lp.connect(am); am.connect(eg); eg.connect(A.car);
   const tb = turbo();
   const ns = A.noiseSrc(); nodes.push(ns); const ib = A.filt('bandpass', 1200, 1.2); nodes.push(ib); const ig = A.gain(0); nodes.push(ig);
-  ns.connect(ib); ib.connect(ig); ig.connect(A.master);
+  ns.connect(ib); ib.connect(ig); ig.connect(A.car);
   A.voice = Object.assign({ id: P.id, ex: getTune(P.id).exhaust, V, nodes, oscs, lp, lfo, eg, ib, ig }, tb);
 }
 const sfx = {
@@ -1103,24 +1255,24 @@ const sfx = {
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.12, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0005, t + 0.04);
     s.stop(t + 0.06);
   },
-  burst(when, dur, type, f, q, vol, atk) {
+  burst(when, dur, type, f, q, vol, atk, dest) {
     const c = A.ctx; if (!c) return;
     const s = c.createBufferSource(); s.buffer = A.noise;
     const b = c.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q;
     const g = c.createGain();
     if (atk) { g.gain.setValueAtTime(0.0001, when); g.gain.linearRampToValueAtTime(vol, when + atk); } else g.gain.setValueAtTime(vol, when);
     g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
-    s.connect(b); b.connect(g); g.connect(A.master); s.start(when, Math.random() * 1.5); s.stop(when + dur + 0.05);
+    s.connect(b); b.connect(g); g.connect(dest || A.car); s.start(when, Math.random() * 1.5); s.stop(when + dur + 0.05);
   },
-  tone(freq, dur, type, vol, slide) { if (A.ctx) this.toneAt(A.ctx.currentTime, freq, dur, type, vol, slide); },
-  toneAt(t, freq, dur, type, vol, slide) {
+  tone(freq, dur, type, vol, slide, dest) { if (A.ctx) this.toneAt(A.ctx.currentTime, freq, dur, type, vol, slide, dest); },
+  toneAt(t, freq, dur, type, vol, slide, dest) {
     const c = A.ctx; if (!c) return;
     const o = c.createOscillator(); o.type = type || 'sine';
     o.frequency.setValueAtTime(freq, t); if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + dur);
     const g = c.createGain(); g.gain.setValueAtTime(vol || 0.25, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g); g.connect(A.master); o.start(t); o.stop(t + dur + 0.05);
+    o.connect(g); g.connect(dest || A.car); o.start(t); o.stop(t + dur + 0.05);
   },
-  beep(f, d) { this.tone(f, d, 'square', 0.12); },
+  beep(f, d) { this.tone(f, d, 'square', 0.12, null, A.master); },
   // backfire: a sharp crack, a low boom that drops in pitch, the body of the blast and a short ring in the pipe.
   // small = the quieter crackle of a sport exhaust burbling on the overrun (no flame)
   pop(big, small) {
@@ -1143,7 +1295,7 @@ const sfx = {
     const g = c.createGain();
     g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.26 * k, t + 0.03);
     g.gain.setValueAtTime(0.26 * k, t + 0.06); g.gain.setTargetAtTime(0.0001, t + 0.06, dur / 3.2);
-    s.connect(hp); hp.connect(pk); pk.connect(lp); lp.connect(g); g.connect(A.master); s.start(t, Math.random() * 1.2); s.stop(t + dur + 0.5);
+    s.connect(hp); hp.connect(pk); pk.connect(lp); lp.connect(g); g.connect(A.car); s.start(t, Math.random() * 1.2); s.stop(t + dur + 0.5);
     this.burst(t, 0.1, 'bandpass', 650, 0.9, 0.16 * k, 0.012);
   },
   blowoff(amt) { this.bov(amt); },
@@ -1170,7 +1322,7 @@ const sfx = {
       if (ph >= 1) { ph -= 1; jit = 0.92 + Math.random() * 0.16; }
       rate = Math.max(9, rate * Math.exp(-1.1 / R)); // the surge slows as the wheel loses speed
     }
-    const env = c.createGain(); env.gain.setValueCurveAtTime(ea, t0, dur); env.connect(A.master);
+    const env = c.createGain(); env.gain.setValueCurveAtTime(ea, t0, dur); env.connect(A.car);
     const src = c.createBufferSource(); src.buffer = A.noise;
     // the air: a broad rush (highpassed so it isn't a rumble), opening up at each puff, with a soft hollow
     // colour from the inlet pipe and a little low "whoomph" body
@@ -1183,13 +1335,70 @@ const sfx = {
     const gb = c.createGain(); gb.gain.value = 0.55;
     src.connect(body); body.connect(gb); gb.connect(env);
     // the whistle winding down, only lightly touched by the pulses
-    const wenv = c.createGain(); wenv.gain.setValueCurveAtTime(ew, t0, dur); wenv.connect(A.master);
+    const wenv = c.createGain(); wenv.gain.setValueCurveAtTime(ew, t0, dur); wenv.connect(A.car);
     const w = c.createOscillator(); w.type = 'sine'; const wf = 1500 + clamp(boost == null ? amt : boost, 0, 1) * 5400;
     w.frequency.setValueAtTime(wf, t0); w.frequency.exponentialRampToValueAtTime(wf * 0.5, t0 + dur);
     const gw = c.createGain(); gw.gain.value = 0.035; w.connect(gw); gw.connect(wenv);
     src.start(t0, Math.random() * 1.2); src.stop(t0 + dur + 0.05); w.start(t0); w.stop(t0 + dur + 0.05);
   },
   clack() { const c = A.ctx; if (!c) return; this.burst(c.currentTime, 0.035, 'highpass', 1800, 0.8, 0.22); },
+  // a stone off the floor or into an arch: mostly a sharp metallic tick, sometimes a duller knock under the car
+  stone() {
+    const c = A.ctx; if (!c) return; const t = c.currentTime + Math.random() * 0.02;
+    if (Math.random() < 0.7) this.burst(t, 0.02 + Math.random() * 0.02, 'bandpass', 2600 + Math.random() * 3400, 9, 0.05 + Math.random() * 0.09);
+    else { this.burst(t, 0.045, 'bandpass', 450 + Math.random() * 450, 4, 0.08 + Math.random() * 0.08); this.burst(t, 0.03, 'highpass', 2200, 0.7, 0.03); }
+  },
+  panTo(pan) { const c = A.ctx, p = c.createStereoPanner ? c.createStereoPanner() : c.createGain(); if (p.pan) p.pan.value = clamp(pan, -1, 1); p.connect(A.env); return p; },
+  // fans: a two-tone wolf whistle or a rising one
+  whistle(pan) {
+    const c = A.ctx; if (!c) return; const t = c.currentTime + 0.01, out = this.panTo(pan), wolf = Math.random() < 0.5;
+    const o = c.createOscillator(), g = c.createGain(), f = 2100 + Math.random() * 500;
+    const v = c.createOscillator(), vg = c.createGain(); v.frequency.value = 6 + Math.random() * 3; vg.gain.value = 40; v.connect(vg); vg.connect(o.frequency);
+    if (wolf) { o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 1.45, t + 0.16); o.frequency.setValueAtTime(f * 0.95, t + 0.24); o.frequency.exponentialRampToValueAtTime(f * 1.25, t + 0.36); o.frequency.exponentialRampToValueAtTime(f * 0.8, t + 0.6); }
+    else { o.frequency.setValueAtTime(f * 0.85, t); o.frequency.exponentialRampToValueAtTime(f * 1.3, t + 0.45); }
+    const d = wolf ? 0.62 : 0.5;
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.03, t + 0.03); if (wolf) { g.gain.setValueAtTime(0.03, t + 0.17); g.gain.linearRampToValueAtTime(0.004, t + 0.22); g.gain.linearRampToValueAtTime(0.03, t + 0.27); }
+    g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(g); g.connect(out); o.start(t); v.start(t); o.stop(t + d + 0.05); v.stop(t + d + 0.05);
+  },
+  // an air horn from the bank: two reedy tones a third apart, blown for a moment, sagging a little as it runs out
+  horn(pan) {
+    const c = A.ctx; if (!c) return; const t = c.currentTime + 0.02, out = this.panTo(pan), d = 0.5 + Math.random() * 0.6, base = 300 + Math.random() * 80;
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2000; lp.Q.value = 0.7;
+    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.045, t + 0.04); g.gain.setValueAtTime(0.045, t + d); g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.12);
+    lp.connect(g); g.connect(out);
+    for (const k of [1, 1.26]) { const o = c.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(base * k, t); o.frequency.linearRampToValueAtTime(base * k * 0.97, t + d); o.connect(lp); o.start(t); o.stop(t + d + 0.2); }
+  },
+  // songbirds in the woods: a short phrase of chirps that sweep up or down
+  bird() {
+    const c = A.ctx; if (!c) return; const out = this.panTo((Math.random() - 0.5) * 1.6), up = Math.random() < 0.5;
+    let t = c.currentTime + 0.02; const n = 2 + ((Math.random() * 5) | 0), f0 = 2600 + Math.random() * 2400, vol = 0.008 + Math.random() * 0.012;
+    for (let i = 0; i < n; i++) {
+      const o = c.createOscillator(), g = c.createGain(), d = 0.04 + Math.random() * 0.08, f = f0 * (0.9 + Math.random() * 0.25);
+      o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * (up ? 1.35 : 0.72), t + d);
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+      o.connect(g); g.connect(out); o.start(t); o.stop(t + d + 0.02); t += d + 0.025 + Math.random() * 0.07;
+    }
+  },
+  // a hawk circling over the desert, far off
+  hawk() {
+    const c = A.ctx; if (!c) return; const t = c.currentTime + 0.02, out = this.panTo((Math.random() - 0.5) * 1.4);
+    const o = c.createOscillator(), g = c.createGain(), v = c.createOscillator(), vg = c.createGain();
+    v.frequency.value = 11; vg.gain.value = 70; v.connect(vg); vg.connect(o.frequency);
+    o.frequency.setValueAtTime(2300, t); o.frequency.exponentialRampToValueAtTime(1450, t + 1.1);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.012, t + 0.08); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+    o.connect(g); g.connect(out); o.start(t); v.start(t); o.stop(t + 1.3); v.stop(t + 1.3);
+  },
+  // distant thunder: a slow rumble that rolls in and out
+  thunder() {
+    const c = A.ctx; if (!c) return; const t = c.currentTime + 0.05, d = 3 + Math.random() * 3, out = this.panTo((Math.random() - 0.5) * 1.2);
+    const s2 = c.createBufferSource(); s2.buffer = A.noise; s2.loop = true;
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 140 + Math.random() * 80; lp.Q.value = 0.9;
+    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t);
+    let tt = t; for (let k = 0; k < 6; k++) { tt += 0.2 + Math.random() * 0.6; g.gain.linearRampToValueAtTime((0.1 + Math.random() * 0.14) * Math.exp(-(tt - t) / d * 1.5), tt); }
+    g.gain.exponentialRampToValueAtTime(0.0001, t + d + 1);
+    s2.connect(lp); lp.connect(g); g.connect(out); s2.start(t, Math.random()); s2.stop(t + d + 1.2);
+  },
   thump(v) { const c = A.ctx; if (!c) return; this.tone(85, 0.28, 'sine', Math.min(0.9, v * 0.08), 38); this.burst(c.currentTime, 0.18, 'lowpass', 260, 0.7, Math.min(0.8, v * 0.06)); },
   // impact: low body thump + panel crunch, a faint ring of metal, then small bits settling. Soft objects only whump.
   crash(v, kind) {
@@ -1212,6 +1421,29 @@ const sfx = {
     else if (kind === 'rock' || kind === 'wall') this.toneAt(t, 150, 0.1, 'triangle', 0.06 + k * 0.08, 90);
   },
 };
+// reverb for the place, rebuilt when the stage changes: [first, last] early reflection, count; tail length; how dark the
+// tail gets; how much is sent; a distant echo off the far cliffs [delay, level]
+const REVERB = {
+  pine: { er: [0.018, 0.09, 12], tail: 1.3, damp: 0.55, wet: 0.16 },
+  forest: { er: [0.008, 0.05, 22], tail: 1.5, damp: 0.5, wet: 0.24 },
+  mesa: { er: [0.06, 0.3, 7], tail: 1.0, damp: 0.3, wet: 0.11, echo: [0.62, 0.22] },
+  frost: { er: [0.02, 0.1, 8], tail: 0.8, damp: 0.82, wet: 0.09 },
+};
+function buildReverb() {
+  const c = A.ctx; if (!c || !W) return;
+  const key = W.st.id; if (A.revKey === key) return; A.revKey = key;
+  const Pv = REVERB[W.st.id] || REVERB[W.st.kind] || REVERB.pine, sr = c.sampleRate, len = Math.ceil(sr * Pv.tail), buf = c.createBuffer(2, len, sr);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = buf.getChannelData(ch), Rn = C.rng(77 + ch * 13); let lp = 0;
+    for (let i = 0; i < len; i++) {
+      const t = i / sr, env = Math.exp(-t * 6.9 / Pv.tail) * Math.min(1, t / 0.012), k = 0.12 + 0.85 * (1 - Pv.damp) * Math.exp(-t * 2.5);
+      lp += ((Rn() * 2 - 1) - lp) * k; d[i] = lp * env * 0.5;
+    }
+    for (let j = 0; j < Pv.er[2]; j++) { const t = Pv.er[0] + Rn() * (Pv.er[1] - Pv.er[0]), i = Math.floor(t * sr); if (i < len) d[i] += (Rn() < 0.5 ? -1 : 1) * (0.4 + Rn() * 0.6) * Math.exp(-t * 7); }
+    if (Pv.echo) { const i0 = Math.floor((Pv.echo[0] + ch * 0.035) * sr); for (let q = 0; q < 900 && i0 + q < len; q++) d[i0 + q] += (Rn() * 2 - 1) * Pv.echo[1] * Math.exp(-q / 180); }
+  }
+  A.conv.buffer = buf; A.revWet = Pv.wet;
+}
 function updateAudio(dt) {
   if (!A.ctx || !A.voice) return;
   const c = A.ctx, t = c.currentTime, Vc = A.voice, V = Vc.V, E = P.engine;
@@ -1227,9 +1459,25 @@ function updateAudio(dt) {
   const rpm = pv ? A.revRpm : car.rpm, thr = racing ? car.thrE || input.thr : pv ? A.revThr : 0, boost = pv ? A.revB : car.boost;
   const tune = getTune(P.id), sport = tune.exhaust === 'sport';
   const lim = car.limiter > 0 ? 0.35 : 1;
+  // ---- where the car is for the listener (the camera) ----
+  buildReverb();
+  const onboard = settings.cam === 2 && racing;
+  const ldx = vis.x - cam.pos[0], ldy = vis.y + 0.6 - cam.pos[1], ldz = vis.z - cam.pos[2], dist = Math.max(0.5, Math.hypot(ldx, ldy, ldz));
+  const cfx = cam.look[0] - cam.pos[0], cfz = cam.look[2] - cam.pos[2], cfl = Math.hypot(cfx, cfz) || 1, crx = -cfz / cfl, crz = cfx / cfl;
+  if (dt > 0) {
+    if (A.camPrev) for (let a = 0; a < 3; a++) A.camVel[a] += (clamp((cam.pos[a] - A.camPrev[a]) / dt, -90, 90) - A.camVel[a]) * Math.min(1, dt * 10);
+    A.camPrev = cam.pos.slice();
+  }
+  // doppler: the car's speed away from the listener (only really moves off 1 on the TV camera, the others travel with it)
+  const vr = ((car.vx - A.camVel[0]) * ldx + (car.vz - A.camVel[2]) * ldz) / dist;
+  A.dopp += (clamp(343 / (343 + (racing || mode === 'done' ? vr : 0)), 0.82, 1.22) - A.dopp) * Math.min(1, dt * 6);
+  const dk = dist <= 9 ? 1 : Math.pow(9 / dist, 0.9);
+  A.car.gain.setTargetAtTime(dk, t, 0.05);
+  A.carLp.frequency.setTargetAtTime(clamp(20000 / (1 + Math.pow(dist / 40, 1.5)), 900, 20000), t, 0.06);
+  if (A.carPan.pan) A.carPan.pan.setTargetAtTime(clamp((ldx * crx + ldz * crz) / dist * 0.9, -0.85, 0.85), t, 0.05);
   if (Vc.wk) {
     const pr = Vc.prm;
-    pr.get('rpm').setTargetAtTime(rpm, t, 0.012);
+    pr.get('rpm').setTargetAtTime(rpm * A.dopp, t, 0.012);
     pr.get('load').setTargetAtTime(active ? thr : 0, t, 0.03);
     pr.get('boost').setTargetAtTime(boost, t, 0.05);
     pr.get('cut').setTargetAtTime(racing && (car.limiter > 0 || car.shiftT > 0) ? 1 : 0, t, 0.006);
@@ -1240,14 +1488,14 @@ function updateAudio(dt) {
     Vc.eg.gain.setTargetAtTime(active ? Vc.EN.gain * (0.75 + (rpm / E.redline) * 0.35) * (1.45 - 0.45 * thr) : 0, t, 0.03);
   } else {
     const f0 = rpm / 60;
-    for (const o of Vc.oscs) o.o.frequency.setTargetAtTime(f0 * o.ord, t, 0.01);
+    for (const o of Vc.oscs) o.o.frequency.setTargetAtTime(f0 * o.ord * A.dopp, t, 0.01);
     Vc.lfo.frequency.setTargetAtTime(f0 * V.amRate, t, 0.02);
     Vc.lp.frequency.setTargetAtTime(V.lp[0] + thr * (V.lp[1] - V.lp[0]) + rpm * 0.12, t, 0.03);
     Vc.eg.gain.setTargetAtTime(active ? (0.06 + thr * 0.12 + (rpm / E.redline) * 0.05) * lim : 0, t, 0.025);
     Vc.ib.frequency.setTargetAtTime(800 + rpm * 0.28, t, 0.05);
     Vc.ig.gain.setTargetAtTime(active ? V.induct * thr * (rpm / E.redline) * (0.5 + boost) : 0, t, 0.04);
   }
-  Vc.tw.frequency.setTargetAtTime(1500 + boost * 5400, t, 0.05);
+  Vc.tw.frequency.setTargetAtTime((1500 + boost * 5400) * A.dopp, t, 0.05);
   Vc.tg.gain.setTargetAtTime(active ? boost * V.turbo * (0.4 + thr) : 0, t, 0.06);
   if (Vc.tng) {
     Vc.tbp.frequency.setTargetAtTime(2200 + boost * 4200, t, 0.05);
@@ -1255,7 +1503,8 @@ function updateAudio(dt) {
   }
   const spd = Math.hypot(car.vx, car.vz);
   Vc.wh.frequency.setTargetAtTime(Math.max(40, Math.abs(car.vF) / C.RW / (2 * Math.PI) * P.final * 34), t, 0.03);
-  Vc.whg.gain.setTargetAtTime(active ? V.whine * clamp(spd / 22, 0, 1) * (car.gear > 0 ? 1 : 0) : 0, t, 0.05);
+  // straight-cut gears sing loudest on the overrun, when the load comes off the teeth
+  Vc.whg.gain.setTargetAtTime(active ? V.whine * clamp(spd / 22, 0, 1) * (car.gear > 0 ? 1 : 0) * (1 + 0.9 * (1 - thr)) : 0, t, 0.05);
   // surfaces
   const sid = W.st.kind;
   let gv = 0, sv = 0;
@@ -1288,6 +1537,53 @@ function updateAudio(dt) {
   const scrape = active && car.bankP > 0.05 ? clamp(car.bankP * 2, 0, 1) * clamp(spd / 18, 0, 1) : 0;
   A.scbp.frequency.setTargetAtTime(W.st.bank ? 700 : 1500 + Math.random() * 700, t, 0.03);
   A.scg.gain.setTargetAtTime(scrape * (W.st.bank ? 0.35 : 0.55), t, 0.04);
+  // ---- the place: reverb send, the gorge's slapback, gravel in the arches, stones off the floor ----
+  const inGorge = W.T.walls.some(w => car.s > w.s0 - 15 && car.s < w.s1 + 15);
+  A.revIn.gain.setTargetAtTime((A.revWet || 0.15) * (onboard ? 0.35 : 1), t, 0.3);
+  A.slap.delayTime.setTargetAtTime(W.st.rows ? 0.05 : 0.042, t, 0.2);
+  A.slapIn.gain.setTargetAtTime(onboard ? 0.05 : inGorge ? 0.3 : W.st.rows ? 0.07 : 0, t, 0.25);
+  const looseGround = !(sid === 'mesa' && car.onRoad);
+  if (A.sp) {
+    const srate = active && !car.air && looseGround ? clamp(spd * 9 + car.slip * 110 + car.wheelspin * 180, 0, 3600) : 0;
+    A.sp.parameters.get('rate').setTargetAtTime(srate, t, 0.05);
+    A.sp.parameters.get('decay').setTargetAtTime(sid === 'frost' ? 0.0035 : 0.0011, t, 0.1);
+    A.spbp.frequency.setTargetAtTime(sid === 'frost' ? 1700 : S.E.wet ? 2600 : 3600, t, 0.1);
+    A.spg.gain.setTargetAtTime(srate > 0 ? (sid === 'frost' ? 0.11 : 0.18) * (onboard ? 1.7 : 1) * (car.onRoad ? 1 : 1.25) : 0, t, 0.05);
+  }
+  if (active && racing && !car.air && looseGround && sid !== 'frost') {
+    A.stoneT += dt * spd / 26 * (1 + car.slip / 5 + car.wheelspin / 3);
+    while (A.stoneT >= 1) { A.stoneT -= 1 + Math.random(); sfx.stone(); }
+  }
+  // handbrake: the hydraulic lever thunks as it goes up
+  if (racing && input.hb && !A.hbPrev) sfx.burst(t, 0.05, 'bandpass', 700, 2, 0.07);
+  A.hbPrev = racing && input.hb;
+  // ---- the crowd: louder the more fans are close to you, and when the car is passing them ----
+  let cw = 0, cx = 0, ex = 0;
+  if (S && S.fans) for (const f of S.fans) {
+    const fx2 = f.x - cam.pos[0], fz2 = f.z - cam.pos[2], d = Math.hypot(fx2, fz2); if (d > 110) continue;
+    const w = Math.exp(-d / 24); cw += w; cx += w * (fx2 * crx + fz2 * crz) / Math.max(d, 1); ex += w * f.jump;
+  }
+  const crowdL = (1 - Math.exp(-cw / 3)) * (racing || mode === 'done' ? 1 : 0.35), excite = cw > 0 ? ex / cw : 0;
+  A.crowd.gain.setTargetAtTime(crowdL * (0.18 + 0.32 * excite) * (onboard ? 0.6 : 1), t, 0.25);
+  if (A.crowdPan.pan) A.crowdPan.pan.setTargetAtTime(cw > 0 ? clamp(cx / cw, -0.8, 0.8) : 0, t, 0.2);
+  if (A.cl) A.cl.parameters.get('rate').setTargetAtTime(crowdL > 0.02 ? 200 + 1400 * excite : 0, t, 0.2);
+  A.voxT -= dt; if (A.voxT <= 0) { A.voxT = 0.08 + Math.random() * 0.14; A.vox.gain.setTargetAtTime((0.05 + 0.35 * excite) * (0.5 + Math.random()), t, 0.06); }
+  if (crowdL > 0.25 && excite > 0.35 && (racing || mode === 'done')) {
+    A.whistleT -= dt * excite * 1.4; if (A.whistleT <= 0) { A.whistleT = 0.6 + Math.random() * 1.6; sfx.whistle(cw > 0 ? cx / cw + (Math.random() - 0.5) * 0.5 : 0); }
+    A.hornT -= dt; if (A.hornT <= 0 && Math.random() < dt * 1.2) { A.hornT = 2.5 + Math.random() * 3; sfx.horn(cw > 0 ? cx / cw : 0); }
+  }
+  // ---- ambience ----
+  A.gustT -= dt; if (A.gustT <= 0) { A.gustT = 1.2 + Math.random() * 3; A.gustTo = Math.random(); }
+  A.gust += ((A.gustTo || 0.4) - A.gust) * Math.min(1, dt * 0.8);
+  const night = W.st.cond === 'night', rain = W.st.cond === 'rain', amb = onboard ? 0.45 : 1;
+  const windK = (sid === 'mesa' ? 0.05 : sid === 'frost' ? (S.E.blizzard ? 0.1 : 0.05) : W.st.rows ? 0.02 : 0.03) * (night ? 0.7 : 1);
+  A.ambW.gain.setTargetAtTime(windK * (0.35 + 0.9 * A.gust) * amb, t, 0.4);
+  A.ambWlp.frequency.setTargetAtTime(380 + A.gust * 600, t, 0.5);
+  A.ambL.gain.setTargetAtTime(sid === 'pine' ? 0.012 * (0.3 + A.gust) * (rain ? 1.5 : 1) * amb : 0, t, 0.4);
+  A.crick.gain.setTargetAtTime(night && sid !== 'frost' ? 0.01 * amb : 0, t, 0.5);
+  if (!night && !rain && sid === 'pine') { A.birdT -= dt; if (A.birdT <= 0) { A.birdT = 2.5 + Math.random() * 6; if (Math.random() < 0.85) sfx.bird(); } }
+  if (!night && sid === 'mesa') { A.hawkT -= dt; if (A.hawkT <= 0) { A.hawkT = 18 + Math.random() * 30; sfx.hawk(); } }
+  if (rain && sid !== 'frost') { A.thunderT -= dt; if (A.thunderT <= 0) { A.thunderT = 25 + Math.random() * 40; sfx.thunder(); } }
   // events
   if (racing || pv) {
     const dump = amt => { if (tune.dump === 'flutter') sfx.flutter(amt, boost); else sfx.bov(amt); };
@@ -2273,7 +2569,10 @@ const fontsReady = document.fonts && document.fonts.load ? Promise.race([
 ]).catch(() => {}) : Promise.resolve();
 fontsReady.then(() => loadStage(curKey(), () => checkChallengeLink()));
 $('optName').value = settings.name || '';
-$('optName').addEventListener('input', () => { settings.name = $('optName').value.replace(/[\u0000-\u001f\u007f<>]/g, '').slice(0, 20); saveSettings(); });
+$('optName').addEventListener('change', () => { const old = settings.name, v = $('optName').value.replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 20); if (!v) { $('optName').value = old || ''; return; } settings.name = v; saveSettings(); if (settings.boardSeeded) renameOnBoard(old, v); else { seedBoard(v); settings.boardSeeded = 1; saveSettings(); } updateDriver(); renderTimes(); });
+updateDriver();
+if (!settings.name) showWelcome(false);
+else if (!settings.boardSeeded) { seedBoard(settings.name); settings.boardSeeded = 1; saveSettings(); }
 addEventListener('hashchange', () => checkChallengeLink());
 requestAnimationFrame(frame);
 if (location.protocol === 'file:') window.__rally = {

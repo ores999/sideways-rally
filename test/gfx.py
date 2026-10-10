@@ -9,7 +9,7 @@ async def shot(b, stage, car, post, tag, t=12, views=None):
     logs = []
     pg.on('console', lambda m: logs.append(f'{m.type}: {m.text}') if m.type in ('error', 'warning') else None)
     pg.on('pageerror', lambda e: logs.append(f'PAGEERROR: {e}'))
-    await pg.add_init_script(f"localStorage.setItem('sideways.settings', JSON.stringify({{stage:{stage}, car:{car}, voice:false, sound:false, ghost:false, shadows:true, post:{'true' if post else 'false'}, cam:0}}))")
+    await pg.add_init_script(f"localStorage.setItem('sideways.settings', JSON.stringify({{stage:{stage}, car:{car}, voice:false, sound:false, ghost:false, shadows:true, post:{'true' if post else 'false'}, cam:0, name:'Tester'}}))")
     await pg.goto(PAGE)
     for i in range(120):
         await pg.wait_for_timeout(500)

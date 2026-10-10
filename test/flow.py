@@ -11,7 +11,7 @@ async def main():
         logs = []
         pg.on('console', lambda m: logs.append(f'{m.type}: {m.text}') if m.type in ('error', 'warning') else None)
         pg.on('pageerror', lambda e: logs.append(f'PAGEERROR: {e}'))
-        await pg.add_init_script("localStorage.setItem('sideways.settings', JSON.stringify({stage:2, car:1, voice:true, sound:true, ghost:true, shadows:false, cam:0}))")
+        await pg.add_init_script("localStorage.setItem('sideways.settings', JSON.stringify({stage:2, car:1, voice:true, sound:true, ghost:true, shadows:false, cam:0, name:'Tester'}))")
         await pg.goto(PAGE)
         for i in range(80):
             await pg.wait_for_timeout(500)
