@@ -1860,7 +1860,8 @@ function updateVis(dt) {
   vis.spin += Math.sign(wr) * (wa < 15 ? wa : 15 + (wa - 15) * 0.25) * dt;
   if (car.air && car.thrE > 0.5) vis.spin += 30 * dt;
   if (car.spinV > 0.5) vis.spin += car.spinV / 0.335 * dt;
-  vis.steer = car.steer * lerp(0.5, 0.18, clamp(Math.abs(car.vF) / 42, 0, 1));
+  // the front wheels show the angle the physics uses, so in a slide they visibly countersteer into it
+  vis.steer += (-(car.delta || 0) - vis.steer) * Math.min(1, dt * 14);
   M4.trs(carMat, vis.x, vis.y + susp.heave + 0.02, vis.z, vis.h, susp.pitch, susp.roll, 1);
   for (let i = 0; i < 4; i++) {
     const [lx, lz] = wheelLocal(i);
@@ -2143,7 +2144,7 @@ function emitEffects(dt) {
   }
 }
 // ---------- impacts ----------
-let hitFlash = 0, flashShown = false;
+let hitFlash = 0, flashShown = false, slideRumbleT = 0;
 const flashEl = $('hitFlash');
 function rumble(strong, weak, ms) {
   try { for (const p of (navigator.getGamepads ? navigator.getGamepads() : [])) if (p && p.vibrationActuator && p.vibrationActuator.playEffect) p.vibrationActuator.playEffect('dual-rumble', { duration: ms, strongMagnitude: clamp(strong, 0, 1), weakMagnitude: clamp(weak, 0, 1) }); } catch (e) { /* no rumble */ }
@@ -2497,6 +2498,12 @@ function tick(dt, doRender) {
   if (mode !== 'paused') {
     if (evt.hit > 3 && (mode === 'race' || mode === 'done')) onImpact(evt);
     if (evt.land > 5) rumble(Math.min(1, evt.land / 16), Math.min(0.6, evt.land / 20), 140);
+    // a pad hums softly through a slide, more the further the tail is out (light motor only, a few times a second)
+    slideRumbleT -= dt;
+    if (mode === 'race' && slideRumbleT <= 0 && !car.air) {
+      const sl = clamp((Math.abs(car.beta) - 0.12) / 0.45, 0, 1) * clamp(Math.hypot(car.vx, car.vz) / 14, 0, 1);
+      if (sl > 0.05) { rumble(0, 0.12 + 0.35 * sl, 140); slideRumbleT = 0.12; }
+    }
     updateDirt(dt);
     S.E.hitK *= Math.exp(-dt * 2.2);
     if (hitFlash > 0.002 || flashShown) { hitFlash *= Math.exp(-dt * 5); flashEl.style.opacity = hitFlash.toFixed(3); flashShown = hitFlash > 0.002; }

@@ -797,7 +797,7 @@ function resetCar(W, c, s) {
 
 const tyreF = al => Math.sin(1.45 * Math.atan(al));
 const FEEL0 = { lag: 0, kick: 1, ayc: 0, push: 0, twitch: 1 };
-const TUNE = { assist: 0.5, yawDamp: 0.7, turnAssist: 0.55, frontGrip: 1.0, rearGrip: 1.08, Bmul: 1, lockK: 17, latGrip: 1.1, absF: 0.4, absR: 0.35, tcF: 0.4, tcR: 0.6, hold: 6, holdK: 1.4, wt: 0.6, spinMax: 4.5, holdB: 0.6, trail: 3, trailK: 1.2, lowGrip: 0.12, edgeA: -0.1, edgeB: 2.0, edgeMix: 0.5, edgeBin: 0, slideA: 0.03, slideB: 0.2, slideF: 1, spinK: 5, spinB: 0.5, spinV: 12, impactP: 0.6 };
+const TUNE = { assist: 0.5, yawDamp: 0.7, turnAssist: 0.55, frontGrip: 1.0, rearGrip: 1.08, Bmul: 1, lockK: 17, latGrip: 1.1, absF: 0.4, absR: 0.35, tcF: 0.4, tcR: 0.6, hold: 6, holdK: 1.4, wt: 0.6, spinMax: 4.5, holdB: 0.6, trail: 3, trailK: 1.2, lowGrip: 0.12, edgeA: -0.1, edgeB: 2.0, edgeMix: 0.5, edgeBin: 0, slideA: 0.03, slideB: 0.2, slideF: 1, spinK: 5, spinB: 0.5, spinV: 12, impactP: 0.6, rearSlide: 0.85, rsA: 0.15, rsB: 0.32, rsT0: 0.5, rsT1: 0.9, rsS0: 0.05, rsS1: 0.3 };
 
 function stepCar(W, c, P, inp, dt) {
   const T = W.T;
@@ -919,6 +919,7 @@ function dynamics(W, c, P, inp, dt) {
   let delta = -c.steer * lockV;
   if (vx > 1) delta += TUNE.assist * beta * clamp(spd / 6, 0, 1);
   delta = clamp(delta, -P.lock, P.lock);
+  c.delta = delta; // the wheels' real angle (driver + self-aligning countersteer), for drawing them
   // ---- longitudinal per axle ----
   const sgn = vx >= 0 ? 1 : -1;
   let FdF = Fdrive * P.drive.front, FdR = Fdrive * (1 - P.drive.front);
@@ -959,7 +960,12 @@ function dynamics(W, c, P, inp, dt) {
   const kR = inp.hb ? 0.3 : Math.sqrt(Math.max(0.04, 1 - (FxR / capR) * (FxR / capR)));
   const push = 1 - F.push * 0.12 * thr * clamp((spd - 8) / 15, 0, 1); // a heavy nose runs wide under power
   const FyF = -capF * tyreF(BtF * af) * kF * TUNE.frontGrip * (P.frontGrip || 1) * TUNE.latGrip * lowG * push;
-  const FyR = -capR * tyreF(BtR * ar) * kR * TUNE.rearGrip * (P.rearGrip || 1) * TUNE.latGrip * lowG;
+  // Power on in a real slide (the tail well out, the wheel turned either way): the spinning rear tyres give up some of
+  // their side grip, so the throttle holds the slide instead of the rear pulling the car straight. Off the throttle,
+  // or with the wheel straight to come out of it, the rear grips as before.
+  const slideK = TUNE.rearSlide == null ? 0 : sstep(TUNE.rsA, TUNE.rsB, Math.abs(ar)) * sstep(TUNE.rsT0, TUNE.rsT1, thr) * sstep(TUNE.rsS0, TUNE.rsS1, Math.abs(c.steer));
+  const rearK = lerp(TUNE.rearGrip, TUNE.rearSlide == null ? TUNE.rearGrip : TUNE.rearSlide, slideK);
+  const FyR = -capR * tyreF(BtR * ar) * kR * rearK * (P.rearGrip || 1) * TUNE.latGrip * lowG;
   // ---- forces ----
   const cd = Math.cos(delta), sd = Math.sin(delta);
   const drag = 0.6 * P.CdA * vx * Math.abs(vx);
