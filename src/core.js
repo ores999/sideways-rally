@@ -479,6 +479,33 @@ function project(T, i, x, z, out) {
   return out;
 }
 
+// The car's place on the road, continuous through tight corners. Projecting onto the polyline (project) jumps on
+// the inside of a bend: past each vertex the foot of the perpendicular hops forward by about lat × the turn angle,
+// ~0.2 m a sample in a hairpin, which on a climbing road kicked the car upwards. Here the position between two
+// samples comes from the normal lines at both ends (the same lines the road mesh is built on), so s and lat move
+// smoothly and the height under the car is exactly the drawn road's. Falls back to project where those normals
+// cross (far inside a bend) or at the ends.
+function projectRoad(T, i, x, z, out) {
+  let j = i;
+  if (i >= T.n - 1) j = T.n - 2;
+  else if (i > 0 && (x - T.X[i]) * Math.sin(T.H[i]) + (z - T.Z[i]) * Math.cos(T.H[i]) < 0) j = i - 1;
+  const d0 = (x - T.X[j]) * Math.sin(T.H[j]) + (z - T.Z[j]) * Math.cos(T.H[j]);
+  const d1 = (x - T.X[j + 1]) * Math.sin(T.H[j + 1]) + (z - T.Z[j + 1]) * Math.cos(T.H[j + 1]);
+  if (j === 0 || j === T.n - 2 || !(d0 - d1 > 1e-6)) return project(T, i, x, z, out);
+  const f = clamp(d0 / (d0 - d1), 0, 1);
+  if (f <= 0 || f >= 1) { if (d0 < -0.01 || d1 > 0.01) return project(T, i, x, z, out); }
+  const h = T.H[j] + (T.H[j + 1] - T.H[j]) * f, tx = Math.sin(h), tz = Math.cos(h), rx = -tz, rz = tx;
+  const px = lerp(T.X[j], T.X[j + 1], f), pz = lerp(T.Z[j], T.Z[j + 1], f);
+  out.lat = (x - px) * rx + (z - pz) * rz;
+  if (Math.abs(out.lat) > T.hw + 8) return project(T, i, x, z, out);
+  out.s = (j + f) * 2;
+  out.roadY = lerp(T.Y[j], T.Y[j + 1], f);
+  out.tx = tx; out.tz = tz; out.rx = rx; out.rz = rz;
+  out.dist = Math.abs(out.lat);
+  out.seg = j;
+  return out;
+}
+
 // ---------------- Terrain ----------------
 function terrainNatural(st, nz, x, z, d, lat, s, T) {
   if (st.kind === 'pine') {
@@ -734,7 +761,7 @@ function locate(T, c) {
   let bi = c.idx, bd = 1e18;
   for (let i = lo; i <= hi; i++) { const dx = c.x - T.X[i], dz = c.z - T.Z[i]; const d = dx * dx + dz * dz; if (d < bd) { bd = d; bi = i; } }
   c.idx = bi;
-  project(T, bi, c.x, c.z, c.rd);
+  projectRoad(T, bi, c.x, c.z, c.rd);
   c.s = c.rd.s; c.lat = c.rd.lat;
 }
 

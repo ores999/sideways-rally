@@ -200,17 +200,17 @@ function terrainMesh(W) {
     if (st.kind === 'pine') {
       c = mixc(pal[0], pal[1], n1); c = mixc(c, pal[2], n3 * 0.6); c = mixc(c, pal[3], Math.max(0, n2 - 0.6) * 1.6);
       c = mixc(c, rock, C.sstep(0.18, 0.4, slope));
-      c = mixc(c, verge, (1 - C.sstep(hw + 1.5, hw + 5, d)) * 0.85);
+      c = mixc(c, verge, (1 - C.sstep(hw + 1.3, hw + 3.2, d)) * 0.75);
     } else if (st.kind === 'frost') {
       c = mixc(pal[0], pal[1], n1); c = mixc(c, pal[2], n2 * 0.5);
       c = mixc(c, rock, C.sstep(0.32, 0.6, slope) * 0.85);
-      c = mixc(c, verge, (1 - C.sstep(hw + 2, hw + 6, d)) * 0.6);
+      c = mixc(c, verge, (1 - C.sstep(hw + 1.6, hw + 4, d)) * 0.55);
     } else {
       c = mixc(pal[0], pal[1], n1); c = mixc(c, pal[2], n3 * 0.7); c = mixc(c, pal[3], Math.max(0, n2 - 0.55) * 1.4);
       const band = Math.floor((y + nz.n2(x / 50, z / 50) * 1.5) / 3.2);
       const sc = strata[((band % 4) + 4) % 4];
       c = mixc(c, sc, C.sstep(0.12, 0.35, slope));
-      c = mixc(c, verge, (1 - C.sstep(hw + 1.5, hw + 4, d)) * 0.7);
+      c = mixc(c, verge, (1 - C.sstep(hw + 1.3, hw + 3.2, d)) * 0.65);
     }
     col[k * 4] = c[0]; col[k * 4 + 1] = c[1]; col[k * 4 + 2] = c[2]; col[k * 4 + 3] = 0;
   }

@@ -329,7 +329,8 @@ void main(){
     vec3 c = mix(u_r1, u_r2, clamp(rut*(0.55+0.5*n1), 0.0, 1.0));
     if (u_lines > 0.5) {
       // tarmac: aggregate grain, rubbered-in wheel lines, repair patches, sealed cracks
-      float agg = vnoise(m*30.0)*0.55 + vnoise(m*83.0)*0.45;
+      vec2 wg = v_wp.xz; // grain in world space: it doesn't squash and stretch round tight bends like road coordinates do
+      float agg = vnoise(wg*30.0)*0.55 + vnoise(wg*83.0)*0.45;
       c *= 1.0 + (mix(0.5, agg, fine) - 0.5) * 0.24;
       c = mix(c, u_r3, smoothstep(0.74, 0.92, vnoise(m*57.0 + 9.0)) * 0.3 * fine);
       vec2 pg = m / vec2(3.1, 9.0), pf = fract(pg);
@@ -350,7 +351,7 @@ void main(){
       bh = (agg * fine * 0.7 - crack * 0.6) * (1.0 - e); bk = 0.006;
     } else if (u_icy > 0.5) {
       // packed snow: crusty between the ruts, polished ice in them, loose powder pushed to the sides
-      float crust = vnoise(m*7.0)*0.6 + vnoise(m*19.0)*0.4;
+      float crust = vnoise(v_wp.xz*7.0)*0.6 + vnoise(v_wp.xz*19.0)*0.4;
       float streak = vnoise(vec2(m.x*18.0, m.y*0.3));
       c *= 0.93 + 0.13 * mix(0.5, crust, mid);
       c = mix(c, u_r2 * 0.92, rut * smoothstep(0.45, 0.8, streak) * 0.35 * mid);
@@ -366,8 +367,10 @@ void main(){
       float loose = clamp(1.0 - rut*1.3, 0.0, 1.0) * (0.6 + 0.4*n1);
       // stone cells come from a pre-computed Voronoi texture (world.js gravelTex): small stones in rgb (shade, joint,
       // dome), sparse bigger ones in a, read through two different rotations so the tiles never line up
-      vec4 ga = texture(u_tex, vec2(m.x * 0.94 - m.y * 0.34, m.x * 0.34 + m.y * 0.94));
-      vec4 gb = texture(u_tex, vec2(m.x * 0.82 + m.y * 0.57, m.y * 0.82 - m.x * 0.57) + 0.37);
+      // the stones are laid in world space, so they stay round on the inside and outside of a hairpin
+      vec2 wg = v_wp.xz;
+      vec4 ga = texture(u_tex, vec2(wg.x * 0.94 - wg.y * 0.34, wg.x * 0.34 + wg.y * 0.94));
+      vec4 gb = texture(u_tex, vec2(wg.x * 0.82 + wg.y * 0.57, wg.y * 0.82 - wg.x * 0.57) + 0.37);
       float big = smoothstep(0.03, 0.2, gb.a) * loose, bs = clamp((gb.a - 0.25) / 0.75, 0.0, 1.0);
       float flat0 = mix(1.0, 0.45, rut);  // wheels have pressed the small stones into the surface
       c *= 1.0 + (ga.r - 0.5) * 0.36 * fine * flat0;
