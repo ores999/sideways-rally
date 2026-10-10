@@ -684,7 +684,7 @@ function renameOnBoard(from, to) { if (!from || from === to) return; const b = b
 // ---- online board (Supabase, see online/README.md) ----
 // With a project URL and its public key the board is shared: every new best goes up, and the table for a stage is
 // fetched (cached 30 s) and merged with this browser's. Without them, or offline, the local board is all there is.
-const ONLINE = { url: '', key: '' };
+const ONLINE = { url: 'https://vbklwyvoehukqlplpfjw.supabase.co', key: 'sb_publishable_uFGnQh0R6rZTuaPa7cb4eA_bBMXRcpn' };
 const online = { on: !!(ONLINE.url && ONLINE.key), cache: new Map(), status: 'idle', busy: new Set() };
 function onlineHeaders(json) {
   const h = { apikey: ONLINE.key };
@@ -703,8 +703,11 @@ async function onlineFetch(key) {
     const rows = (await r.json()).filter(x => x && typeof x.name === 'string' && carById(x.car) && x.time > 20).map(x => ({ n: cleanName(x.name), k: x.stage, c: x.car, t: +x.time, d: Date.parse(x.created_at) || 0, o: 1 }));
     online.cache.set(key, { at: performance.now(), rows }); online.status = 'ok';
     return rows;
-  } catch (e) { online.status = 'error'; return c ? c.rows : null; }
-  finally { online.busy.delete(key); }
+  } catch (e) {
+    // remembered for the same 30 s, so a missing connection doesn't turn into a retry loop
+    online.cache.set(key, { at: performance.now(), rows: c ? c.rows : [] }); online.status = 'error';
+    return c ? c.rows : [];
+  } finally { online.busy.delete(key); }
 }
 // your bests that haven't gone up yet (all of them the first time, so times set before the board existed count too)
 let syncing = false;
@@ -767,7 +770,8 @@ function renderTimes() {
   const key = timesStage || curKeyMenu();
   if (online.on) {
     const c = online.cache.get(key);
-    if (!c || performance.now() - c.at >= 30000) onlineFetch(key).then(rows => { if (rows && (timesStage || curKeyMenu()) === key) renderTimes(); });
+    // one request at a time per stage: drawing again while it is out must not start (or wait on) another
+    if ((!c || performance.now() - c.at >= 30000) && !online.busy.has(key)) onlineFetch(key).then(() => { if ((timesStage || curKeyMenu()) === key) renderTimes(); });
   }
 }
 async function shareTimes() {
