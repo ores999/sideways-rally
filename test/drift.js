@@ -33,7 +33,8 @@ function hold(W, P, target, v0) {
     const b = c.beta, e = b - target;            // too much angle → countersteer (steer right, +)
     ie = Math.max(-0.6, Math.min(0.6, ie + e / 120));
     const steer = Math.max(-1, Math.min(1, -0.35 + 2.6 * e + 1.2 * ie + 0.18 * c.w));
-    const spd = Math.hypot(c.vx, c.vz), thr = Math.max(0, Math.min(1, 0.55 + 0.12 * (v0 - spd) - 1.5 * e));
+    // the right foot works the angle (as a drifter's does), easing off only well over the entry speed
+    const spd = Math.hypot(c.vx, c.vz), thr = Math.max(0, Math.min(1, 0.75 - 2.2 * e - 0.15 * Math.max(0, spd - v0 - 5)));
     step(W, c, P, { steer, thr });
     if (i >= 120) { se += e * e; n++; vSum += spd; }
     if (Math.abs(c.beta) > 75 / D) spun = true;
@@ -50,7 +51,7 @@ function throttle(W, P, v0) {
     const e = c.beta - target; ie = Math.max(-0.6, Math.min(0.6, ie + e / 120));
     steer = Math.max(-1, Math.min(1, -0.35 + 2.6 * e + 1.2 * ie + 0.18 * c.w));
     const spd = Math.hypot(c.vx, c.vz);
-    step(W, c, P, { steer, thr: Math.max(0, Math.min(1, 0.55 + 0.12 * (v0 - spd) - 1.5 * e)) });
+    step(W, c, P, { steer, thr: Math.max(0, Math.min(1, 0.75 - 2.2 * e - 0.15 * Math.max(0, spd - v0 - 5))) });
   }
   const b0 = c.beta, out = {};
   for (const thr of [0.3, 1]) {
@@ -70,7 +71,7 @@ function keys(W, P, target, v0) {
       const e = c.beta - target, spd = Math.hypot(c.vx, c.vz);
       // too little angle: turn in and stay on the throttle; too much: countersteer and lift; in between: ease off
       const steer = e < -0.06 ? -1 : e > 0.08 ? 1 : (c.w > 0.9 ? 1 : c.w < 0.35 ? -1 : 0);
-      const thr = e > 0.12 || spd > v0 + 4 ? 0 : 1;
+      const thr = e > 0.1 || spd > v0 + 8 ? 0 : 1;
       q.push({ steer, thr }); if (q.length > 3) cur = q.shift();
     }
     C.stepCar(W, c, P, { steer: cur.steer, thr: cur.thr, brk: 0, hb: false, analog: false }, 1 / 120);
