@@ -1,0 +1,29 @@
+-- Sideways Rally online leaderboard (Supabase / Postgres).
+-- Run this once in the project's SQL Editor. Anyone with the game can read times and add their own;
+-- nobody can change or delete rows from the game (there are no update/delete policies).
+
+create table if not exists public.times (
+  id bigint generated always as identity primary key,
+  created_at timestamptz not null default now(),
+  name text not null check (char_length(name) between 1 and 20),
+  stage text not null check (stage ~ '^(pine|frost|mesa|forest)(-r)?(-night|-rain)?$' or stage ~ '^daily-[0-9]{8}$'),
+  car text not null check (car in ('foca', 'impressa', 'lancha', 'delta', 'pejo', 'kwattro', 'selica')),
+  time real not null check (time > 20 and time < 1200),
+  splits real[] not null default '{}' check (cardinality(splits) <= 4)
+);
+create index if not exists times_stage_time on public.times (stage, time);
+
+alter table public.times enable row level security;
+drop policy if exists "read times" on public.times;
+create policy "read times" on public.times for select to anon, authenticated using (true);
+drop policy if exists "add a time" on public.times;
+create policy "add a time" on public.times for insert to anon, authenticated with check (true);
+
+-- one row per driver (name, case-insensitive), stage and car: their best
+create or replace view public.best_times with (security_invoker = true) as
+  select distinct on (lower(name), stage, car) name, stage, car, time, created_at
+  from public.times
+  order by lower(name), stage, car, time asc, created_at asc;
+
+grant select, insert on public.times to anon, authenticated;
+grant select on public.best_times to anon, authenticated;

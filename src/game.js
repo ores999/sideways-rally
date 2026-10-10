@@ -681,6 +681,50 @@ function seedBoard(name) {
   boardAdd(list);
 }
 function renameOnBoard(from, to) { if (!from || from === to) return; const b = boardAll(); for (const e of b) if (!e.f && e.n === from) e.n = to; store.set('board', b); }
+// ---- online board (Supabase, see online/README.md) ----
+// With a project URL and its public key the board is shared: every new best goes up, and the table for a stage is
+// fetched (cached 30 s) and merged with this browser's. Without them, or offline, the local board is all there is.
+const ONLINE = { url: '', key: '' };
+const online = { on: !!(ONLINE.url && ONLINE.key), cache: new Map(), status: 'idle', busy: new Set() };
+function onlineHeaders(json) {
+  const h = { apikey: ONLINE.key };
+  if (/^eyJ/.test(ONLINE.key)) h.Authorization = 'Bearer ' + ONLINE.key; // legacy anon keys are JWTs; publishable keys go in apikey only
+  if (json) { h['Content-Type'] = 'application/json'; h.Prefer = 'return=minimal'; }
+  return h;
+}
+async function onlineFetch(key) {
+  const c = online.cache.get(key);
+  if (c && performance.now() - c.at < 30000) return c.rows;
+  if (online.busy.has(key)) return c ? c.rows : null;
+  online.busy.add(key);
+  try {
+    const r = await fetch(ONLINE.url.replace(/\/$/, '') + '/rest/v1/best_times?select=name,stage,car,time,created_at&stage=eq.' + encodeURIComponent(key) + '&order=time.asc&limit=200', { headers: onlineHeaders(false) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const rows = (await r.json()).filter(x => x && typeof x.name === 'string' && carById(x.car) && x.time > 20).map(x => ({ n: cleanName(x.name), k: x.stage, c: x.car, t: +x.time, d: Date.parse(x.created_at) || 0, o: 1 }));
+    online.cache.set(key, { at: performance.now(), rows }); online.status = 'ok';
+    return rows;
+  } catch (e) { online.status = 'error'; return c ? c.rows : null; }
+  finally { online.busy.delete(key); }
+}
+// your bests that haven't gone up yet (all of them the first time, so times set before the board existed count too)
+let syncing = false;
+async function onlineSync() {
+  if (!online.on || !settings.name || syncing) return;
+  const sent = new Set(store.get('sent', [])), me = settings.name.toLowerCase(), id = e => e.n.toLowerCase() + '|' + e.k + '|' + e.c + '|' + e.t.toFixed(3);
+  const todo = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && !sent.has(id(e))).slice(0, 200);
+  if (!todo.length) return;
+  syncing = true;
+  try {
+    const r = await fetch(ONLINE.url.replace(/\/$/, '') + '/rest/v1/times', { method: 'POST', headers: onlineHeaders(true),
+      body: JSON.stringify(todo.map(e => ({ name: e.n, stage: e.k, car: e.c, time: +e.t.toFixed(3), splits: (e.s || []).slice(0, 4).map(x => +(+x).toFixed(3)) }))) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    for (const e of todo) sent.add(id(e));
+    store.set('sent', [...sent].slice(-3000));
+    for (const e of todo) online.cache.delete(e.k);
+    online.status = 'ok'; renderTimes();
+  } catch (e) { online.status = 'error'; }
+  finally { syncing = false; }
+}
 let timesStage = null, timesCar = 'all';
 function renderTimes() {
   for (const box of [$('gTimes'), $('timesInline')]) {
@@ -698,8 +742,16 @@ function renderTimes() {
     cs.addEventListener('change', () => { timesCar = cs.value; renderTimes(); });
     f.append(ss, cs);
     box.append(head, f);
-    let rows = b.filter(e => e.k === key && (timesCar === 'all' || e.c === timesCar)).sort((a, c) => a.t - c.t).slice(0, 40);
+    // this browser's times and the online ones, one row per driver and car (the better of the two)
+    const oc = online.on ? online.cache.get(key) : null, merged = new Map();
+    for (const e of [...b.filter(x => x.k === key), ...(oc ? oc.rows : [])]) {
+      const id = e.n.toLowerCase() + '|' + e.c, have = merged.get(id);
+      if (!have || e.t < have.t - 1e-4) merged.set(id, e);
+    }
+    let rows = [...merged.values()].filter(e => timesCar === 'all' || e.c === timesCar).sort((a, c) => a.t - c.t).slice(0, 40);
     if (rival && loadedKey === key && (timesCar === 'all' || timesCar === P.id)) rows = [...rows, { n: W.st.rival + ' (AI)', c: P.id, t: rival.time, ai: 1 }].sort((a, c) => a.t - c.t);
+    const note = el('p', 'board-note', online.on ? (online.status === 'error' ? 'Offline: showing this browser\'s times' : oc ? 'Online leaderboard' : 'Loading the online leaderboard…') : 'Times on this browser and from friends\' links');
+    box.append(note);
     if (!rows.length) { box.append(el('p', 'empty', 'No times on this stage yet. Set one, or open a friend\'s link.')); continue; }
     const tb = el('table', 'tt board'), hr = el('tr');
     ['', 'Driver', 'Car', 'Time', 'Gap'].forEach(h => hr.append(el('th', null, h))); tb.append(hr);
@@ -710,6 +762,12 @@ function renderTimes() {
       tb.append(tr);
     });
     box.append(tb);
+  }
+  // fetch the online table for this stage and draw again when it arrives
+  const key = timesStage || curKeyMenu();
+  if (online.on) {
+    const c = online.cache.get(key);
+    if (!c || performance.now() - c.at >= 30000) onlineFetch(key).then(rows => { if (rows && (timesStage || curKeyMenu()) === key) renderTimes(); });
   }
 }
 async function shareTimes() {
@@ -745,7 +803,7 @@ function confirmName() {
   $('optName').value = name;
   if (!settings.boardSeeded) { seedBoard(name); settings.boardSeeded = 1; saveSettings(); } else renameOnBoard(old, name);
   $('welcome').hidden = true;
-  updateDriver(); renderTimes();
+  updateDriver(); renderTimes(); onlineSync();
 }
 function updateDriver() { $('driverName').textContent = settings.name || '—'; }
 $('wGo').addEventListener('click', confirmName);
@@ -806,7 +864,7 @@ function finish() {
     pb = { t: finishT, car: P.id, splits: splitsHit.slice(), ghost }; pb.sArr = refCurve(ghost);
   }
   if (medal > store.get('medal.' + key, 0)) store.set('medal.' + key, medal);
-  if (settings.name) boardAdd([{ n: settings.name, k: key, c: P.id, t: finishT, s: splitsHit.slice(), d: Date.now() }]);
+  if (settings.name && boardAdd([{ n: settings.name, k: key, c: P.id, t: finishT, s: splitsHit.slice(), d: Date.now() }])) onlineSync();
   rallyLeg = rallyOn() ? rallyFinishLeg(finishT) : null;
   center(`<div class="mid yel">Finish</div><div class="sub">${fmt(finishT)}</div>`, 2.4);
   sfx.beep(880, 0.12); setTimeout(() => sfx.beep(1320, 0.25), 140);
@@ -2573,6 +2631,7 @@ $('optName').addEventListener('change', () => { const old = settings.name, v = $
 updateDriver();
 if (!settings.name) showWelcome(false);
 else if (!settings.boardSeeded) { seedBoard(settings.name); settings.boardSeeded = 1; saveSettings(); }
+setTimeout(onlineSync, 1500);
 addEventListener('hashchange', () => checkChallengeLink());
 requestAnimationFrame(frame);
 if (location.protocol === 'file:') window.__rally = {
