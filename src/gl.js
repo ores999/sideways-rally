@@ -194,8 +194,8 @@ uniform mat4 u_model, u_vp, u_svp, u_svp2;
 uniform vec2 u_shNo;
 uniform float u_sway, u_time;
 uniform vec3 u_hitPos; uniform float u_hitK;
-uniform vec3 u_sunDir; uniform float u_cld;
-out vec3 v_wp; out vec3 v_n; out vec4 v_col; out vec2 v_uv; out vec4 v_sp; out vec3 v_ic; out vec3 v_lp; out vec4 v_sp2; out float v_cs;
+uniform vec3 u_sunDir; uniform float u_cld; uniform vec3 u_cam;
+out vec3 v_wp; out vec3 v_n; out vec4 v_col; out vec2 v_uv; out vec4 v_sp; out vec3 v_ic; out vec3 v_lp; out vec4 v_sp2; out float v_cs; out float v_ld;
 ${COMMON}
 ${CLOUDS}
 void main(){
@@ -217,6 +217,7 @@ void main(){
   vec3 n = vec3(c*a_nrm.x + s*a_nrm.z, a_nrm.y, -s*a_nrm.x + c*a_nrm.z);
   vec4 wp = u_model * vec4(q, 1.0);
   v_lp = q;
+  v_ld = length(a_i0.xz - u_cam.xz); // the instance's ground distance, for dissolving between levels of detail
   v_wp = wp.xyz; v_n = mat3(u_model) * n; v_col = a_col; v_uv = a_uv + vec2(a_i1.z, 0.0);
   v_ic = a_uv.y < -0.5 ? vec3(1.0) : a_ic;
   // shadow coordinates for both cascades, pushed out along the normal by about a texel of each (no acne, no peter-panning)
@@ -235,7 +236,8 @@ void main(){
 const LIT_FS = `#version 300 es
 precision highp float;
 precision highp sampler2DShadow;
-in vec3 v_wp; in vec3 v_n; in vec4 v_col; in vec2 v_uv; in vec4 v_sp; in vec3 v_ic; in vec3 v_lp; in vec4 v_sp2; in float v_cs;
+in vec3 v_wp; in vec3 v_n; in vec4 v_col; in vec2 v_uv; in vec4 v_sp; in vec3 v_ic; in vec3 v_lp; in vec4 v_sp2; in float v_cs; in float v_ld;
+uniform vec4 u_lodB; // dissolve band below this level (x,y) and above it (z,w), in metres of ground distance
 uniform vec3 u_sunDir, u_sunCol, u_sky, u_gnd, u_fogCol, u_cam;
 uniform vec2 u_fog;
 uniform int u_mode;
@@ -300,6 +302,12 @@ float shadowF(){
   return mix(pcf(s0, 0.0, 1.7, 0.0003), far, k);
 }
 void main(){
+  if (u_lodB.x > -1e8 || u_lodB.z < 1e8) {
+    // screen-door dissolve between two levels of detail of the same tree: inside the band each pixel belongs to
+    // exactly one of them (the same hash decides for both), so the swap never pops
+    float h = hash12(floor(gl_FragCoord.xy) * 0.731 + 3.17);
+    if (h >= smoothstep(u_lodB.x, u_lodB.y, v_ld) || h < smoothstep(u_lodB.z, u_lodB.w, v_ld)) discard;
+  }
   vec3 base = v_col.rgb * v_ic * u_tint;
   vec3 n = normalize(v_n);
   float spec = v_col.a;
@@ -1220,17 +1228,27 @@ function createRenderer(canvas) {
       if (re > rs) gl.drawElements(gl.TRIANGLES, re - rs, gl.UNSIGNED_INT, rs * 4);
       return;
     }
-    if (m.inst && m.lod && (cullDistOn || shadowLod)) {
-      // instanced props with a simpler far version: near cells draw the full mesh, far cells the low one
-      // (same instance order in both, so the chunks line up)
-      const D = cullDistOn ? m.lod.dist : m.lod.shadowDist || m.lod.dist, near = c => groundDist(c.box) <= D;
-      instRuns(m, m, maxD, near);
-      gl.bindVertexArray(m.lod.m.vao);
-      instRuns(m, m.lod.m, maxD, c => !near(c));
+    if (m.inst && m.lods && (cullDistOn || shadowLod)) {
+      // instanced props with simpler versions for distance: m.lods = [{ m, dist, band }, …, { m }], all built from
+      // the same instance data so the chunks line up. Each level covers its range plus the dissolve bands on either
+      // side (the shader splits the pixels in a band between the two levels). The shadow pass casts with the last,
+      // solid level everywhere (the depth pass has no alpha test).
+      const L = m.lods;
+      if (!cullDistOn) { const last = L[L.length - 1].m; gl.bindVertexArray(last.vao); instRuns(m, last, maxD, null); return; }
+      const u = prog.lit.u.u_lodB;
+      for (let i = 0; i < L.length; i++) {
+        const a = i ? L[i - 1] : null, b = i < L.length - 1 ? L[i] : null;
+        const lo = a ? a.dist - a.band : -1, hi = b ? b.dist + b.band : Infinity;
+        gl.uniform4f(u, a ? a.dist - a.band : -1e9, a ? a.dist + a.band : -1e9 + 1, b ? b.dist - b.band : 1e9, b ? b.dist + b.band : 1e9 + 1);
+        gl.bindVertexArray(L[i].m.vao);
+        instRuns(m, L[i].m, maxD, c => groundDistMax(c.box) >= lo && groundDist(c.box) <= hi);
+      }
+      gl.uniform4f(u, -1e9, -1e9 + 1, 1e9, 1e9 + 1);
       return;
     }
     instRuns(m, m, maxD, null);
   }
+  function groundDistMax(b) { const dx = Math.max(Math.abs(cullCam[0] - b[0]), Math.abs(cullCam[0] - b[3])), dz = Math.max(Math.abs(cullCam[2] - b[2]), Math.abs(cullCam[2] - b[5])); return Math.hypot(dx, dz); }
   function groundDist(b) { const dx = Math.max(b[0] - cullCam[0], 0, cullCam[0] - b[3]), dz = Math.max(b[2] - cullCam[2], 0, cullCam[2] - b[5]); return Math.hypot(dx, dz); }
   // runs of consecutive chunks of `src` that are visible (and pass `pred`), drawn with `tgt`'s geometry and instances
   function instRuns(src, tgt, maxD, pred) {
@@ -1382,6 +1400,7 @@ function createRenderer(canvas) {
     gl.uniform3fv(u.u_glw, E.glow ? [E.glow[0] * 0.35, E.glow[1] * 0.35, E.glow[2] * 0.35] : [0, 0, 0]); gl.uniform1f(u.u_cld, E.clouds || 0);
     gl.uniform3fv(u.u_hlPos, E.hlPos || [0, 0, 0]); gl.uniform3fv(u.u_hlDir, E.hlDir || [0, 0, 1]); gl.uniform1f(u.u_hlOn, E.hlOn || 0);
     gl.uniform1f(u.u_wet, E.wet || 0);
+    gl.uniform4f(u.u_lodB, -1e9, -1e9 + 1, 1e9, 1e9 + 1);
     gl.uniform3fv(u.u_skyline, E.skyline || E.gnd);
     gl.uniform3fv(u.u_hitPos, E.hitPos || [0, -999, 0]); gl.uniform1f(u.u_hitK, E.hitK || 0);
     gl.uniform1f(u.u_dirt, 0);

@@ -95,7 +95,7 @@ function env(st) {
     sunCol: scalec(lin(V.sunCol), V.sunI), sky: scalec(lin(V.sky), V.skyI), gnd: scalec(lin(V.gnd), V.gndI),
     fogCol: lin(V.fogCol), fog: V.fog.slice(), zen: lin(V.zen), glow: lin(V.glow), sunDisc: lin(V.sunDisc), cloudCol: lin(V.cloudCol), clouds: V.clouds, stars: V.stars || 0,
     exp: V.exp, r1: lin(V.road[0]), r2: lin(V.road[1]), r3: lin(V.road[2]), lines: V.lines, icy: V.icy, time: 0, shadows: true,
-    grade: V.grade, folFade: [70, 105], verge: lin(V.verge), tt: V.tt,
+    grade: V.grade, folFade: [100, 150], verge: lin(V.verge), tt: V.tt,
     skyline: skylineOf(V, st),
     night: !!V.night, hlK: V.hl || 1, wet: V.wet || 0, rain: !!V.rain, blizzard: !!V.blizzard, snowfall: !!V.snowfall || !!V.blizzard, overcast: V.overcast || 0,
   };
@@ -473,13 +473,15 @@ function trunkPart(g, h, r0, r1, seg, colK, uvr, flag) {
     g.quad([P(a0, -0.3, r0), N(a0), c, U(a0, -0.3)], [P(a1, -0.3, r0), N(a1), c, U(a1, -0.3)], [P(a1, h, r1), N(a1), c, U(a1, h)], [P(a0, h, r1), N(a0), c, U(a0, h)]);
   }
 }
-function pineGeo(V, snowy, variant) {
+// mid: the version for the middle distance (100-230 m): about half the whorls, fewer and wider single-segment sprays,
+// a coarser core. Same atlas and colours, so the dissolve from the full tree is invisible.
+function pineGeo(V, snowy, variant, mid) {
   const S = PINE_SHAPES[variant || 0], R = C.rng(311 + (variant || 0) * 97), g = rawGeo();
   const trunk = scalec(lin(V.trunk), 2.4);
-  trunkPart(g, S.h * 0.82, 0.21, 0.07, 8, trunk, TA.bark, -2); // uv.y shifted by -2: no instance tint (bark), see LIT_FS mode 10
+  trunkPart(g, S.h * 0.82, 0.21, 0.07, mid ? 5 : 8, trunk, TA.bark, -2); // uv.y shifted by -2: no instance tint (bark), see LIT_FS mode 10
   const radAt = y => { const f = Math.min(1, Math.max(0, (y - S.base) / (S.h - S.base))); return S.r1 + (S.r0 - S.r1) * Math.pow(1 - f, 1.1); };
   // inner cone: dense needles, dark
-  { const rings = 7, seg = 8;
+  { const rings = mid ? 4 : 7, seg = mid ? 6 : 8;
     for (let k = 0; k < rings; k++) {
       const y0 = S.base - 0.2 + (S.h - S.base) * k / rings, y1 = S.base - 0.2 + (S.h - S.base) * (k + 1) / rings;
       const r0 = radAt(y0) * S.core, r1 = k === rings - 1 ? 0 : radAt(y1) * S.core;
@@ -498,7 +500,7 @@ function pineGeo(V, snowy, variant) {
     const dir = [Math.cos(th), 0, Math.sin(th)], side = [-Math.sin(th), 0, Math.cos(th)];
     const pt = t => { const r = 0.12 + L * t; return [dir[0] * r, y0 + L * (0.12 * t - droop * t * t), dir[2] * r]; };
     const tan = t => nrm3([dir[0] * L, L * (0.12 - 2 * droop * t), dir[2] * L]);
-    const segs = 3, wid = L * 0.62;
+    const segs = mid ? 1 : 3, wid = L * (mid ? 0.82 : 0.62);
     let prev = null;
     for (let q = 0; q <= segs; q++) {
       const t = q / segs, P = pt(t), T = tan(t), B = nrm3(cross3(side, T));
@@ -514,10 +516,11 @@ function pineGeo(V, snowy, variant) {
       prev = row;
     }
   };
-  for (let k = 0; k < S.whorls; k++) {
-    const f = k / (S.whorls - 1), y0 = S.base + (S.h - S.base - 0.55) * f + (R() - 0.5) * 0.18;
+  const whorls = mid ? Math.round(S.whorls * 0.55) : S.whorls;
+  for (let k = 0; k < whorls; k++) {
+    const f = k / (whorls - 1), y0 = S.base + (S.h - S.base - 0.55) * f + (R() - 0.5) * 0.18;
     const L = (S.r1 + (S.r0 - S.r1) * Math.pow(1 - f, 1.1)) * (0.88 + R() * 0.24) * 1.12;
-    const nb = Math.max(4, Math.round(S.br * (1 - f * 0.4)));
+    const nb = Math.max(mid ? 3 : 4, Math.round(S.br * (mid ? 0.62 : 1) * (1 - f * 0.4)));
     const ph = k * 2.39996 + R() * 0.4;
     for (let b = 0; b < nb; b++) frond(y0, ph + b / nb * Math.PI * 2 + (R() - 0.5) * 0.35, L * (0.85 + R() * 0.3), (b % 2 ? 1 : -1) * (0.7 + R() * 0.35), S.droop * (0.8 + R() * 0.4));
   }
@@ -1039,6 +1042,7 @@ function farGeo(W) {
 }
 
 // ---------- build stage scene ----------
+const LOD_NEAR = 130, LOD_MID = 280;
 function buildScene(R, W) {
   const { T, O, st } = W; const V = visOf(st);
   const S = { meshes: [], shadowCasters: [], E: env(st), V };
@@ -1067,15 +1071,16 @@ function buildScene(R, W) {
         return [o.x, o.y, o.z, o.rot, o.s, o.sy, 0, 0, c[0] * k * (1 + hu), c[1] * k, c[2] * k * (1 - hu * 1.4)];
       });
       const pg = R.mesh(pineGeo(V, st.kind === 'frost', vi), pineInst, cull);
-      // the sprays are alpha-tested, the depth pass isn't: every tree casts its shadow with the solid far version
-      pg.lod = { m: R.mesh(pineFarGeo(V, st.kind === 'frost', vi), pineInst, cull), dist: 70, shadowDist: -1 };
+      // full trees to ~100 m, the lighter version to ~230 m, solid skirts beyond (in the haze by then), each swap a
+      // dissolve over a band. The sprays are alpha-tested and the depth pass isn't: shadows come from the skirts.
+      pg.lods = [{ m: pg, dist: LOD_NEAR, band: 18 }, { m: R.mesh(pineGeo(V, st.kind === 'frost', vi, true), pineInst, cull), dist: LOD_MID, band: 30 }, { m: R.mesh(pineFarGeo(V, st.kind === 'frost', vi), pineInst, cull) }];
       add(pg, { mode: 10, sway: 1, tex: ptex, a2c: true }, true);
     }
     if (birches.length) {
       const bc = V.birch.map(lin);
       const binst = instData(birches, o => { const c = bc[(o.c * 3) | 0]; return [o.x, o.y, o.z, o.rot, o.s, o.sy, 0, 0, c[0] * 1.6, c[1] * 1.6, c[2] * 1.6]; });
       const bg = R.mesh(birchGeo(V), binst, cull);
-      bg.lod = { m: R.mesh(birchFarGeo(V), binst, cull), dist: 70, shadowDist: -1 };
+      bg.lods = [{ m: bg, dist: LOD_NEAR + 20, band: 22 }, { m: R.mesh(birchFarGeo(V), binst, cull) }];
       add(bg, { mode: 10, sway: 1, tex: R.texture(leafAtlas()), a2c: true }, true);
     }
   }
