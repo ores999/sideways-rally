@@ -475,6 +475,14 @@ void main(){
     base *= mix(vec3(1.0), det, 0.85 * up);
     float hh = dot(d1, vec3(0.333)) * 0.6 + dot(d2, vec3(0.333)) * 0.4;
     bh = (hh - 0.5) * up; bk = u_gbump;
+    float steep = 1.0 - up;
+    if (steep > 0.01) {
+      // cliffs and cut banks: layered rock (bands that wander a little in height) instead of ground texture smeared down the face
+      float wy = v_wp.y + (vnoise(vec2(v_wp.x + v_wp.z, 0.0) * 0.12) - 0.5) * 3.0;
+      float bands = vnoise(vec2((v_wp.x * 0.7 + v_wp.z * 0.5) * 0.25, wy * 2.3)) * 0.55 + vnoise(vec2((v_wp.x - v_wp.z) * 0.9, wy * 7.5)) * 0.3 + vnoise(v_wp.xy * 3.1 + v_wp.zz * 2.3) * 0.15;
+      base *= 1.0 + (bands - 0.5) * 0.5 * steep;
+      bh += bands * steep * 1.5;
+    }
     sparkle = u_icy * up * (1.0 - smoothstep(0.02, 0.09, length(fwidth(v_wp.xz))));
     spec += u_wet * 0.07 * up; // wet grass and mud catch a dull sheen
   } else if (u_mode == 3) {

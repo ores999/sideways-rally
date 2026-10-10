@@ -584,14 +584,22 @@ function birchFarGeo(V) {
   }
   return g;
 }
+// saguaro: a ribbed trunk with a domed top and two arms that leave it sideways and turn up through a rounded elbow
 function cactusGeo() {
   const g = new Geo(); const col = [1, 1, 1], sp = 0.02; // spec 0.02 marks cactus in the foliage shader
-  g.cyl(0, -0.2, 0, 0.32, 0.28, 4.2, 10, col, sp, 'y', true, 0);
-  g.cyl(0, 1.8, 0, 0.2, 0.2, 0.8, 8, col, sp, 'x', true, 0);
-  g.cyl(0.75, 1.8, 0, 0.2, 0.18, 1.5, 8, col, sp, 'y', true, 0);
-  g.cyl(-0.8, 2.3, 0, 0.18, 0.18, 0.8, 8, col, sp, 'x', true, 0);
-  g.cyl(-0.8, 2.3, 0, 0.18, 0.16, 1.2, 8, col, sp, 'y', true, 0);
-  return g;
+  const dome = (x, y, z, r) => { const N = 12, M = 3; for (let i = 0; i < N; i++) for (let j = 0; j < M; j++) {
+    const a0 = i / N * Math.PI * 2, a1 = (i + 1) / N * Math.PI * 2, b0 = j / M * Math.PI / 2, b1 = (j + 1) / M * Math.PI / 2;
+    const P = (a, b) => [x + Math.cos(a) * Math.cos(b) * r, y + Math.sin(b) * r * 0.9, z + Math.sin(a) * Math.cos(b) * r];
+    g.quad(P(a0, b0), P(a1, b0), P(a1, b1), P(a0, b1), col, sp, [x, y - 1, z]); } };
+  g.cyl(0, -0.2, 0, 0.31, 0.27, 4.2, 12, col, sp, 'y', false); dome(0, 4.0, 0, 0.27);
+  for (const [sx, y0, len, up] of [[1, 1.7, 0.55, 1.35], [-1, 2.25, 0.5, 1.0]]) {
+    const r = 0.19;
+    g.cyl(0, y0, 0, r, r, sx * len, 10, col, sp, 'x', false);
+    // elbow: a few short segments bending from sideways to up
+    for (let k = 0; k < 4; k++) { const t = (k + 0.5) / 4, ang = t * Math.PI / 2; g.cyl(sx * (len - 0.05 + Math.sin(ang) * 0.12), y0 + (1 - Math.cos(ang)) * 0.16, 0, r, r, 0.07, 10, col, sp, 'y', false); }
+    g.cyl(sx * (len + 0.07), y0 + 0.16, 0, r, r * 0.9, up, 10, col, sp, 'y', false); dome(sx * (len + 0.07), y0 + 0.16 + up - 0.02, 0, r * 0.9);
+  }
+  return smoothGeo(g, 55);
 }
 // smooth shading for props built from flat facets: each vertex takes the mean normal of the faces meeting at its
 // position within maxDeg of its own, so curved things shade round while real edges stay crisp
@@ -934,12 +942,13 @@ function farGeo(W) {
     // little. Some are long mesas, some carry a second smaller tier. (Slender spires read as chimneys from this far.)
     const sand = lin(V.skirt);
     const butte = (x, z, w, h, kind) => {
-      const N = 18, el = kind === 'mesa' ? 0.35 + R() * 0.35 : R() * 0.15, th = R() * Math.PI;
+      const N = 30, el = kind === 'mesa' ? 0.35 + R() * 0.35 : R() * 0.15, th = R() * Math.PI;
       const st4 = (V.strata || ['#a5502e', '#c46a3c', '#8a3f25', '#d18a57']).map(c => mixc(far, lin(c), 0.55 + R() * 0.2));
       const out = [];
       for (let j = 0; j < N; j++) {
         const a = j / N * Math.PI * 2;
-        const rr = (1 + el * Math.cos(2 * (a - th))) * (0.78 + R() * 0.4) * (R() < 0.25 ? 0.74 : 1); // spurs, and the odd bay cut back
+        // spurs, the odd bay cut back, and narrow gullies every other point that run down the whole cliff
+        const rr = (1 + el * Math.cos(2 * (a - th))) * (0.84 + R() * 0.3) * (R() < 0.18 ? 0.78 : 1) * (j % 2 ? 0.95 : 1.03);
         out.push([Math.sin(a), Math.cos(a), rr]);
       }
       const base = my - 34, ref = [x, base + h * 0.4, z];

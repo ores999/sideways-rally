@@ -143,7 +143,7 @@ function renderStageList() {
   renderChallengeBanner();
   const daily = $('dailyRow'); daily.innerHTML = '';
   const dk = settings.dailyKey;
-  daily.append(stageRow(dk, settings.stage === 'daily', () => selectStage('daily'), C.stageDef(dk).name));
+  daily.append(stageRow(dk, settings.stage === 'daily', () => { settings.dailyKey = C.dailyKey(); selectStage('daily'); }, C.stageDef(dk).name + (dk !== C.dailyKey() ? ' · ' + dk.slice(12, 14) + '/' + dk.slice(10, 12) : '')));
   const box = $('stageList'); box.innerHTML = '';
   C.STAGES.forEach((st, i) => box.append(stageRow(keyFor(i), settings.stage === i, () => selectStage(i))));
   // direction and conditions apply to the four fixed stages; the daily stage is what it is
