@@ -1,11 +1,12 @@
 import pathlib
 HERE = str(pathlib.Path(__file__).resolve().parent) + '/'
 PAGE = (pathlib.Path(__file__).resolve().parent.parent / 'dist' / 'test.html').as_uri()
-import asyncio
+import asyncio, os
 from playwright.async_api import async_playwright
+CHANNEL = os.environ.get('PW_CHANNEL')  # e.g. PW_CHANNEL=chrome to use the installed Chrome instead of Playwright's Chromium
 async def main():
     async with async_playwright() as p:
-        b = await p.chromium.launch(args=['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'])
+        b = await p.chromium.launch(channel=CHANNEL, args=['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'])
         pg = await b.new_page(viewport={'width': 800, 'height': 450})
         logs = []
         pg.on('console', lambda m: logs.append(f'{m.type}: {m.text}') if m.type in ('error', 'warning') else None)
@@ -18,7 +19,7 @@ async def main():
         await pg.click('#startBtn')
         await pg.evaluate('window.__rally.auto(true); window.__rally.advance(3.8); window.__rally.advance(115)')
         print('after run:', await pg.evaluate('window.__rally.mode'), 'results visible:', await pg.is_visible('#results'))
-        print('stored pb:', await pg.evaluate("(()=>{const r=JSON.parse(localStorage.getItem('sideways.pb.mesa')); return r && [r.t, r.car, r.g.length]})()"), 'medal', await pg.evaluate("localStorage.getItem('sideways.medal.mesa')"))
+        print('stored pb:', await pg.evaluate("(()=>{const r=JSON.parse(localStorage.getItem('sideways.pb.mesa.impressa')); return r && [r.t, r.car, r.q.length]})()"), 'medal', await pg.evaluate("localStorage.getItem('sideways.medal.mesa')"))
         await pg.screenshot(path='' + HERE + 'shot_flow_results.png')
         # retry via Enter key
         await pg.keyboard.press('Enter')
@@ -31,7 +32,7 @@ async def main():
         await pg.click('#pMenu'); await pg.evaluate('window.__rally.advance(0.2)')
         print('menu visible:', await pg.is_visible('#menu'), 'mode', await pg.evaluate('window.__rally.mode'))
         # switch stage from menu
-        await pg.click('#paneStage .row:nth-child(1)')
+        await pg.click('#stageList .row:nth-child(1)')
         for i in range(60):
             await pg.wait_for_timeout(500)
             if await pg.evaluate('window.__rally.mode') == 'menu': break

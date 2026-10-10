@@ -54,42 +54,56 @@ const CARS = [
     gearbox: { type: 'Sequential', gears: 5, shift: 0.06, top: 200 },
     drive: { layout: 'AWD', front: 0.45, diff: 'Active centre diff' },
     mass: 1230, wd: 0.55, wb: 2.64, cgH: 0.47, inertia: 1.0, CdA: 0.78, ClA: 0.45, brake: 1.15, lock: 0.56, tyre: 1.0, agility: 1.0,
+    feel: { lag: 0.15, kick: 1.0, ayc: 0.5, push: 0, twitch: 0.85 },
+    character: 'Modern and precise. Active diffs pull it into corners and the sequential box snaps through the gears: the easiest car to drive fast.',
     col: { base: '#1d4fa3', roof: '#f2f2ee', lower: '#14336e', stripe: '#f2f2ee', stripe2: '#d7262e', rim: '#e4e4e4', text: '#ffffff' } },
   { id: 'impressa', name: 'Subaru Impreza WRC', note: 'The Prodrive-built, boxer-engined World Rally Car', era: 'WRC · 1998', cls: 'WRC', num: 5, shape: 'sedan', wing: 'big',
     engine: { code: 'EJ20 Boxer', layout: 'Flat-4', cyl: 4, boxer: true, disp: 1994, asp: 'Turbo · anti-lag', hp: 300, hpRpm: 5500, nmCap: 560, redline: 7000, idle: 900, onset: 2300, spool: 7, antilag: true, na: 0.46, boostBar: 2.4, shape: 2.4 },
     gearbox: { type: 'Sequential', gears: 6, shift: 0.05, top: 195 },
     drive: { layout: 'AWD', front: 0.5, diff: 'Active centre diff' },
     mass: 1230, wd: 0.55, wb: 2.52, cgH: 0.43, inertia: 0.97, CdA: 0.76, ClA: 0.42, brake: 1.15, lock: 0.55, tyre: 1.03, agility: 1.0,
+    feel: { lag: 0.2, kick: 1.0, ayc: 0.35, push: 0, twitch: 0.9 },
+    character: 'The low boxer engine keeps it planted and balanced. Slides come on gently and are easy to hold.',
     col: { base: '#1b3f96', roof: '#1b3f96', lower: '#1b3f96', stripe: '#ffd21a', stripe2: '#ffd21a', rim: '#c9a33b', text: '#ffd21a' } },
   { id: 'lancha', name: 'Mitsubishi Lancer Evo VI', note: 'Ralliart\'s Group A Evo, world champion in 1999', era: 'Group A · 1999', cls: 'Group A', num: 7, shape: 'sedan', wing: 'big',
     engine: { code: '4G63T', layout: 'Inline-4', cyl: 4, disp: 1997, asp: 'Turbo · anti-lag', hp: 300, hpRpm: 6500, nmCap: 540, redline: 7500, idle: 950, onset: 2200, spool: 6.5, antilag: true, na: 0.45, boostBar: 2.3, shape: 2.6 },
     gearbox: { type: 'H-pattern', gears: 6, shift: 0.15, top: 205 },
     drive: { layout: 'AWD', front: 0.5, diff: 'Active yaw control' },
     mass: 1230, wd: 0.57, wb: 2.51, cgH: 0.48, inertia: 1.0, CdA: 0.82, ClA: 0.42, brake: 1.12, lock: 0.55, tyre: 1.0, agility: 1.08,
+    feel: { lag: 0.25, kick: 1.05, ayc: 0.9, push: 0, twitch: 1.0 },
+    character: 'Active yaw control turns the car on the throttle: turn in, floor it and the nose tucks in. The H-pattern box makes every shift count.',
     col: { base: '#f3f3f1', roof: '#f3f3f1', lower: '#141414', stripe: '#d3191f', stripe2: '#141414', rim: '#f3f3f1', text: '#d3191f' } },
   { id: 'delta', name: 'Lancia Delta HF Integrale', note: 'The Group A legend behind six makes\' titles in a row', era: 'Group A · 1992', cls: 'Group A', num: 1, shape: 'boxhatch', wing: 'roof',
     engine: { code: '16V Turbo', layout: 'Inline-4', cyl: 4, disp: 1995, asp: 'Turbo', hp: 295, hpRpm: 7000, nmCap: 430, redline: 7800, idle: 1000, onset: 3000, spool: 5, antilag: false, flutter: true, na: 0.42, boostBar: 1.9, shape: 2.2 },
     gearbox: { type: 'H-pattern', gears: 6, shift: 0.17, top: 190 },
     drive: { layout: 'AWD', front: 0.47, diff: 'Epicyclic + Torsen' },
     mass: 1120, wd: 0.56, wb: 2.48, cgH: 0.5, inertia: 0.92, CdA: 0.8, ClA: 0.15, brake: 1.05, lock: 0.58, tyre: 0.98, agility: 1.18,
+    feel: { lag: 0.45, kick: 1.1, ayc: 0, push: 0.05, twitch: 1.12 },
+    character: 'Light, tall and darty, with no anti-lag: lift and the boost is gone. Keep the revs up out of slow corners.',
     col: { base: '#f5f5f2', roof: '#f5f5f2', lower: '#f5f5f2', stripe: '#45a6de', stripe2: '#122f7a', stripe3: '#d6262b', rim: '#eeeeee', text: '#122f7a' } },
   { id: 'pejo', name: 'Peugeot 205 T16', note: 'Mid-engined Group B champion of 1985 and 1986', era: 'Group B · 1985', cls: 'Group B', num: 2, shape: 'small', wing: 'roof',
     engine: { code: 'XU8T', layout: 'Inline-4 (mid)', cyl: 4, disp: 1775, asp: 'Turbo', hp: 370, hpRpm: 7500, nmCap: 450, redline: 8300, idle: 1100, onset: 3000, spool: 3.3, antilag: false, flutter: true, na: 0.5, boostBar: 2.2, shape: 2.1 },
     gearbox: { type: 'H-pattern', gears: 5, shift: 0.2, top: 200 },
     drive: { layout: 'AWD', front: 0.42, diff: 'Rear-biased centre diff' },
     mass: 910, wd: 0.43, wb: 2.54, cgH: 0.45, inertia: 0.95, frontGrip: 1.04, rearGrip: 1.04, CdA: 0.72, ClA: 0.25, brake: 1.15, lock: 0.6, tyre: 1.0, agility: 1.08,
+    feel: { lag: 0.5, kick: 1.25, ayc: 0, push: 0, twitch: 1.2 },
+    character: 'Mid-engined Group B. The tail wants to come round and the turbo arrives late and all at once: catch it early, short-shift on loose ground.',
     col: { base: '#f5f5f2', roof: '#f5f5f2', lower: '#f5f5f2', stripe: '#1d3c8f', stripe2: '#f5c400', stripe3: '#d6262b', rim: '#f2f2f2', text: '#1d3c8f' } },
   { id: 'kwattro', name: 'Audi Sport Quattro S1', note: 'The short-wheelbase, five-cylinder Group B Quattro', era: 'Group B · 1986', cls: 'Group B', num: 3, shape: 'coupe', wing: 'big',
     engine: { code: '20V Five', layout: 'Inline-5', cyl: 5, disp: 2110, asp: 'Turbo · recirculation', hp: 470, hpRpm: 7800, nmCap: 590, redline: 8400, idle: 1000, onset: 4000, spool: 3.0, antilag: true, na: 0.36, boostBar: 2.6, shape: 2.0 },
     gearbox: { type: 'H-pattern', gears: 6, shift: 0.18, top: 210 },
     drive: { layout: 'AWD', front: 0.5, diff: 'Locking centre diff' },
     mass: 1090, wd: 0.61, wb: 2.22, cgH: 0.5, inertia: 1.06, rearGrip: 1.03, CdA: 0.86, ClA: 0.55, brake: 1.05, lock: 0.55, tyre: 0.97, agility: 0.88,
+    feel: { lag: 0.7, kick: 1.35, ayc: 0, push: 0.45, twitch: 0.95 },
+    character: 'Five cylinders, 470 hp and a heavy nose. Huge turbo lag, then a wall of boost that pushes it wide. Brake early, turn in on the brakes and wait for it.',
     col: { base: '#f1efe8', roof: '#f1efe8', lower: '#f1efe8', stripe: '#c41e2a', stripe2: '#d9a43a', rim: '#d9a43a', text: '#c41e2a' } },
   { id: 'selica', name: 'Toyota Celica GT-Four', note: 'Toyota Team Europe\'s four-wheel-drive Group A turbo', era: 'Group A · 1995', cls: 'Group A', num: 6, shape: 'liftback', wing: 'big',
     engine: { code: '3S-GTE', layout: 'Inline-4', cyl: 4, disp: 1998, asp: 'Turbo · anti-lag', hp: 299, hpRpm: 6000, nmCap: 520, redline: 7200, idle: 900, onset: 2400, spool: 6.5, antilag: true, na: 0.45, boostBar: 2.2, shape: 2.5 },
     gearbox: { type: 'Sequential', gears: 6, shift: 0.07, top: 200 },
     drive: { layout: 'AWD', front: 0.5, diff: 'Viscous centre diff' },
     mass: 1200, wd: 0.58, wb: 2.54, cgH: 0.47, inertia: 1.0, CdA: 0.76, ClA: 0.4, brake: 1.12, lock: 0.56, tyre: 1.0, agility: 1.02,
+    feel: { lag: 0.25, kick: 1.0, ayc: 0.1, push: 0.15, twitch: 0.85 },
+    character: 'Heavy, stable and built to last. It understeers a little if you rush the entry, and forgives almost anything.',
     col: { base: '#f4f4f0', roof: '#f4f4f0', lower: '#f4f4f0', stripe: '#d4202c', stripe2: '#1f8a4c', stripe3: '#f2c230', rim: '#f2f2f2', text: '#d4202c' } },
 ];
 
@@ -138,6 +152,8 @@ function carStatsRaw(c) {
     accel: 1 / (sp.t100 + sp.t160 * 0.6),
     grip: c.tyre * (1 + c.ClA * 0.25) * (1 - Math.abs(c.wd - 0.53) * 0.4),
     handling: c.agility * Math.sqrt(c.mass / c.Iz) * (1 - (c.wd - 0.5) * 1.6),
+    lag: sp.lag || 0.3,
+    stability: (2 - (c.feel || {}).twitch || 1) + c.ClA * 0.3 - (c.agility - 1) * 0.7 + (c.wd - 0.5) * 0.8,
   };
 }
 function carStats(c) {
@@ -176,7 +192,7 @@ const STAGES = [
     ] },
   { id: 'mesa', kind: 'mesa', name: 'Red Mesa', region: 'Canyon Country', surface: 'Tarmac', tag: 'Hairpins, a climb and a narrow gorge',
     grip: 1.15, offGrip: 0.64, offDrag: 1.6, tyreB: 11, hw: 4.3, h0: -0.6, seed: 3301, blend: 22, rival: 'Sebastian Lob',
-    tarmac: true,
+    tarmac: true, walls: [[0.30, 0.40, 2.6], [0.71, 0.79, 2.6]], // the gorge: rock walls a little off the road
     elev: { a1: 3, l1: 220, p1: 0.0, a2: 1.5, l2: 70, p2: 2.0 },
     segs: [
       ['S', 120], ['L', 5, 50], ['S', 80], ['R', 4, 70], ['S', 60], ['G', 0.05], ['L', 'H', 175], ['S', 110],
@@ -187,7 +203,7 @@ const STAGES = [
     ] },
   // a narrow road through old pine forest: the trees stand in rows right off the verge the whole way
   { id: 'forest', kind: 'pine', name: 'Dark Pines', region: 'Old Growth Forest', surface: 'Gravel', tag: 'Narrow gravel lined with pines',
-    grip: 0.88, offGrip: 0.58, offDrag: 1.6, tyreB: 8, hw: 4.0, h0: 0.4, seed: 4409, blend: 24, rival: 'Colin McRay',
+    grip: 0.88, offGrip: 0.58, offDrag: 1.6, tyreB: 8, hw: 4.0, h0: 0.4, seed: 4409, blend: 24, rival: 'Colin McRay', rows: true,
     elev: { a1: 4, l1: 150, p1: 0.8, a2: 1.8, l2: 55, p2: 0.6 },
     segs: [
       ['S', 100], ['R', 4, 60], ['S', 70], ['L', 4, 55], ['S', 60], ['C', 1.2], ['S', 80], ['R', 3, 80], ['S', 50],
@@ -197,6 +213,116 @@ const STAGES = [
       ['L', 4, 60], ['R', 5, 45], ['S', 70], ['L', 3, 85], ['S', 150]
     ] },
 ];
+
+STAGES.forEach(st => { st.key = st.id; });
+
+// ---------------- Stage variants ----------------
+// A stage key names the road and how it is run: '<id>' as built, '<id>-r' driven the other way, plus '-night' or
+// '-rain'; 'daily-YYYYMMDD' is a stage generated from the date, the same for everyone that day. Saves (best times,
+// medals, challenges) are keyed on it, so a reversed night run has its own records.
+const CONDS = ['day', 'night', 'rain'];
+function stageKey(id, rev, cond) { return id + (rev ? '-r' : '') + (cond && cond !== 'day' ? '-' + cond : ''); }
+const variantCache = new Map();
+function stageDef(key) {
+  if (variantCache.has(key)) return variantCache.get(key);
+  let st = null;
+  const dm = /^daily-(\d{8})$/.exec(key || '');
+  if (dm) st = dailyStage(dm[1]);
+  else {
+    const parts = String(key || '').split('-'), base = STAGES.find(b => b.id === parts[0]);
+    if (!base) return null;
+    const rev = parts.includes('r'), cond = parts.includes('night') ? 'night' : parts.includes('rain') ? 'rain' : 'day';
+    if (parts.slice(1).some(q => q !== 'r' && q !== 'night' && q !== 'rain')) return null;
+    if (!rev && cond === 'day') st = base;
+    else {
+      st = Object.assign({}, base, { key, rev, cond });
+      // wet: less grip everywhere, and tyres that let go sooner (snow just turns into a blizzard)
+      if (cond === 'rain' && base.kind !== 'frost') { st.grip *= base.tarmac ? 0.8 : 0.88; st.offGrip *= 0.88; st.tyreB *= 0.92; }
+      if (cond === 'rain' && base.kind === 'frost') { st.grip *= 0.96; }
+    }
+  }
+  if (st) { st.cond = st.cond || 'day'; st.rev = !!st.rev; variantCache.set(key, st); }
+  return st;
+}
+// a readable name for the variant: "Pine Ridge · Reverse · Night"
+function condName(st, cond) { cond = cond || st.cond; return cond === 'night' ? 'Night' : cond === 'rain' ? (st.kind === 'frost' ? 'Blizzard' : 'Rain') : st.kind === 'frost' ? 'Dusk' : 'Day'; }
+function stageTitle(st) { return st.name + (st.rev ? ' · Reverse' : '') + (st.cond && st.cond !== 'day' ? ' · ' + condName(st) : ''); }
+
+// ---------------- Daily stage ----------------
+// Built from the date: corners, straights, jumps and crests in the proportions of the hand-made stages, kept only if
+// the road never comes back too close to itself. The biome turns over day by day.
+function hashStr(t) { let h = 2166136261; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+const DAILY_RIVALS = ['Marcus Grönhol', 'Juha Kankunnen', 'Carlos Sanz', 'Didier Oriol', 'Petter Solbergg', 'Ari Vatanon', 'Hannu Mikkolla', 'Walter Röhr'];
+function genSegs(R, kind) {
+  const pick = (w) => { let r = R() * w.reduce((a, x) => a + x[1], 0); for (const [v, k] of w) { if ((r -= k) < 0) return v; } return w[0][0]; };
+  const sevW = kind === 'mesa' ? [[6, 0.06], [5, 0.16], [4, 0.22], [3, 0.2], [2, 0.14], [1, 0.04], ['H', 0.18]]
+    : [[6, 0.08], [5, 0.2], [4, 0.27], [3, 0.2], [2, 0.12], [1, 0.03], ['H', 0.07]];
+  const angFor = sev => sev === 'H' ? 165 + ((R() * 3) | 0) * 5 : sev === 6 ? 35 + R() * 10 : sev === 5 ? 40 + R() * 25 : sev === 4 ? 55 + R() * 25 : sev === 3 ? 75 + R() * 20 : sev === 2 ? 88 + R() * 12 : 85 + R() * 10;
+  const segs = [['S', 100 + Math.round(R() * 40)]];
+  let len = segs[0][1], dir = R() < 0.5 ? 1 : -1, sinceJump = 0, grade = 0;
+  const target = 2800 + R() * 250;
+  while (len < target) {
+    const sev = pick(sevW);
+    dir = R() < 0.66 ? -dir : dir;
+    const ang = Math.round(angFor(sev));
+    const seg = [dir > 0 ? 'L' : 'R', sev, ang];
+    if ((sev === 2 || sev === 3 || sev === 4) && R() < 0.2) seg.push('dc');
+    else if ((sev === 2 || sev === 3) && R() < 0.18) seg.push('cau');
+    segs.push(seg); len += RADIUS[sev] * ang * PI / 180;
+    if (kind === 'mesa' && R() < 0.22) { grade = grade ? 0 : (R() < 0.5 ? 0.04 : -0.035); segs.push(['G', grade]); }
+    // most corners open onto a straight; some run straight into the next one
+    if (sev === 'H' || R() > 0.22) {
+      const sl = sev === 'H' ? 90 + R() * 25 : 40 + R() * 95;
+      sinceJump += sl;
+      if (sl > 80 && R() < (kind === 'mesa' ? 0.12 : 0.42)) {
+        const jump = kind !== 'mesa' && sinceJump > 320 && R() < (kind === 'frost' ? 0.45 : 0.8);
+        segs.push(['S', Math.round(sl * 0.5)], jump ? ['J', +(kind === 'frost' ? 1.8 : 1.8 + R() * 0.8).toFixed(1)] : ['C', +(1.2 + R() * 0.4).toFixed(1)], ['S', Math.round(sl * 0.5)]);
+        if (jump) sinceJump = 0;
+      } else segs.push(['S', Math.round(sl)]);
+      len += sl;
+    }
+  }
+  if (grade) segs.push(['G', 0]);
+  segs.push(['S', 160]);
+  return segs;
+}
+// the closest the road comes to itself between points more than 140 m apart along it
+function selfClearance(T) {
+  const cell = 24, grid = new Map();
+  for (let i = 0; i < T.n; i++) { const k = hkey(Math.floor(T.X[i] / cell), Math.floor(T.Z[i] / cell)); let a = grid.get(k); if (!a) grid.set(k, a = []); a.push(i); }
+  let best = 1e9;
+  for (let i = 0; i < T.n; i++) {
+    const cx = Math.floor(T.X[i] / cell), cz = Math.floor(T.Z[i] / cell);
+    for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) {
+      const arr = grid.get(hkey(cx + a, cz + b)); if (!arr) continue;
+      for (const j of arr) if (j > i + 70) { const d = Math.hypot(T.X[i] - T.X[j], T.Z[i] - T.Z[j]); if (d < best) best = d; }
+    }
+  }
+  return best;
+}
+function dailyStage(ymd) {
+  const kinds = ['pine', 'frost', 'mesa', 'forest'];
+  const day = Math.floor(Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8)) / 86400000);
+  const base = STAGES.find(b => b.id === kinds[((day % 4) + 4) % 4]);
+  const seed = hashStr('sideways-' + ymd);
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const R = rng(seed + attempt * 7919);
+    const segs = genSegs(R, base.kind);
+    const st = Object.assign({}, base, {
+      key: 'daily-' + ymd, daily: ymd, segs, seed: (seed % 9000) + 1000 + attempt, h0: R() * 6.28, cond: 'day', rev: false,
+      name: 'Daily · ' + base.name, rival: DAILY_RIVALS[day % DAILY_RIVALS.length], tag: 'A new road every day, the same for everyone',
+      elev: { a1: base.elev.a1 * (0.7 + R() * 0.6), l1: base.elev.l1 * (0.8 + R() * 0.4), p1: R() * 6.28, a2: base.elev.a2 * (0.7 + R() * 0.6), l2: base.elev.l2 * (0.8 + R() * 0.4), p2: R() * 6.28 },
+    });
+    if (base.walls) st.walls = [[0.32 + R() * 0.1, 0.0, 2.6]].map(([a, , off]) => [a, a + 0.08, off]);
+    const T = buildTrack(st);
+    if (selfClearance(T) >= 34 && T.L > 2600 && T.L < 3400) return st;
+  }
+  return Object.assign({}, base, { key: 'daily-' + ymd, daily: ymd, name: 'Daily · ' + base.name, cond: 'day', rev: false });
+}
+function dailyKey(date) {
+  const d = date || new Date();
+  return 'daily-' + d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+}
 
 function blur(a, r) {
   const n = a.length, o = new Float64Array(n);
@@ -264,14 +390,27 @@ function buildTrack(st) {
     u *= sstep(0, 90, i) * sstep(0, 80, L - i);
     py[i] += u;
   }
-  for (const e of ev) for (let i = Math.max(0, e.s - 40); i <= Math.min(L, e.s + 80); i++) py[i] += bump(e, i);
+  let walls = (st.walls || []).map(([a, b, off]) => ({ s0: Math.round(L * a), s1: Math.round(L * b), off }));
+  let evs = ev, nraw = notesRaw, ksr = ks;
+  if (st.rev) {
+    // the same road driven the other way: same place in the world (so the same scenery around it), every corner
+    // mirrored, uphill turned downhill. Jumps and crests are rebuilt facing the new direction of travel.
+    const flip = a => { for (let i = 0, j = a.length - 1; i < j; i++, j--) { const t = a[i]; a[i] = a[j]; a[j] = t; } };
+    flip(px); flip(pz); flip(py); flip(ph);
+    for (let i = 0; i <= L; i++) ph[i] += PI;
+    ksr = Float64Array.from(ks, v => -v); flip(ksr);
+    nraw = notesRaw.map(r => ({ s0: L - r.s1, s1: L - r.s0, dir: -r.dir, sev: r.sev, ang: r.ang, mods: r.mods })).reverse();
+    evs = ev.map(e => ({ type: e.type, s: L - e.s + (e.type === 'J' ? 18 : 0), h: e.h })).reverse();
+    walls = walls.map(w => ({ s0: L - w.s1, s1: L - w.s0, off: w.off })).reverse();
+  }
+  for (const e of evs) for (let i = Math.max(0, e.s - 40); i <= Math.min(L, e.s + 80); i++) py[i] += bump(e, i);
 
   const n = Math.floor(L / 2) + 1;
   const X = new Float32Array(n), Z = new Float32Array(n), Y = new Float32Array(n), H = new Float32Array(n), K = new Float32Array(n);
   let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
   for (let i = 0; i < n; i++) {
     const m = Math.min(2 * i, L);
-    X[i] = px[m]; Z[i] = pz[m]; Y[i] = py[m]; H[i] = ph[m]; K[i] = ks[Math.min(m, L - 1)];
+    X[i] = px[m]; Z[i] = pz[m]; Y[i] = py[m]; H[i] = ph[m]; K[i] = ksr[Math.min(m, L - 1)];
     minX = Math.min(minX, X[i]); maxX = Math.max(maxX, X[i]); minZ = Math.min(minZ, Z[i]); maxZ = Math.max(maxZ, Z[i]);
   }
   const hash = new Map();
@@ -281,12 +420,12 @@ function buildTrack(st) {
   }
   // pace notes
   const notes = [];
-  for (const r of notesRaw) {
+  for (const r of nraw) {
     const mods = r.mods.slice();
     if (r.sev !== 'H' && r.ang >= 110) mods.push('long');
     notes.push({ kind: 'turn', s: r.s0 - 8, end: r.s1 + 6, mid: (r.s0 + r.s1) / 2, dir: r.dir, sev: r.sev, ang: r.ang, mods });
   }
-  for (const e of ev) notes.push({ kind: e.type === 'J' ? 'jump' : 'crest', s: e.s - (e.type === 'J' ? 22 : 24), end: e.s + 10, mid: e.s, h: e.h, mods: [] });
+  for (const e of evs) notes.push({ kind: e.type === 'J' ? 'jump' : 'crest', s: e.s - (e.type === 'J' ? 22 : 24), end: e.s + 10, mid: e.s, h: e.h, mods: [] });
   notes.sort((a, b) => a.s - b.s);
   for (let i = 0; i < notes.length; i++) {
     const nt = notes[i], nx = notes[i + 1];
@@ -294,14 +433,10 @@ function buildTrack(st) {
     nt.into = !!(nx && gap < 30 && nt.kind === 'turn' && nx.kind === 'turn');
     nt.dist = (nx && gap > 95) ? Math.min(500, Math.round(gap / 50) * 50) : 0;
   }
-  const T = { st, L, n, X, Z, Y, H, K, hash, notes, hw: st.hw, events: ev,
+  const T = { st, L, n, X, Z, Y, H, K, hash, notes, hw: st.hw, events: evs,
     bbox: { minX, maxX, minZ, maxZ }, spawnS: 14, startS: 22, finishS: L - 45,
     splits: [Math.round(L * 0.34), Math.round(L * 0.67)] };
-  T.walls = [];
-  if (st.id === 'mesa') {
-    T.walls.push({ s0: Math.round(L * 0.30), s1: Math.round(L * 0.40), off: 2.6 });
-    T.walls.push({ s0: Math.round(L * 0.71), s1: Math.round(L * 0.79), off: 2.6 });
-  }
+  T.walls = walls;
   return T;
 }
 
@@ -460,7 +595,7 @@ function placeObjects(T, TR, nz) {
       if (fn(x, z, rd, i * 2, side)) made++;
     }
   };
-  if (st.id === 'forest') {
+  if (st.rows) {
     // rows of pines walking along both verges, then the forest filling in behind them
     const rows = [[hw + 4.6, 5.5], [hw + 8.5, 6], [hw + 13, 6.5], [hw + 19, 7.5]];
     for (const side of [-1, 1]) for (const [off, gap] of rows) {
@@ -487,7 +622,7 @@ function placeObjects(T, TR, nz) {
       const sc = 0.4 + R() * 0.8; out.rocks.push({ x, z, y: terrainH(TR, x, z) - 0.15 * sc, rot: R() * 6.28, s: sc, sy: sc * (0.6 + R() * 0.4), c: R() });
       addCol(x, z, 0.8 * sc, 'rock'); return true;
     });
-  } else if (st.id === 'pine') {
+  } else if (st.kind === 'pine') {
     scatter(2700, hw + 5.5, 170, 1.7, (x, z, d, s) => {
       if (nearStartFinish(s) && d < hw + 10) return false;
       const birch = R() < 0.18;
@@ -501,7 +636,7 @@ function placeObjects(T, TR, nz) {
       const sc = 0.4 + R() * 0.9; out.rocks.push({ x, z, y: terrainH(TR, x, z) - 0.15 * sc, rot: R() * 6.28, s: sc, sy: sc * (0.6 + R() * 0.4), c: R() });
       addCol(x, z, 0.8 * sc, 'rock'); return true;
     });
-  } else if (st.id === 'frost') {
+  } else if (st.kind === 'frost') {
     scatter(2000, hw + 6.5, 170, 1.6, (x, z, d, s) => {
       if (nearStartFinish(s) && d < hw + 10) return false;
       const sc = 0.75 + R() * 0.65;
@@ -583,8 +718,8 @@ function placeObjects(T, TR, nz) {
 }
 
 // ---------------- World ----------------
-function buildWorld(stageIndex) {
-  const st = STAGES[stageIndex];
+function buildWorld(stage) {
+  const st = typeof stage === 'object' ? stage : STAGES[stage];
   const T = buildTrack(st);
   const nz = makeNoise(st.seed);
   const TR = buildTerrain(T, nz);
@@ -634,6 +769,7 @@ function resetCar(W, c, s) {
 }
 
 const tyreF = al => Math.sin(1.45 * Math.atan(al));
+const FEEL0 = { lag: 0, kick: 1, ayc: 0, push: 0, twitch: 1 };
 const TUNE = { assist: 0.5, yawDamp: 0.7, turnAssist: 0.55, frontGrip: 1.0, rearGrip: 1.08, Bmul: 1, lockK: 17, latGrip: 1.1, absF: 0.4, absR: 0.35, tcF: 0.4, tcR: 0.6, hold: 6, holdK: 1.4, wt: 0.6, spinMax: 4.5, holdB: 0.6, trail: 3, trailK: 1.2, lowGrip: 0.12, edgeA: -0.1, edgeB: 2.0, edgeMix: 0.5, edgeBin: 0, slideA: 0.03, slideB: 0.2, slideF: 1, spinK: 5, spinB: 0.5, spinV: 12, impactP: 0.6 };
 
 function stepCar(W, c, P, inp, dt) {
@@ -721,10 +857,14 @@ function dynamics(W, c, P, inp, dt) {
   c.rpm = rpm;
   if (c.rpm >= E.redline) c.limiter = 0.045;
   if (c.limiter > 0) c.limiter -= dt;
+  const F = P.feel || FEEL0;
   const bt = thr * clamp((c.rpm - E.onset) / 1800, 0, 1);
-  if (bt > c.boost) c.boost += (bt - c.boost) * Math.min(1, E.spool * dt);
+  // the exhaust drives the turbine: low in the revs there is little flow and it spools slowly (more so on the laggy
+  // Group B cars); kick > 1 holds the boost back at part spool so it arrives late and all at once
+  const flow = lerp(1, clamp((c.rpm - E.onset * 0.8) / Math.max(400, E.hpRpm - E.onset * 0.8), 0.12, 1), F.lag);
+  if (bt > c.boost) c.boost += (bt - c.boost) * Math.min(1, E.spool * flow * dt);
   else c.boost += (bt - c.boost) * Math.min(1, (E.antilag ? 0.7 : 4.5) * dt);
-  let Teng = thr * torqueAt(P, c.rpm) * (E.na + (1 - E.na) * c.boost);
+  let Teng = thr * torqueAt(P, c.rpm) * (E.na + (1 - E.na) * Math.pow(c.boost, F.kick));
   if (c.shiftT > 0 || c.limiter > 0) Teng = 0;
   let Fdrive = Teng * kG * 0.86 / RW * (rev ? -1 : 1);
   if (thr < 0.05) Fdrive = -0.1 * E.nmCap * (c.rpm / E.redline) * kG * 0.86 / RW * clamp(vx / 3, -1, 1);
@@ -790,7 +930,8 @@ function dynamics(W, c, P, inp, dt) {
   const ar = Math.atan2(vy - b * r, vxa);
   const kF = Math.sqrt(Math.max(0, 1 - (FxF / capF) * (FxF / capF)));
   const kR = inp.hb ? 0.3 : Math.sqrt(Math.max(0.04, 1 - (FxR / capR) * (FxR / capR)));
-  const FyF = -capF * tyreF(BtF * af) * kF * TUNE.frontGrip * (P.frontGrip || 1) * TUNE.latGrip * lowG;
+  const push = 1 - F.push * 0.12 * thr * clamp((spd - 8) / 15, 0, 1); // a heavy nose runs wide under power
+  const FyF = -capF * tyreF(BtF * af) * kF * TUNE.frontGrip * (P.frontGrip || 1) * TUNE.latGrip * lowG * push;
   const FyR = -capR * tyreF(BtR * ar) * kR * TUNE.rearGrip * (P.rearGrip || 1) * TUNE.latGrip * lowG;
   // ---- forces ----
   const cd = Math.cos(delta), sd = Math.sin(delta);
@@ -803,9 +944,11 @@ function dynamics(W, c, P, inp, dt) {
   const assist = -c.steer * P.agility * TUNE.turnAssist * clamp(spd / 10, 0, 1) * clamp(1 - Math.abs(beta) * 3, 0, 1) * (inp.hb ? 0 : 1);
   if (c._dbgOn) c._dbg = { FyF, FyR, FxF, FxR, delta, af, ar, kF, kR, Mz, assist, capF, capR, beta };
   // body-frame forces applied to the world velocity (re-projection each step accounts for frame rotation)
+  // active yaw control / active diffs: throttle with the wheel turned adds rotation, fading out once it slides
+  const ayc = F.ayc && !inp.hb ? -c.steer * thr * F.ayc * 0.6 * clamp((spd - 4) / 12, 0, 1) * clamp(1 - Math.abs(beta) * 2.5, 0, 1) : 0;
   vx += (Fx / m) * dt;
   vy += (Fy / m) * dt;
-  r += (Mz / P.Iz + assist) * dt;
+  r += (Mz / P.Iz + assist + ayc) * dt;
   // hold the rotation the driver asks for once the car is sliding (hairpins, handbrake turns): if the yaw rate falls
   // short of what the steering and the available grip allow, nudge it back up. Never adds beyond that target.
   if (c.steer !== 0 && vx > 2 && !inp.hb) {
@@ -825,13 +968,14 @@ function dynamics(W, c, P, inp, dt) {
     const short = (rT - r) * Math.sign(rT);
     if (short > 0) r += Math.sign(rT) * short * TUNE.trail * Math.min(1, brk * 1.5) * P.agility * clamp(1 - Math.abs(beta) / 0.45, 0, 1) * dt;
   }
-  r -= r * TUNE.yawDamp * (inp.hb ? 0.3 : 1) * dt;
+  const calm = 2 - F.twitch; // twitch > 1: less yaw damping and a weaker spin catch (the 205 is nervous, the WRC cars settle)
+  r -= r * TUNE.yawDamp * calm * (inp.hb ? 0.3 : 1) * dt;
   // spin catch: once the car is well past the angle a driver can hold and still rotating further into it,
   // bleed some of that rotation. Never with the handbrake up, and only as speed builds: at hairpin speed big
   // angles are the point. Keyboard-driver bots spin about 4x less with it; handbrake hairpin times are unchanged.
   if (!inp.hb && TUNE.spinK > 0 && r * beta < 0) {
     const over = clamp((Math.abs(beta) - TUNE.spinB) / 0.35, 0, 1) * clamp((spd - TUNE.spinV) / 8, 0, 1);
-    if (over > 0) r -= r * TUNE.spinK * over * dt;
+    if (over > 0) r -= r * TUNE.spinK * calm * over * dt;
   }
   c.ax += (Fx / m - c.ax) * Math.min(1, dt * 8);
   // low speed: blend towards rolling kinematics (no slip-angle blow-up)
@@ -1022,12 +1166,17 @@ function measureCar(P) {
     if (!t160 && kmh >= 160) t160 = t;
     vmax = Math.max(vmax, kmh);
   }
-  P.spec = { t100, t160, vmax };
+  // turbo lag: flooring it in third from 60 km/h, how long until the boost is nearly all there
+  const c2 = makeCar(W, P, 20); c2.gear = 3; c2.vx = Math.sin(c2.h) * 16.7; c2.vz = Math.cos(c2.h) * 16.7; c2.vF = 16.7;
+  for (let i = 0; i < 120; i++) stepCar(W, c2, P, { steer: 0, thr: 0.25, brk: 0, hb: false, manual: true }, dt);
+  let lag = 0;
+  for (let i = 1; i < 900 && !lag; i++) { stepCar(W, c2, P, { steer: 0, thr: 1, brk: 0, hb: false, manual: true }, dt); if (c2.boost > 0.9) lag = i * dt; }
+  P.spec = { t100, t160, vmax, lag: lag || 7.5 };
   return P.spec;
 }
 CARS.forEach(measureCar);
 
-return { TUNE, CARS, STAGES, RADIUS, RW, carStats, torqueAt, engineCurve, measureCar, buildWorld, buildTrack, makeNoise, rng, sampleAt, roadYAt, terrainH, nearest, project,
+return { TUNE, CARS, STAGES, CONDS, stageDef, stageKey, stageTitle, condName, dailyKey, selfClearance, RADIUS, RW, carStats, torqueAt, engineCurve, measureCar, buildWorld, buildTrack, makeNoise, rng, sampleAt, roadYAt, terrainH, nearest, project,
   makeCar, resetCar, stepCar, locate, groundAt, simulateRun, prepAI, aiDrive, clamp, lerp, sstep, wrapA, hkey, CELL };
 })();
 if (typeof module !== 'undefined') module.exports = RallyCore;

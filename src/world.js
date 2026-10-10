@@ -44,8 +44,43 @@ const VIS = {
   },
 };
 
+// ---------- conditions ----------
+// night and rain are built from each stage's own palette, so a wet Pine Ridge still looks like Pine Ridge
+const darken = (hex, k) => { const v = parseInt(hex.slice(1), 16); const f = c => Math.round(Math.min(255, c * k)).toString(16).padStart(2, '0'); return '#' + f((v >> 16) & 255) + f((v >> 8) & 255) + f(v & 255); };
+function nightVis(B, st) {
+  const frost = st.kind === 'frost';
+  return {
+    zen: '#02050c', fogCol: frost ? '#0e1528' : '#0a1019', glow: '#1a2438', sunDisc: '#e6edff', cloudCol: '#121827', clouds: Math.min(B.clouds, 0.3), stars: 1.0,
+    sunEl: 34, sunAz: (B.sunAz + 50) % 360, sunCol: '#8ea4dc', sunI: frost ? 0.42 : 0.34, sky: '#22314e', skyI: frost ? 0.36 : 0.28, gnd: B.gnd, gndI: 0.12, exp: 1.3,
+    fog: [22, frost ? 260 : 230], rays: 0, night: true, hl: 1.7,
+    grade: { lift: [0.0, 0.006, 0.022], gain: [0.97, 1.0, 1.06], sat: 0.9, con: 0.16, vig: 0.4, bloom: 0.17, thr: 0.85 },
+  };
+}
+function rainVis(B, st) {
+  if (st.kind === 'frost') return {
+    zen: '#4a5778', fogCol: '#8790ad', glow: '#b8bfd6', sunDisc: '#d8dcea', cloudCol: '#9aa2bd', clouds: 1.0, overcast: 0.85, stars: 0,
+    sunI: 0.55, sunCol: '#d9dff0', sky: '#7f8db8', skyI: 1.0, gndI: 0.65, fog: [18, 170], rays: 0, blizzard: true,
+    grade: { lift: [0.01, 0.01, 0.025], gain: [0.99, 0.99, 1.02], sat: 0.85, con: 0.08, vig: 0.32, bloom: 0.08, thr: 1.2 },
+  };
+  const g = B.grass ? { grass: B.grass.map(c => darken(c, 0.82)) } : B.sand ? { sand: B.sand.map(c => darken(c, 0.72)) } : {};
+  return Object.assign(g, {
+    zen: '#56616e', fogCol: '#8c959e', glow: '#c2c8ce', sunDisc: '#dfe3e8', cloudCol: '#a2aab3', clouds: 1.0, overcast: 0.8,
+    sunI: B.sunI * 0.3, sunCol: '#e6eaee', sky: '#97a3b0', skyI: 1.08, gndI: 0.42, exp: 1.06, fog: [30, 250], rays: 0, wet: 1, rain: true,
+    road: B.road.map(c => darken(c, 0.66)), verge: darken(B.verge, 0.7), dirt: B.dirt && darken(B.dirt, 0.7),
+    dust: B.dust.map(v => v * 0.7), mark: B.mark,
+    grade: { lift: [0.008, 0.012, 0.016], gain: [0.98, 1.0, 1.02], sat: 0.86, con: 0.11, vig: 0.3, bloom: 0.08, thr: 1.15 },
+  });
+}
+function visOf(st) {
+  if (st._vis) return st._vis;
+  const B = VIS[st.id];
+  const V = st.cond === 'night' ? Object.assign({}, B, nightVis(B, st)) : st.cond === 'rain' ? Object.assign({}, B, rainVis(B, st)) : B;
+  Object.defineProperty(st, '_vis', { value: V, enumerable: false, configurable: true });
+  return V;
+}
+
 function env(st) {
-  const V = VIS[st.id];
+  const V = visOf(st);
   const el = V.sunEl * Math.PI / 180, az = V.sunAz * Math.PI / 180;
   return {
     V,
@@ -54,6 +89,7 @@ function env(st) {
     fogCol: lin(V.fogCol), fog: V.fog.slice(), zen: lin(V.zen), glow: lin(V.glow), sunDisc: lin(V.sunDisc), cloudCol: lin(V.cloudCol), clouds: V.clouds, stars: V.stars || 0,
     exp: V.exp, r1: lin(V.road[0]), r2: lin(V.road[1]), r3: lin(V.road[2]), lines: V.lines, icy: V.icy, time: 0, shadows: true,
     grade: V.grade, folFade: [70, 105], verge: lin(V.verge), tt: V.tt,
+    night: !!V.night, hlK: V.hl || 1, wet: V.wet || 0, rain: !!V.rain, blizzard: !!V.blizzard, snowfall: !!V.snowfall || !!V.blizzard, overcast: V.overcast || 0,
   };
 }
 
@@ -133,7 +169,7 @@ function stripMesh(rows, cols, P, Cc, U) {
 
 // ---------- terrain ----------
 function terrainMesh(W) {
-  const { TR, T, st, nz } = W; const V = VIS[st.id];
+  const { TR, T, st, nz } = W; const V = visOf(st);
   const nx = TR.nx, nzc = TR.nz, cell = TR.cell, H = TR.H;
   const n = nx * nzc;
   const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), col = new Float32Array(n * 4);
@@ -233,7 +269,7 @@ function terrainMesh(W) {
 }
 
 function roadMeshes(W) {
-  const { T, TR, st } = W; const V = VIS[st.id];
+  const { T, TR, st } = W; const V = visOf(st);
   const hw = T.hw, n = T.n;
   // road ribbon (3 columns so u spans -1..1)
   const P = [], Cc = [], U = [];
@@ -605,7 +641,7 @@ function tuftGeo() {
 }
 function placeTufts(W) {
   const { T, TR, st } = W, R = C.rng(st.seed + 555), hw = T.hw, out = [], tmp = {};
-  const V = VIS[st.id];
+  const V = visOf(st);
   const per = V.tuftPer || (st.kind === 'pine' ? 5 : st.kind === 'frost' ? 2 : 3);
   const dMin = st.bank ? hw + 4.7 : hw + 1.1;
   const tint = V.tuftTint ? V.tuftTint : st.kind === 'pine' ? [[1, 1, 1], [0.92, 1.0, 0.86], [1.06, 1.02, 0.9]] : st.kind === 'frost' ? [[1, 1, 1], [0.95, 0.95, 1.0]] : [[1, 1, 1], [1.05, 0.97, 0.9], [0.92, 0.9, 0.86]];
@@ -632,7 +668,7 @@ function placeTufts(W) {
 
 // ---------- far scenery ----------
 function farGeo(W) {
-  const { T, st } = W; const V = VIS[st.id];
+  const { T, st } = W; const V = visOf(st);
   const g = new Geo(); const R = C.rng(st.seed + 99);
   const cx = (T.bbox.minX + T.bbox.maxX) / 2, cz = (T.bbox.minZ + T.bbox.maxZ) / 2;
   const rad = Math.max(T.bbox.maxX - T.bbox.minX, T.bbox.maxZ - T.bbox.minZ) / 2 + 650;
@@ -738,7 +774,7 @@ function farGeo(W) {
 
 // ---------- build stage scene ----------
 function buildScene(R, W) {
-  const { T, O, st } = W; const V = VIS[st.id];
+  const { T, O, st } = W; const V = visOf(st);
   const S = { meshes: [], shadowCasters: [], E: env(st), V };
   const add = (m, o, cast) => { S.meshes.push({ m, o }); if (cast) S.shadowCasters.push({ m, model: o && o.model }); return m; };
   const t0 = performance.now();
@@ -848,5 +884,5 @@ function buildScene(R, W) {
 
 function buildCar(R, spec, night) { return CARMODEL.buildCar(R, spec, night); }
 
-return { VIS, env, buildScene, buildCar };
+return { VIS, visOf, env, buildScene, buildCar };
 })();

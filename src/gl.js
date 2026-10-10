@@ -250,6 +250,7 @@ uniform float u_dirt, u_carY; uniform vec3 u_dirtCol;
 uniform vec3 u_zen, u_hor; uniform vec3 u_fol;
 uniform vec3 u_verge, u_tt;
 uniform vec3 u_glw; uniform float u_cld, u_time, u_gbump; uniform vec4 u_fogLo;
+uniform float u_wet;
 out vec4 o;
 ${COMMON}
 ${OUTC}
@@ -370,6 +371,15 @@ void main(){
     // ragged edge where the surface meets the verge, instead of a ruled line
     float edge = au + (vnoise(vec2(v*0.5, 1.0)) - 0.5)*0.1 + (vnoise(m*2.5) - 0.5)*0.06;
     c = mix(c, u_verge, smoothstep(0.93, 1.02, edge) * (u_lines > 0.5 ? 0.5 : 0.8));
+    if (u_wet > 0.0) {
+      // rain: a dark, glossy film everywhere, and standing water in the dips of the wheel lines that mirrors the sky
+      vec2 pq = m * vec2(0.55, 0.16);
+      float pn = vnoise(pq + 21.0) * 0.62 + vnoise(pq * 2.7 + 5.0) * 0.38;
+      float pd = smoothstep(0.64, 0.78, pn + rut * (u_lines > 0.5 ? 0.04 : 0.16)) * (1.0 - smoothstep(0.75, 0.9, au)) * (u_lines > 0.5 ? 0.75 : 1.0);
+      c *= mix(1.0, 0.8, u_wet) * (1.0 - pd * 0.22);
+      spec = max(spec, u_wet * mix(u_lines > 0.5 ? 0.36 : 0.18, 0.85, pd));
+      bk *= 1.0 - pd * 0.85; // water lies flat over the stones
+    }
     base = c;
   } else if (u_mode == 8) {
     // foliage: needle clumps in the vertex colour, and (below) light coming through when the sun is behind
@@ -434,6 +444,7 @@ void main(){
     float hh = dot(d1, vec3(0.333)) * 0.6 + dot(d2, vec3(0.333)) * 0.4;
     bh = (hh - 0.5) * up; bk = u_gbump;
     sparkle = u_icy * up * (1.0 - smoothstep(0.02, 0.09, length(fwidth(v_wp.xz))));
+    spec += u_wet * 0.07 * up; // wet grass and mud catch a dull sheen
   } else if (u_mode == 3) {
     float d = vnoise(v_wp.xz*0.45)*0.45 + vnoise(v_wp.xz*1.9)*0.25 + vnoise(v_wp.xz*0.05)*0.5;
     base *= 0.68 + 0.45*d;
@@ -575,7 +586,7 @@ precision highp float;
 in vec2 v_p;
 uniform mat4 u_ivp; uniform vec3 u_cam;
 uniform vec3 u_zen, u_hor, u_sunDir, u_sunCol, u_glow, u_cloud;
-uniform float u_exp, u_time, u_clouds, u_stars;
+uniform float u_exp, u_time, u_clouds, u_stars, u_ovc;
 out vec4 o;
 ${COMMON}
 ${OUTC}
@@ -658,6 +669,13 @@ void main(){
     }
   }
 
+  if (u_ovc > 0.0 && y > -0.05) {
+    // overcast: a low, even deck that the cumulus melt into, a little brighter where the sun is behind it
+    float deck = vnoise(cloudUV(u_cam, d, u_time) * 0.7) * 0.6 + vnoise(cloudUV(u_cam, d, u_time) * 2.1 + 3.0) * 0.4;
+    vec3 oc = u_cloud * (0.82 + 0.22 * deck + 0.25 * pow(sd, 6.0)) * mix(1.0, 0.86, smoothstep(0.1, 0.8, y));
+    c = mix(c, mix(oc, u_hor, 1.0 - smoothstep(0.0, 0.3, y)), u_ovc * smoothstep(-0.05, 0.12, y));
+    sunVis -= u_ovc * 1.25;
+  }
   // sun: soft limb, tight corona and a wide halo, dimmed by cloud in front of it
   float disc = 1.0 - smoothstep(2.2e-5, 4.6e-5, x);
   c += u_sunCol * (disc * 26.0 + exp(-x * 420.0) * 1.2 + exp(-x * 50.0) * 0.2) * clamp(sunVis, 0.0, 1.0);
@@ -718,6 +736,19 @@ void main(){
   float a = v_col.a * (1.0 - smoothstep(u_fog.x * 0.6, u_fog.y * 0.5, length(v_wp - u_cam)));
   vec3 f = mix(vec3(1.0), v_col.rgb, a);
   o = vec4(u_hdr > 0.5 ? pow(f, vec3(2.2)) : f, 1.0);
+}`;
+
+const LN_FS = `#version 300 es
+precision highp float;
+in vec4 v_col; in vec3 v_wp;
+uniform vec3 u_fogCol, u_cam, u_light; uniform vec2 u_fog; uniform float u_exp;
+out vec4 o;
+${COMMON}
+${OUTC}
+void main(){
+  float d = length(v_wp - u_cam);
+  float a = v_col.a * smoothstep(0.6, 2.5, d) * (1.0 - smoothstep(u_fog.x, u_fog.y, d));
+  o = outc(v_col.rgb * u_light, a);
 }`;
 
 // ---------- post-processing (HDR resolve, bloom, tonemap + grade) ----------
@@ -840,6 +871,7 @@ function createRenderer(canvas) {
     sky: compile(SKY_VS, SKY_FS),
     pt: compile(PT_VS, PT_FS),
     tr: compile(TR_VS, TR_FS),
+    ln: compile(TR_VS, LN_FS),
     bpre: compile(FS_VS, BLOOM_PRE_FS),
     bdown: compile(FS_VS, BLOOM_DOWN_FS),
     bup: compile(FS_VS, BLOOM_UP_FS),
@@ -1253,6 +1285,22 @@ function createRenderer(canvas) {
       } };
   }
 
+  // dynamic line buffer (rain streaks): pos3 + rgba per vertex, two vertices a line
+  function lines(maxVerts) {
+    const t = trail(maxVerts);
+    t.update = function (P, Cc, n) { this.write(0, P.subarray(0, n * 3), Cc.subarray(0, n * 4)); this.count = n; };
+    return t;
+  }
+  function drawLines(Ln, E, light) {
+    if (!Ln.count) return;
+    const u = prog.ln.u;
+    gl.useProgram(prog.ln.p);
+    gl.uniformMatrix4fv(u.u_vp, false, env.vp); gl.uniform3fv(u.u_cam, env.cam);
+    gl.uniform3fv(u.u_fogCol, E.fogCol); gl.uniform2fv(u.u_fog, E.fog); gl.uniform3fv(u.u_light, light); gl.uniform1f(u.u_exp, E.exp);
+    gl.uniform1f(u.u_hdr, env.hdr || 0);
+    gl.bindVertexArray(Ln.vao); gl.drawArrays(gl.LINES, 0, Ln.count);
+  }
+
   function disposeAll() {
     for (const b of buffers) gl.deleteBuffer(b);
     for (const v of vaos) gl.deleteVertexArray(v);
@@ -1287,6 +1335,7 @@ function createRenderer(canvas) {
     gl.uniform1f(u.u_gbump, E.gbump == null ? 0.05 : E.gbump);
     gl.uniform3fv(u.u_glw, E.glow ? [E.glow[0] * 0.35, E.glow[1] * 0.35, E.glow[2] * 0.35] : [0, 0, 0]); gl.uniform1f(u.u_cld, E.clouds || 0);
     gl.uniform3fv(u.u_hlPos, E.hlPos || [0, 0, 0]); gl.uniform3fv(u.u_hlDir, E.hlDir || [0, 0, 1]); gl.uniform1f(u.u_hlOn, E.hlOn || 0);
+    gl.uniform1f(u.u_wet, E.wet || 0);
     gl.uniform3fv(u.u_hitPos, E.hitPos || [0, -999, 0]); gl.uniform1f(u.u_hitK, E.hitK || 0);
     gl.uniform1f(u.u_dirt, 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, shTex); gl.uniform1i(u.u_shadow, 1);
@@ -1361,6 +1410,7 @@ function createRenderer(canvas) {
     gl.uniform3fv(u.u_zen, E.zen); gl.uniform3fv(u.u_hor, E.fogCol); gl.uniform3fv(u.u_sunDir, E.sunDir);
     gl.uniform3fv(u.u_sunCol, E.sunDisc); gl.uniform3fv(u.u_glow, E.glow); gl.uniform3fv(u.u_cloud, E.cloudCol);
     gl.uniform1f(u.u_exp, E.exp); gl.uniform1f(u.u_time, E.time); gl.uniform1f(u.u_clouds, E.clouds); gl.uniform1f(u.u_stars, E.stars || 0); gl.uniform1f(u.u_hdr, env.hdr || 0);
+    gl.uniform1f(u.u_ovc, E.overcast || 0);
     gl.depthMask(false);
     gl.bindVertexArray(skyVao); gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.depthMask(true);
@@ -1387,7 +1437,7 @@ function createRenderer(canvas) {
     gl.uniform1f(u.u_hdr, env.hdr || 0);
     gl.bindVertexArray(Tr.vao); gl.drawArrays(gl.TRIANGLES, 0, count);
   }
-  return { gl, env, mesh, disposeMesh, setInstances, texture, points, trail, disposeAll, setLitFrame, drawLit, drawDepth, beginShadow, endShadow, drawSky, drawPoints, drawTrail, SHADOW,
+  return { gl, env, mesh, disposeMesh, setInstances, texture, points, trail, lines, drawLines, disposeAll, setLitFrame, drawLit, drawDepth, beginShadow, endShadow, drawSky, drawPoints, drawTrail, SHADOW,
     beginScene, endScene, post };
 }
 

@@ -1,7 +1,7 @@
 <title>Sideways Rally</title>
-<meta name="description" content="A browser rally game: 4 stages, 7 classic rally cars, pace notes read by your co-driver.">
+<meta name="description" content="A browser rally game: 4 stages both ways, by day, night and in the rain, a new stage every day, rallies, 7 classic rally cars and challenge links for your friends.">
 <meta property="og:title" content="Sideways Rally">
-<meta property="og:description" content="A browser rally game: 4 stages, 7 classic rally cars, pace notes read by your co-driver.">
+<meta property="og:description" content="A browser rally game: 4 stages both ways, by day, night and in the rain, a new stage every day, rallies, 7 classic rally cars and challenge links for your friends.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Barlow+Semi+Condensed:ital,wght@0,500;0,600;0,700;1,700&family=Chivo+Mono:wght@500;700&display=swap">
@@ -44,8 +44,8 @@ kbd { font-family: var(--f-mono); font-size: 11px; font-weight: 500; padding: 1p
 .brand { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .repo { flex: none; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--mute); font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-decoration: none; transition: color .15s, border-color .15s; }
 .repo:hover, .repo:focus-visible { color: var(--paper); border-color: var(--line-2); }
-.tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; background: var(--raise); border: 1px solid var(--line); border-radius: var(--r); }
-.tab { padding: 8px 0; border-radius: 5px; font-weight: 700; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--mute); transition: background .15s, color .15s; }
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 4px; background: var(--raise); border: 1px solid var(--line); border-radius: var(--r); }
+.tab { padding: 8px 0; border-radius: 5px; font-weight: 700; font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--mute); transition: background .15s, color .15s; }
 .tab[aria-selected="true"] { background: var(--paper); color: var(--ink); }
 .tab:not([aria-selected="true"]):hover { color: var(--paper); }
 .menu-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 22px; scrollbar-width: thin; }
@@ -78,6 +78,25 @@ kbd { font-family: var(--f-mono); font-size: 11px; font-weight: 500; padding: 1p
 .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: var(--r); background: var(--raise); }
 .seg button { padding: 9px 0; border-radius: 5px; font-weight: 700; font-size: 14px; color: var(--mute); }
 .seg button[aria-pressed="true"] { background: var(--paper); color: var(--ink); }
+.seg.seg3 { grid-template-columns: 1fr 1fr 1fr; }
+.seg button:disabled { opacity: .35; cursor: default; }
+.var-note { margin: 0 2px; color: var(--mute); font-size: 13px; }
+.chal-tag { align-self: flex-start; margin-top: 2px; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #ff8aa0; }
+.chal-card, .rally-card { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid rgba(255, 107, 138, .5); border-radius: var(--r); background: linear-gradient(90deg, rgba(255, 107, 138, .16), rgba(255, 107, 138, .04)); animation: noteIn .3s cubic-bezier(.2, .9, .3, 1); }
+.rally-card { border-color: rgba(255, 210, 58, .45); background: linear-gradient(90deg, rgba(255, 210, 58, .12), rgba(255, 210, 58, .03)); flex-direction: row; align-items: center; justify-content: space-between; }
+.chal-card .t, .rally-card .t { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.chal-card b, .rally-card b { font-family: var(--f-display); font-weight: 800; font-size: 22px; line-height: 1; text-transform: uppercase; }
+.chal-card small, .rally-card small { color: var(--paper-2); font-size: 13px; }
+.chal-card .label { color: #ff8aa0; } .rally-card .label { color: var(--signal); }
+.chal-card .btn, .rally-card .btn { padding: 8px 12px; font-size: 13px; min-width: 0; }
+.rally-row { grid-template-columns: 1fr; }
+.rally-row .legs { font-size: 12px; color: var(--mute); }
+.row:disabled { opacity: .45; cursor: default; }
+.namefield { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--raise); }
+.namefield b { font-weight: 700; font-size: 15px; } .namefield small { color: var(--mute); font-size: 13px; }
+input[type="text"] { font: inherit; font-size: 15px; color: var(--paper); background: rgba(0,0,0,.35); border: 1px solid var(--line-2); border-radius: 6px; padding: 8px 10px; user-select: text; -webkit-user-select: text; touch-action: auto; min-width: 0; }
+input[type="text"]:focus { outline: 2px solid var(--signal); outline-offset: 1px; }
+.character { margin: 0; font-size: 14px; line-height: 1.4; color: var(--paper-2); }
 .tune { display: flex; flex-direction: column; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--raise); }
 .tune-row { display: grid; gap: 4px; }
 .tune-row b { font-weight: 700; font-size: 15px; }
@@ -128,6 +147,7 @@ dl.spec dd em { font-style: normal; color: var(--mute); }
 .prog b { position: absolute; top: -3px; width: 2px; height: 12px; background: var(--paper); opacity: .7; }
 .prog em { position: absolute; top: -4px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; border: 2px solid #b8d3ff; box-sizing: border-box; }
 .prog em.pb { border-color: var(--gold); }
+.prog em.ch { border-color: #ff6b8a; }
 .timer { text-align: center; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 16px 7px; min-width: 190px; backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass); box-shadow: var(--sheen), 0 8px 24px rgba(0,0,0,.25); }
 .timer .t { font-family: var(--f-mono); font-weight: 700; font-size: 34px; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
 .timer .d { font-family: var(--f-mono); font-weight: 500; font-size: 15px; font-variant-numeric: tabular-nums; min-height: 18px; color: var(--mute); }
@@ -183,6 +203,16 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
 .tt td:first-child { font-family: var(--f-ui); }
 .tt td.ahead { color: var(--good); } .tt td.behind { color: var(--bad); }
 .targets { margin: 0; font-size: 13.5px; color: var(--mute); }
+.chal-res { margin: 0; font-size: 15px; font-weight: 700; } .chal-res.ahead { color: var(--good); } .chal-res.behind { color: #ff8aa0; }
+.rally-head { margin: 0; font-family: var(--f-display); font-weight: 800; font-size: 22px; text-transform: uppercase; letter-spacing: .03em; color: var(--signal); }
+.tt tr.you td { color: var(--signal); font-weight: 700; }
+.tt.standings td:nth-child(2) { text-align: left; font-family: var(--f-ui); color: var(--paper); }
+.tt.standings tr.you td:nth-child(2) { color: var(--signal); }
+.tt.standings th:nth-child(2) { text-align: left; }
+#share .card { gap: 12px; }
+#share p { margin: 0; color: var(--paper-2); line-height: 1.4; }
+#shareLink { width: 100%; box-sizing: border-box; font-family: var(--f-mono); font-size: 12px; }
+#toast { position: absolute; left: 50%; bottom: calc(28px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 10; padding: 10px 16px; background: var(--panel-solid); border: 1px solid var(--line-2); border-radius: 999px; font-weight: 600; font-size: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.4); max-width: calc(100% - 32px); text-align: center; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn { flex: 1; min-width: 110px; padding: 11px 14px; border: 1px solid var(--line-2); border-radius: var(--r); font-weight: 700; font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .btn { transition: background .15s, transform .1s, border-color .15s; }
@@ -267,7 +297,7 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
     <div class="hud-top">
       <div class="stagebar">
         <div class="nm"><span id="hStage">Pine Ridge</span><em id="hSurf">Gravel</em></div>
-        <div class="prog" id="hProgBar"><i id="hProg"></i><b id="hS1"></b><b id="hS2"></b><em id="hRival" title="Rival"></em><em id="hPB" class="pb" title="Your best" hidden></em></div>
+        <div class="prog" id="hProgBar"><i id="hProg"></i><b id="hS1"></b><b id="hS2"></b><em id="hRival" title="Rival"></em><em id="hPB" class="pb" title="Your best" hidden></em><em id="hChal" class="ch" title="Challenge" hidden></em></div>
       </div>
       <div class="timer"><div class="t" id="hTime">0:00.00</div><div class="d" id="hDelta"></div></div>
       <canvas id="minimap" width="300" height="300"></canvas>
@@ -287,12 +317,28 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
       </div>
       <div class="tabs" role="tablist" aria-label="Setup">
         <button class="tab" role="tab" id="tabStage" data-pane="paneStage" aria-selected="true">Stage</button>
+        <button class="tab" role="tab" id="tabRally" data-pane="paneRally" aria-selected="false">Rally</button>
         <button class="tab" role="tab" id="tabCar" data-pane="paneCar" aria-selected="false">Car</button>
         <button class="tab" role="tab" id="tabOpts" data-pane="paneOpts" aria-selected="false">Options</button>
       </div>
     </div>
     <div class="menu-body">
-      <section class="pane" id="paneStage" role="tabpanel" aria-labelledby="tabStage"></section>
+      <section class="pane" id="paneStage" role="tabpanel" aria-labelledby="tabStage">
+        <div id="chalBox"></div>
+        <p class="label group-label">Daily stage · new every day</p>
+        <div class="pane" id="dailyRow"></div>
+        <p class="label group-label">Stages</p>
+        <div class="seg" id="optDir"><button data-v="fwd" aria-pressed="true">Forward</button><button data-v="rev" aria-pressed="false">Reverse</button></div>
+        <div class="seg seg3" id="optCond"><button data-v="day" aria-pressed="true">Day</button><button data-v="night" aria-pressed="false">Night</button><button data-v="rain" aria-pressed="false">Rain</button></div>
+        <p class="var-note" id="varNote" hidden>Direction and conditions apply to the four stages below.</p>
+        <div class="pane" id="stageList"></div>
+      </section>
+      <section class="pane" id="paneRally" role="tabpanel" aria-labelledby="tabRally" hidden>
+        <div id="rallyNow"></div>
+        <p class="label group-label">Rallies</p>
+        <div class="pane" id="rallyList"></div>
+        <small class="tune-note">One go at each stage, against a field of eight. Starting a stage again costs 10 s. You keep the car you start with, and you can finish a rally another day.</small>
+      </section>
       <section class="pane" id="paneCar" role="tabpanel" aria-labelledby="tabCar" hidden>
         <div class="pane" id="carList"></div>
         <p class="label group-label">Customise · <span id="tuneCar">Car</span></p>
@@ -308,6 +354,8 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
       <section class="pane" id="paneOpts" role="tabpanel" aria-labelledby="tabOpts" hidden>
         <p class="label group-label">Gearbox</p>
         <div class="seg" id="optGear"><button id="gearAuto" aria-pressed="true">Automatic</button><button id="gearManual" aria-pressed="false">Manual</button></div>
+        <p class="label group-label">Driver</p>
+        <label class="namefield"><b>Your name</b><small>Shown to friends on your challenge links and in rally standings</small><input type="text" id="optName" maxlength="20" placeholder="Driver" autocomplete="nickname" spellcheck="false"></label>
         <p class="label group-label">Sound and help</p>
         <button class="opt" id="optVoice" aria-pressed="true"><b>Co-driver voice</b><span class="switch"></span><small>Pace notes read out loud ahead of each corner</small></button>
         <button class="opt" id="optSound" aria-pressed="true"><b>Sound</b><span class="switch"></span><small>Engine, turbo, gravel and crowd. <kbd>M</kbd> mutes in a run</small></button>
@@ -367,15 +415,32 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
         <span class="medal m0" id="rMedal">No medal</span>
       </div>
       <div class="pbflag" id="rPB" hidden>New personal best</div>
+      <p class="chal-res" id="rChal" hidden></p>
       <table class="tt" id="rTable"></table>
+      <div id="rRally" hidden><p class="rally-head" id="rRallyHead"></p><table class="tt standings" id="rRallyTable"></table></div>
       <p class="targets" id="rTargets"></p>
       <div class="actions">
         <button class="btn primary" id="rRetry">Retry <kbd>Enter</kbd></button>
         <button class="btn" id="rNext">Next stage</button>
+        <button class="btn" id="rShare">Challenge a friend</button>
         <button class="btn" id="rMenu">Menu</button>
       </div>
     </div>
   </div>
+
+  <div id="share" class="overlay" hidden>
+    <div class="card">
+      <h2 class="pause-title">Challenge a friend</h2>
+      <p id="shareText"></p>
+      <input type="text" id="shareLink" readonly aria-label="Challenge link">
+      <div class="actions">
+        <button class="btn primary" id="shareCopy">Copy link</button>
+        <button class="btn" id="shareNative" hidden>Share…</button>
+        <button class="btn" id="shareClose">Close</button>
+      </div>
+    </div>
+  </div>
+  <div id="toast" role="status" hidden></div>
 
   <div id="loading" class="overlay" hidden><p id="loadingText">Building stage</p></div>
 
