@@ -250,7 +250,7 @@ uniform float u_dirt, u_carY; uniform vec3 u_dirtCol;
 uniform vec3 u_zen, u_hor; uniform vec3 u_fol;
 uniform vec3 u_verge, u_tt;
 uniform vec3 u_glw; uniform float u_cld, u_time, u_gbump; uniform vec4 u_fogLo;
-uniform float u_wet;
+uniform float u_wet; uniform vec3 u_skyline;
 out vec4 o;
 ${COMMON}
 ${OUTC}
@@ -258,6 +258,11 @@ ${OUTC}
 vec3 envRefl(vec3 R){
   vec3 sky = mix(u_hor, u_zen, pow(clamp(R.y, 0.0, 1.0), 0.5));
   sky += u_glw * pow(max(dot(R, u_sunDir), 0.0), 5.0) * (1.0 - clamp(R.y * 1.5, 0.0, 1.0)); // the warm haze around the sun
+  // a broken skyline (treetops, hills, buttes) along the horizon, so paint and glass reflect a horizon line instead
+  // of a plain gradient: that line sliding over the panels is most of what makes a body read as glossy and curved
+  float az = atan(R.z, R.x);
+  float hz = 0.03 + 0.055 * vnoise(vec2(az * 5.0, 3.0)) + 0.035 * vnoise(vec2(az * 21.0, 7.0));
+  sky = mix(sky, u_skyline, (1.0 - smoothstep(hz - 0.015, hz + 0.004, R.y)) * smoothstep(-0.06, 0.0, R.y));
   return mix(u_gnd * 0.5, sky, smoothstep(-0.03, 0.025, R.y));
 }
 // two cascades side by side in one depth atlas (left: near, sharp; right: far). 12 Poisson taps rotated per
@@ -414,6 +419,33 @@ void main(){
       foliage = 0.0;
       bh = fur + fin * 0.5; bk = 0.05;
     }
+  } else if (u_mode == 10) {
+    // trees: needle sprays / leaf clumps cut out of a painted atlas, edges by alpha-to-coverage; bark (uv.y shifted
+    // below -0.5, untinted) and the dense inner crown are opaque. Back faces of the sprays take the flipped normal,
+    // so the underside of a branch sits in its own shade.
+    bool bark = v_uv.y < -0.5;
+    vec2 tuv = bark ? v_uv + vec2(0.0, 2.0) : v_uv;
+    vec4 t = texture(u_tex, tuv);
+    if (!bark && tuv.x < 0.5) {
+      vec2 tc = tuv * 512.0; vec2 ddx = dFdx(tc), ddy = dFdy(tc);
+      float lod = max(0.0, 0.5 * log2(max(dot(ddx, ddx), dot(ddy, ddy))));
+      float a = t.a * (1.0 + lod * 0.32);
+      if (u_fol.z > 0.5) { a = clamp((a - 0.5) / max(fwidth(a), 0.0001) + 0.5, 0.0, 1.0); if (a < 0.01) discard; }
+      else if (a < 0.5) discard;
+      aOut = a;
+      if (!gl_FrontFacing) n = -n;
+    }
+    base *= t.rgb;
+    if (!bark) {
+      foliage = 1.0;
+      // snow lying on the upper side of the branches (Frostvik)
+      if (u_icy > 0.5) {
+        float sn = smoothstep(0.42, 0.72, n.y + (vnoise(v_wp.xz * 2.7 + v_wp.y * 1.9) - 0.5) * 0.45);
+        base = mix(base, vec3(0.78, 0.82, 0.9), sn * 0.88);
+      }
+    }
+  } else if (u_mode == 11) {
+    base *= texture(u_tex, v_uv).rgb; // vertex colour × texture, nothing more (tyre lettering)
   } else if (u_mode == 2) {
     vec4 t = texture(u_tex, v_uv);
     if (t.a < 0.5) discard;
@@ -828,6 +860,12 @@ void main(){
     float j = hash12(gl_FragCoord.xy) * 0.5;
     for (int i = 1; i <= 5; i++) c += texture(u_scene, v_uv - d * k * (float(i) - j) / 5.0).rgb;
     c /= 6.0;
+  }
+  // a light unsharp mask: the resolve and the dynamic resolution soften fine detail a touch, this brings it back
+  if (u_blur <= 0.001) {
+    vec2 px = 1.0 / vec2(textureSize(u_scene, 0));
+    vec3 nb = texture(u_scene, v_uv + vec2(px.x, 0.0)).rgb + texture(u_scene, v_uv - vec2(px.x, 0.0)).rgb + texture(u_scene, v_uv + vec2(0.0, px.y)).rgb + texture(u_scene, v_uv - vec2(0.0, px.y)).rgb;
+    c = max(c + (c - nb * 0.25) * 0.32, vec3(0.0));
   }
   c += texture(u_bloom, v_uv).rgb * u_bloomK;
   c += texture(u_rays, v_uv).rgb * u_rayCol;
@@ -1336,6 +1374,7 @@ function createRenderer(canvas) {
     gl.uniform3fv(u.u_glw, E.glow ? [E.glow[0] * 0.35, E.glow[1] * 0.35, E.glow[2] * 0.35] : [0, 0, 0]); gl.uniform1f(u.u_cld, E.clouds || 0);
     gl.uniform3fv(u.u_hlPos, E.hlPos || [0, 0, 0]); gl.uniform3fv(u.u_hlDir, E.hlDir || [0, 0, 1]); gl.uniform1f(u.u_hlOn, E.hlOn || 0);
     gl.uniform1f(u.u_wet, E.wet || 0);
+    gl.uniform3fv(u.u_skyline, E.skyline || E.gnd);
     gl.uniform3fv(u.u_hitPos, E.hitPos || [0, -999, 0]); gl.uniform1f(u.u_hitK, E.hitK || 0);
     gl.uniform1f(u.u_dirt, 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, shTex); gl.uniform1i(u.u_shadow, 1);

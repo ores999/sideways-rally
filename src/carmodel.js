@@ -347,6 +347,51 @@ function warpCar(geos, S) {
   }
 }
 
+// The side panels are a few big flat triangles (smoothing streaked across them), so their curvature lives in the
+// normals instead: a smooth field that leans the upper side towards the sky and the lower side towards the ground
+// (the barrel of a real door) and the ends towards the nose and the tail. Linear in position, so it interpolates
+// across the big triangles without streaks; reflections then sweep over the doors like they do on a curved panel.
+function curveSides(g) {
+  const P = g.p, N = g.n;
+  for (const t of g.lock || []) for (let v = 0; v < 3; v++) {
+    const i = (t * 3 + v) * 3, sx = Math.sign(N[i]) || 1;
+    const ny = Math.max(-0.3, Math.min(0.32, (P[i + 1] - 0.62) * 0.8)), nz = Math.max(-0.085, Math.min(0.085, P[i + 2] * 0.038));
+    const l = Math.hypot(1, ny, nz);
+    N[i] = sx / l; N[i + 1] = ny / l; N[i + 2] = nz / l;
+  }
+}
+// an ellipsoid (lat/long), optionally cut flat at the back (-z), for mirror housings
+function blob(g, cx, cy, cz, rx, ry, rz, col, spec, cutBack) {
+  const NA = 10, NB = 6;
+  const P = (a, b) => { const x = Math.cos(b) * Math.cos(a), y = Math.sin(b), z = Math.cos(b) * Math.sin(a); return [cx + x * rx, cy + y * ry, cz + Math.max(z, cutBack ? -0.2 : -1) * rz]; };
+  for (let i = 0; i < NA; i++) for (let j = 0; j < NB; j++) {
+    const a0 = i / NA * Math.PI * 2, a1 = (i + 1) / NA * Math.PI * 2, b0 = -Math.PI / 2 + j / NB * Math.PI, b1 = -Math.PI / 2 + (j + 1) / NB * Math.PI;
+    quadUV(g, P(a0, b0), P(a1, b0), P(a1, b1), P(a0, b1), col, spec, [cx, cy, cz]);
+  }
+}
+function ellipseQuad(g, cx, cy, z, rx, ry, col, spec) {
+  for (let k = 0; k < 12; k++) {
+    const a0 = k / 12 * Math.PI * 2, a1 = (k + 1) / 12 * Math.PI * 2;
+    g.tri([cx, cy, z], [cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry, z], [cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry, z], col, spec, [cx, cy, z + 5], WHITE_UV, WHITE_UV, WHITE_UV);
+  }
+}
+// roof scoop: the intake mouth faces forward at zF, the top slopes down to meet the roof at zB; rounded shoulders
+function scoop(g, y0, zF, zB, w, h, col, spec) {
+  const sec = (z, k, hh) => { const ww = w / 2 * k; return [[-ww, y0, z], [-ww * 0.92, y0 + hh * 0.75, z], [-ww * 0.6, y0 + hh, z], [ww * 0.6, y0 + hh, z], [ww * 0.92, y0 + hh * 0.75, z], [ww, y0, z]]; };
+  const n = 5, ref = [0, y0 - 1, (zF + zB) / 2];
+  let prev = sec(zF, 1, h);
+  for (let k = 1; k <= n; k++) {
+    const t = k / n, cur = sec(zF + (zB - zF) * t, 1 - 0.3 * t, h * (1 - t) * (1 - t * 0.2) + 0.004);
+    for (let i = 0; i < prev.length - 1; i++) quadUV(g, prev[i], prev[i + 1], cur[i + 1], cur[i], col, spec, ref);
+    prev = cur;
+  }
+  // the mouth: a dark opening framed by a lip
+  const m = sec(zF, 0.82, h * 0.78).map(q => [q[0], q[1] + h * 0.06, zF + 0.004]);
+  for (let i = 0; i < m.length - 1; i++) g.tri([0, y0 + h * 0.4, zF + 0.004], m[i], m[i + 1], [0.01, 0.01, 0.012], 0, [0, y0 + h * 0.4, zF - 5], WHITE_UV, WHITE_UV, WHITE_UV);
+  const f = sec(zF, 1, h);
+  for (let i = 0; i < f.length - 1; i++) g.tri([0, y0, zF], f[i], f[i + 1], col, spec, [0, y0 + h * 0.4, zF - 5], WHITE_UV, WHITE_UV, WHITE_UV);
+}
+
 // wing element: an airfoil section (round nose, thin tail, a little camber) across x, trailing edge raised by aoa
 function airfoil(g, x0, x1, y, z, chord, thick, aoa, col, spec) {
   const N = 7, up = [], lo = [];
@@ -447,11 +492,11 @@ function carGeo(spec, night) {
   for (const sx of [-1, 1]) cylUV(g, sx * 0.55, S.hoodF + 0.02, S.zf - 0.38, 0.03, 0.03, 0.03, 8, chrome, 0.9, 'y', true);
   // mirrors
   for (const sx of [-1, 1]) {
-    // wedge-shaped housing on a short arm; the glass faces backwards
-    const mx = sx * (hw + 0.08), mz = S.zW - 0.25, my = S.hoodB + 0.14;
-    prism(g, [[-0.09, -0.04], [0.09, -0.04], [0.07, 0.07], [-0.05, 0.08]].map(([u, v]) => [mx + sx * u, mz + v]), my - 0.055, my + 0.055, roofC, 0.6);
-    box(g, mx, my, mz - 0.043, 0.15, 0.08, 0.004, lin('#8fa3b5'), 0.95);
-    box(g, sx * (hw + 0.015), S.hoodB + 0.09, S.zW - 0.2, 0.07, 0.025, 0.05, black, 0.2);
+    // rounded, aerodynamic housing (flat at the back, where the glass sits) on a slim strut from the door
+    const mx = sx * (hw + 0.09), mz = S.zW - 0.25, my = S.hoodB + 0.14;
+    blob(g, mx, my, mz, 0.1, 0.05, 0.075, roofC, 0.6, true);
+    ellipseQuad(g, mx, my, mz - 0.016, 0.09, 0.043, lin('#8fa3b5'), 0.95);
+    prism(g, [[-0.025, -0.03], [0.025, -0.03], [0.02, 0.035], [-0.02, 0.035]].map(([u, v]) => [sx * (hw + 0.03) + u, S.zW - 0.22 + v]), S.hoodB + 0.075, S.hoodB + 0.11, black, 0.3);
   }
   // rear bumper, diffuser, exhaust, rally plate
   prism(g, rrect(-S.W * 0.495, S.W * 0.495, S.zr - 0.07, S.zr + 0.08, 0.07), 0.27, 0.49, black, 0.3);    // rear bumper
@@ -479,8 +524,9 @@ function carGeo(spec, night) {
     box(g, 0, 0.25, S.zf + 0.2, S.W * 1.02, 0.04, 0.42, black, 0.2); // big front splitter
     for (const sx of [-1, 1]) box(g, sx * 0.5, S.hoodF + 0.1, S.zf - 0.15, 0.3, 0.06, 0.14, black, 0.2); // front wing blades
   }
-  if (S.scoop || spec.id === 'delta') box(g, 0, S.roof + 0.07, S.zRoofF - 0.45, 0.42, 0.1, 0.4, roofC, 0.5);
-  else box(g, 0, S.roof + 0.05, S.zRoofF - 0.35, 0.32, 0.07, 0.26, black, 0.2);
+  // roof intake: a forward-facing scoop that blends back into the roof
+  if (S.scoop || spec.id === 'delta') scoop(g, S.roof + 0.02, S.zRoofF - 0.25, S.zRoofF - 0.72, 0.44, 0.11, roofC, 0.5);
+  else scoop(g, S.roof + 0.02, S.zRoofF - 0.22, S.zRoofF - 0.55, 0.32, 0.075, black, 0.25);
   // antenna
   box(g, 0.25, S.roof + 0.2, S.zRoofR + 0.25, 0.012, 0.4, 0.012, black, 0);
   // mudflaps (textured)
@@ -495,13 +541,21 @@ function carGeo(spec, night) {
   const lf = new Geo(), lr = new Geo(), lens = new Geo();
   const hl = lin('#fff3d2'), red = lin('#ff2a1a'), amber = lin('#ffa53a');
   const sc = (c, k) => [c[0] * k, c[1] * k, c[2] * k];
-  const disc = (geo, cx, cy, z, r, c, dir) => { for (let k = 0; k < 10; k++) { const a0 = k / 10 * Math.PI * 2, a1 = (k + 1) / 10 * Math.PI * 2; geo.tri([cx, cy, z], [cx + Math.cos(a0) * r, cy + Math.sin(a0) * r, z], [cx + Math.cos(a1) * r, cy + Math.sin(a1) * r, z], c, 0, [cx, cy, z - dir * 5]); } };
+  // a lamp: bright bulb in the middle of a dimmer reflector bowl, in 18 segments so it reads round
+  const disc = (geo, cx, cy, z, r, c, dir) => {
+    const N = 18, ri = r * 0.42, cO = [c[0] * 0.55, c[1] * 0.55, c[2] * 0.55];
+    for (let k = 0; k < N; k++) {
+      const a0 = k / N * Math.PI * 2, a1 = (k + 1) / N * Math.PI * 2, P = (a, rr) => [cx + Math.cos(a) * rr, cy + Math.sin(a) * rr, z];
+      geo.tri([cx, cy, z + dir * 0.002], P(a0, ri), P(a1, ri), c, 0, [cx, cy, z - dir * 5]);
+      geo.quad(P(a0, ri), P(a1, ri), P(a1, r), P(a0, r), cO, 0, [cx, cy, z - dir * 5]);
+    }
+  };
   // lenses in columns so they follow the bowed nose and tail
   const rect = (geo, x0, y0, x1, y1, z, c, dir) => { for (let k = 0; k < 4; k++) { const xa = x0 + (x1 - x0) * k / 4, xb = x0 + (x1 - x0) * (k + 1) / 4; geo.quad([xa, y0, z], [xb, y0, z], [xb, y1, z], [xa, y1, z], c, 0, [0, 0, z - dir * 5]); } };
   const zr = S.zr - 0.028, ty = tailY - 0.2;
   for (const sx of [-1, 1]) {
     const x = sx * (hw - 0.3), z = S.zf + 0.037, y = S.nose - 0.02;
-    prism(g, rrect(x - 0.215, x + 0.215, z - 0.032, z + 0.008, 0.012), y - 0.075, y + 0.075, [0.012, 0.013, 0.015], 0.9);
+    prism(g, rrect(x - 0.215, x + 0.215, z - 0.032, z + 0.008, 0.016), y - 0.075, y + 0.075, [0.012, 0.013, 0.015], 0.9);
     rect(lf, x - 0.2, y - 0.065, x + 0.2, y + 0.065, z + 0.01, sc(hl, 0.16), 1);
     rect(lens, x - 0.205, y - 0.07, x + 0.205, y + 0.07, z + 0.022, [0.8, 0.85, 0.9], 1); // clear cover
     disc(lf, x - sx * 0.035, y, z + 0.012, 0.056, hl, 1);
@@ -530,6 +584,7 @@ function carGeo(spec, night) {
   for (let i = 3; i < lens.c.length; i += 4) lens.c[i] = 0.95;
   warpCar([g, gg, lf, lr, fl, lens], S);
   smoothNormals(g, 36); smoothNormals(gg, 36);
+  curveSides(g);
   return { body: g, glass: gg, lens, lightF: lf, lightR: lr, flame: fl, shape: S, fz: prof.fz, rz: prof.rz };
 }
 
@@ -554,8 +609,10 @@ function wheelGeo(spec) {
       // shoulder, sidewall (bulging out a little at mid height), rim lip, barrel
       g.quad(P(sx * (hw - sh), a0, r0 + hiS), P(sx * (hw - sh), a1, r0 + hiS), P(sx * hw, a1, r0 - sh), P(sx * hw, a0, r0 - sh), tire, 0.05, [0, 0, 0]);
       const rm = (r0 - sh + ri) / 2;
-      g.quad(P(sx * hw, a0, r0 - sh), P(sx * hw, a1, r0 - sh), P(sx * (hw + 0.012), a1, rm), P(sx * (hw + 0.012), a0, rm), side, 0.06, [-sx * 20, 0, 0]);
-      g.quad(P(sx * (hw + 0.012), a0, rm), P(sx * (hw + 0.012), a1, rm), P(sx * hw * 0.98, a1, ri), P(sx * hw * 0.98, a0, ri), i % 6 === 0 ? lin('#26282c') : side, 0.06, [-sx * 20, 0, 0]);
+      // sidewall: white vertex colour, the rubber and the moulded lettering come from the tyre texture (u around, v out)
+      const su = k => [sx > 0 ? 1 - (i + k) / N : (i + k) / N, 0], tv = (uv, v) => [uv[0], v]; // reads clockwise on both sides
+      g.quad(P(sx * hw, a0, r0 - sh), P(sx * hw, a1, r0 - sh), P(sx * (hw + 0.012), a1, rm), P(sx * (hw + 0.012), a0, rm), [1, 1, 1], 0.06, [-sx * 20, 0, 0], [tv(su(0), 0.94), tv(su(1), 0.94), tv(su(1), 0.5), tv(su(0), 0.5)]);
+      g.quad(P(sx * (hw + 0.012), a0, rm), P(sx * (hw + 0.012), a1, rm), P(sx * hw * 0.98, a1, ri), P(sx * hw * 0.98, a0, ri), [1, 1, 1], 0.06, [-sx * 20, 0, 0], [tv(su(0), 0.5), tv(su(1), 0.5), tv(su(1), 0.02), tv(su(0), 0.02)]);
       g.quad(P(sx * hw * 0.98, a0, ri), P(sx * hw * 0.98, a1, ri), P(sx * hw * 0.86, a1, ri - 0.025), P(sx * hw * 0.86, a0, ri - 0.025), rim, 0.85, [-sx * 20, 0, 0]);
       g.quad(P(sx * hw * 0.86, a0, ri - 0.025), P(sx * hw * 0.86, a1, ri - 0.025), P(sx * hw * 0.3, a1, ri - 0.03), P(sx * hw * 0.3, a0, ri - 0.03), barrel, 0.4, [0, 0, 0]);
       // vented disc with a darker hat, visible through the spokes
@@ -577,7 +634,24 @@ function wheelGeo(spec) {
     g.cyl(x - sx * 0.005, 0, 0, 0.06, 0.05, sx * 0.018, 10, hub, 0.7, 'x', true);
     for (let k = 0; k < 5; k++) { const a = k / 5 * Math.PI * 2; g.box(x + sx * 0.016, Math.cos(a) * 0.035, Math.sin(a) * 0.035, 0.01, 0.014, 0.014, lin('#c9ccd2'), 0.9); }
   }
+  // everything else samples the plain white strip at the top of the tyre texture
+  for (let i = 0; i < g.u.length; i += 2) if (g.u[i] === 0 && g.u[i + 1] === 0) g.u[i + 1] = 0.999;
   return g;
+}
+// tyre texture: dark rubber with the maker's name moulded into the sidewall twice around, a thin white strip on top
+function tyreCanvas() {
+  const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 64;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#1d1e21'; g.fillRect(0, 0, 1024, 64);
+  for (let x = 0; x < 1024; x += 3) { g.fillStyle = `rgba(255,255,255,${0.012 + 0.02 * ((x * 7) % 5) / 5})`; g.fillRect(x, 0, 1, 64); }
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, 1024, 2);
+  g.font = `800 26px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (const x of [256, 768]) {
+    g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillText('SIDEWAYS  ·  GRAVEL G4', x + 1, 34);
+    g.fillStyle = '#8e9095'; g.fillText('SIDEWAYS  ·  GRAVEL G4', x, 33);
+  }
+  g.fillStyle = 'rgba(255,255,255,0.12)'; g.fillRect(0, 52, 1024, 2);
+  return cv;
 }
 // caliper: clamps the disc at the top-rear; follows steering but not the wheel's spin
 function caliperGeo(spec) {
@@ -608,8 +682,9 @@ function wheelBlurGeo(spec) {
 const FONT = '"Big Shoulders Display", "Barlow Semi Condensed", "Arial Narrow", sans-serif';
 function liveryCanvas(spec) {
   const S = SHAPES[spec.shape], col = spec.col;
-  const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 1024;
-  const g = cv.getContext('2d');
+  // painted at 2048² (the layout stays in 1024 units, scaled) so lettering and decals stay crisp up close
+  const cv = document.createElement('canvas'); cv.width = 2048; cv.height = 2048;
+  const g = cv.getContext('2d'); g.scale(2, 2);
   const L = 4.4, z0 = -2.2, yTop = 1.05, yb = 0.12;
   g.fillStyle = '#ffffff'; g.fillRect(0, 0, 1024, 1024);
   // side regions -------------------------------------------------
@@ -789,6 +864,7 @@ function buildCar(R, spec, night) {
     body: R.mesh(cg.body), glass: R.mesh(cg.glass), lens: R.mesh(cg.lens), lightF: R.mesh(cg.lightF), lightR: R.mesh(cg.lightR), flame: R.mesh(cg.flame),
     tex: R.texture(liveryCanvas(spec)),
     wheel: R.mesh((() => { const w = wheelGeo(spec); smoothNormals(w, 30); return w; })()), wheelBlur: R.mesh(wheelBlurGeo(spec)), caliper: R.mesh(caliperGeo(spec)),
+    tyreTex: R.texture(tyreCanvas()),
     exhaust: [-cg.shape.W / 2 * 0.55, 0.3, cg.shape.zr - 0.08],
   };
 }

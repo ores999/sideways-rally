@@ -9,10 +9,10 @@ const VIS = {
     zen: '#3d78c4', fogCol: '#b9cfe0', glow: '#fff2d6', sunDisc: '#fff4de', cloudCol: '#f4f7fb', clouds: 0.6,
     sunEl: 34, sunAz: 150, sunCol: '#fff0d6', sunI: 2.7, sky: '#8fb4dc', skyI: 0.78, gnd: '#5e5a3c', gndI: 0.5, exp: 0.95,
     fog: [70, 470], road: ['#9a7f5f', '#6c5640', '#b8a585'], icy: 0, lines: false, tt: [1.25, 1.1, 0.62], rays: 0.35,
-    grass: ['#46612a', '#5a7334', '#354d21', '#77804a'], verge: '#86735a', rock: '#7a766d', dirt: '#6a5840',
+    grass: ['#4b5c2b', '#5d6c34', '#3a4a24', '#7f7b4b'], verge: '#86735a', rock: '#7a766d', dirt: '#6a5840',
     pine: ['#2c4a25', '#365a2b', '#22401e'], trunk: '#5a4330', birch: ['#5f8a34', '#7a9c40', '#94a64a'],
     dust: [0.42, 0.34, 0.24], mark: [0.12, 0.09, 0.06, 0.45], far: '#5f7f86', skirt: '#4b6230',
-    grade: { lift: [0.0, 0.012, 0.02], gain: [1.03, 1.0, 0.955], sat: 1.07, con: 0.12, vig: 0.24, bloom: 0.07, thr: 1.1 },
+    grade: { lift: [0.0, 0.012, 0.02], gain: [1.03, 1.0, 0.955], sat: 1.0, con: 0.13, vig: 0.24, bloom: 0.07, thr: 1.1 },
   },
   frost: {
     zen: '#16285a', fogCol: '#7c86ad', glow: '#ff9a62', sunDisc: '#ffb98a', cloudCol: '#c5a3b8', clouds: 0.45, stars: 0.9,
@@ -79,6 +79,13 @@ function visOf(st) {
   return V;
 }
 
+// what the horizon looks like in reflections: the tree line, snowy hills or the buttes, hazed towards the fog
+const SKYLINE = { pine: '#3c4a37', forest: '#2c3829', frost: '#56607a', mesa: '#9a6449' };
+function skylineOf(V, st) {
+  const base = lin(SKYLINE[st.id] || '#404840'), fog = lin(V.fogCol);
+  const c = mixc(base, fog, st.cond === 'rain' ? 0.55 : 0.25);
+  return st.cond === 'night' ? scalec(c, 0.25) : c;
+}
 function env(st) {
   const V = visOf(st);
   const el = V.sunEl * Math.PI / 180, az = V.sunAz * Math.PI / 180;
@@ -89,6 +96,7 @@ function env(st) {
     fogCol: lin(V.fogCol), fog: V.fog.slice(), zen: lin(V.zen), glow: lin(V.glow), sunDisc: lin(V.sunDisc), cloudCol: lin(V.cloudCol), clouds: V.clouds, stars: V.stars || 0,
     exp: V.exp, r1: lin(V.road[0]), r2: lin(V.road[1]), r3: lin(V.road[2]), lines: V.lines, icy: V.icy, time: 0, shadows: true,
     grade: V.grade, folFade: [70, 105], verge: lin(V.verge), tt: V.tt,
+    skyline: skylineOf(V, st),
     night: !!V.night, hlK: V.hl || 1, wet: V.wet || 0, rain: !!V.rain, blizzard: !!V.blizzard, snowfall: !!V.snowfall || !!V.blizzard, overcast: V.overcast || 0,
   };
 }
@@ -329,64 +337,251 @@ function roadMeshes(W) {
 }
 
 // ---------- prop geometry ----------
-// three pine shapes so a forest isn't one tree cloned: the classic four tiers, a slimmer spruce with five, and an
-// older tree, broad at the foot with a sparse top. Each tier is turned a little against the one below, so the
-// facets don't line up into ridges. [radius, height, base] per tier.
-const PINE_TIERS = [
-  [[1.75, 3.0, 1.2], [1.4, 2.7, 2.6], [1.0, 2.4, 3.9], [0.6, 1.9, 5.0]],
-  [[1.5, 2.6, 1.0], [1.28, 2.4, 2.2], [1.05, 2.2, 3.3], [0.8, 2.0, 4.3], [0.5, 1.7, 5.2]],
-  [[2.0, 2.6, 1.4], [1.5, 2.5, 2.9], [0.95, 2.3, 4.2], [0.45, 1.6, 5.6]],
+// ---------- trees ----------
+// Pines are built like real conifers: whorls of drooping branch sprays (alpha-tested cards cut from a painted needle
+// texture, rolled alternately so the crown reads from the side and from below), around a dark inner cone that keeps
+// you from seeing the sky through the middle. Far away (and in the shadow pass) they swap for solid skirts with
+// ragged, drooping edges in the same colours. Three shapes so a forest isn't one tree cloned: a classic pine, a slim
+// spruce and an old tree, broad at the foot with a sparse top.
+const PINE_SHAPES = [
+  { h: 7.4, base: 1.25, whorls: 9, r0: 1.95, r1: 0.32, br: 8, droop: 0.42, core: 0.55 },
+  { h: 7.9, base: 1.0, whorls: 11, r0: 1.5, r1: 0.26, br: 7, droop: 0.5, core: 0.6 },
+  { h: 7.0, base: 1.5, whorls: 7, r0: 2.25, r1: 0.4, br: 8, droop: 0.36, core: 0.5 },
 ];
-function turnNew(g, from, a) {
-  const c = Math.cos(a), s = Math.sin(a);
-  for (let i = from; i < g.p.length; i += 3) {
-    const x = g.p[i], z = g.p[i + 2]; g.p[i] = x * c - z * s; g.p[i + 2] = x * s + z * c;
-    const nx = g.n[i], nz = g.n[i + 2]; g.n[i] = nx * c - nz * s; g.n[i + 2] = nx * s + nz * c;
+// texture atlas (512²): u 0-0.5 one needle spray (base at v=0, tip at v=1), 0.5-0.75 bark, 0.75-1 dense needles
+const TA = { frond: [0, 0.5], bark: [0.5, 0.75], dense: [0.75, 1] };
+let treeAtlasData = null, leafAtlasData = null;
+// premultiplied canvas pixels filter to dark halos: copy colour into the transparent texels next to opaque ones
+function bleedAlpha(g, W, H) {
+  const img = g.getImageData(0, 0, W, H), d = img.data;
+  const rgb = new Float32Array(W * H * 3), have = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) if (d[i * 4 + 3] > 8) { have[i] = 1; rgb[i * 3] = d[i * 4]; rgb[i * 3 + 1] = d[i * 4 + 1]; rgb[i * 3 + 2] = d[i * 4 + 2]; }
+  for (let pass = 0; pass < 8; pass++) {
+    const nh = have.slice();
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x; if (have[i]) continue;
+      let r = 0, gg = 0, b = 0, n = 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const X = x + dx, Y = y + dy; if (X < 0 || Y < 0 || X >= W || Y >= H) continue;
+        const j = Y * W + X; if (!have[j]) continue; r += rgb[j * 3]; gg += rgb[j * 3 + 1]; b += rgb[j * 3 + 2]; n++;
+      }
+      if (n) { rgb[i * 3] = r / n; rgb[i * 3 + 1] = gg / n; rgb[i * 3 + 2] = b / n; nh[i] = 1; }
+    }
+    have.set(nh);
+  }
+  const out = new ImageData(W, H);
+  for (let i = 0; i < W * H; i++) { out.data[i * 4] = rgb[i * 3]; out.data[i * 4 + 1] = rgb[i * 3 + 1]; out.data[i * 4 + 2] = rgb[i * 3 + 2]; out.data[i * 4 + 3] = d[i * 4 + 3]; }
+  return out;
+}
+function treeAtlas() {
+  if (treeAtlasData) return treeAtlasData;
+  const W = 512, cv = document.createElement('canvas'); cv.width = W; cv.height = W;
+  const g = cv.getContext('2d'), R = C.rng(5150);
+  const rnd = (a, b) => a + R() * (b - a);
+  // needle colours are near-neutral greens: the tree's own colour comes from the instance tint
+  const nd = (x0, y0, x1, y1, w, c0, c1) => { const gr = g.createLinearGradient(x0, y0, x1, y1); gr.addColorStop(0, c0); gr.addColorStop(1, c1); g.strokeStyle = gr; g.lineWidth = w; g.lineCap = 'round'; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke(); };
+  // a spray: a twig with side shoots, every part densely set with needles that point forward and out
+  const shoot = (x0, y0, ang, len, wid, depth) => {
+    const steps = Math.round(len / 3.2);
+    const ex = x0 + Math.sin(ang) * len, ey = y0 - Math.cos(ang) * len;
+    for (let i = 0; i < steps; i++) {
+      const t = i / steps, x = x0 + (ex - x0) * t, y = y0 + (ey - y0) * t, taper = 1 - t * 0.55;
+      for (const sd of [-1, 1]) {
+        const a = ang + sd * rnd(0.7, 1.15), L = wid * taper * rnd(0.75, 1.2);
+        const tip = t > 0.7 ? '#dfe5c8' : '#c2c9aa';
+        nd(x, y, x + Math.sin(a) * L, y - Math.cos(a) * L, rnd(1.6, 2.6), R() < 0.5 ? '#5d6556' : '#737c66', R() < 0.25 ? '#eef2dc' : tip);
+      }
+    }
+    g.strokeStyle = '#4b3a28'; g.lineWidth = depth ? 3 : 4.5; g.lineCap = 'round'; g.beginPath(); g.moveTo(x0, y0); g.lineTo(ex, ey); g.stroke();
+    if (depth > 0) for (let k = 1; k < 6; k++) {
+      const t = k / 6.5, sx = x0 + (ex - x0) * t, sy = y0 + (ey - y0) * t, sd = k % 2 ? 1 : -1;
+      shoot(sx, sy, ang + sd * rnd(0.55, 0.85), len * (0.42 - t * 0.25) * rnd(0.85, 1.15), wid * 0.85, depth - 1);
+    }
+  };
+  g.clearRect(0, 0, W, W);
+  g.save(); g.beginPath(); g.rect(0, 0, 256, 512); g.clip();
+  shoot(128, 505, 0, 470, 30, 1);
+  for (let k = 0; k < 4; k++) shoot(128 + rnd(-6, 6), 490 - k * 60, rnd(-0.12, 0.12), 380 - k * 70, 24, 0);
+  g.restore();
+  // bark: grey-brown plates split by dark vertical furrows (neutral; the trunk colour comes from the vertex colour)
+  g.fillStyle = '#8a8076'; g.fillRect(256, 0, 128, 512);
+  for (let i = 0; i < 900; i++) { const x = 256 + R() * 128, y = R() * 512, h = rnd(10, 40); g.fillStyle = `rgba(${R() < 0.5 ? '170,160,150' : '95,85,76'},${rnd(0.25, 0.5)})`; g.fillRect(x, y, rnd(3, 9), h); }
+  for (let i = 0; i < 26; i++) { let x = 256 + R() * 128; g.strokeStyle = 'rgba(35,28,22,0.75)'; g.lineWidth = rnd(1.5, 3.5); g.beginPath(); g.moveTo(x, 0); for (let y = 0; y <= 512; y += 16) { x += rnd(-2.5, 2.5); g.lineTo(x, y); } g.stroke(); }
+  // dense needles: the inner crown and the far trees, opaque
+  g.fillStyle = '#6a7260'; g.fillRect(384, 0, 128, 512);
+  for (let i = 0; i < 5200; i++) { const x = 384 + R() * 128, y = R() * 512, a = rnd(-0.9, 0.9) + (R() < 0.5 ? Math.PI : 0), L = rnd(5, 11); nd(x, y, x + Math.sin(a) * L, y - Math.cos(a) * L * 0.6, rnd(1.4, 2.2), R() < 0.55 ? '#50584a' : '#7c856c', R() < 0.3 ? '#cfd5b8' : '#9aa284'); }
+  for (let y = 0; y < 512; y++) for (let x = 384; x < 512; x++) { /* opaque */ }
+  const img = bleedAlpha(g, W, W);
+  for (let y = 0; y < W; y++) for (let x = 256; x < W; x++) img.data[(y * W + x) * 4 + 3] = 255;
+  return treeAtlasData = img;
+}
+function leafAtlas() {
+  if (leafAtlasData) return leafAtlasData;
+  const W = 512, cv = document.createElement('canvas'); cv.width = W; cv.height = W;
+  const g = cv.getContext('2d'), R = C.rng(808);
+  const rnd = (a, b) => a + R() * (b - a);
+  g.clearRect(0, 0, W, W);
+  // a clump of small birch leaves on thin twigs, round overall, ragged at the edge
+  g.save(); g.beginPath(); g.rect(0, 0, 256, 512); g.clip();
+  for (let i = 0; i < 14; i++) { const a = rnd(-1.2, 1.2); g.strokeStyle = '#5b4a3a'; g.lineWidth = 2; g.beginPath(); g.moveTo(128, 500); g.quadraticCurveTo(128 + Math.sin(a) * 60, 380, 128 + Math.sin(a) * 110, 500 - Math.cos(a) * 330 - rnd(0, 80)); g.stroke(); }
+  // several overlapping lobes, so a clump has a ragged, uneven outline instead of a disc
+  const lobes = []; for (let i = 0; i < 7; i++) lobes.push([128 + rnd(-55, 55), 260 + rnd(-150, 150), rnd(45, 80)]);
+  for (let i = 0; i < 1900; i++) {
+    const L = lobes[(R() * lobes.length) | 0], r = Math.sqrt(R()) * L[2], a = R() * Math.PI * 2, x = L[0] + Math.cos(a) * r, y = L[1] + Math.sin(a) * r * 1.6;
+    if (y > 505 || y < 8 || x < 6 || x > 250) continue;
+    const c = ['#7d9a4c', '#93ad5a', '#a8bf6a', '#647f3c', '#c3d27c'][(R() * 5) | 0];
+    g.fillStyle = c; g.save(); g.translate(x, y); g.rotate(R() * Math.PI); g.beginPath(); g.ellipse(0, 0, rnd(3.5, 6), rnd(6, 10), 0, 0, Math.PI * 2); g.fill(); g.restore();
+  }
+  g.restore();
+  // birch bark: chalky white with black dashes running across the trunk
+  g.fillStyle = '#e9e6dc'; g.fillRect(256, 0, 128, 512);
+  for (let i = 0; i < 160; i++) { const y = R() * 512, x = 256 + R() * 128, w = rnd(8, 40); g.fillStyle = `rgba(20,18,16,${rnd(0.55, 0.9)})`; g.fillRect(x, y, w, rnd(2, 5)); }
+  for (let i = 0; i < 300; i++) { g.fillStyle = `rgba(150,140,125,${rnd(0.1, 0.3)})`; g.fillRect(256 + R() * 128, R() * 512, rnd(2, 6), rnd(10, 40)); }
+  // dense leaves for the far version
+  g.fillStyle = '#86a052'; g.fillRect(384, 0, 128, 512);
+  for (let i = 0; i < 2600; i++) { g.fillStyle = ['#6d8a42', '#9ab35e', '#b5c86e', '#5b7638'][(R() * 4) | 0]; g.beginPath(); g.ellipse(384 + R() * 128, R() * 512, rnd(2.5, 4.5), rnd(4, 7), R() * 3, 0, Math.PI * 2); g.fill(); }
+  const img = bleedAlpha(g, W, W);
+  for (let y = 0; y < W; y++) for (let x = 256; x < W; x++) img.data[(y * W + x) * 4 + 3] = 255;
+  return leafAtlasData = img;
+}
+// a raw mesh builder for the trees: positions, smooth normals given per vertex, colour, uv, with winding set so the
+// front face is the side the normal points to (the shader flips the normal on back faces of the sprays)
+function rawGeo() {
+  const g = { p: [], n: [], c: [], u: [] };
+  g.v = (P, N, Cc, U) => { g.p.push(P[0], P[1], P[2]); g.n.push(N[0], N[1], N[2]); g.c.push(Cc[0], Cc[1], Cc[2], Cc[3] || 0); g.u.push(U[0], U[1]); };
+  g.tri = (a, b, c) => {
+    // a, b, c: [P, N, C, U]; flip winding to face the mean normal
+    const e1 = [b[0][0] - a[0][0], b[0][1] - a[0][1], b[0][2] - a[0][2]], e2 = [c[0][0] - a[0][0], c[0][1] - a[0][1], c[0][2] - a[0][2]];
+    const fn = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+    const mn = [a[1][0] + b[1][0] + c[1][0], a[1][1] + b[1][1] + c[1][1], a[1][2] + b[1][2] + c[1][2]];
+    if (fn[0] * mn[0] + fn[1] * mn[1] + fn[2] * mn[2] < 0) [b, c] = [c, b];
+    for (const q of [a, b, c]) g.v(q[0], q[1], q[2], q[3]);
+  };
+  g.quad = (a, b, c, d) => { g.tri(a, b, c); g.tri(a, c, d); };
+  return g;
+}
+const nrm3 = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+// self-shading baked into the vertex colour: darker low down and towards the trunk, the outer tips catch light
+const pineAO = (y, h, out) => (0.62 + 0.38 * C.sstep(0.6, h, y)) * (0.72 + 0.28 * out);
+function trunkPart(g, h, r0, r1, seg, colK, uvr, flag) {
+  for (let i = 0; i < seg; i++) {
+    const a0 = i / seg * Math.PI * 2, a1 = (i + 1) / seg * Math.PI * 2;
+    const P = (a, y, r) => [Math.cos(a) * r, y, Math.sin(a) * r], N = a => [Math.cos(a), 0.15, Math.sin(a)];
+    const U = (a, y) => [uvr[0] + (uvr[1] - uvr[0]) * (a / (Math.PI * 2)), Math.min(0.999, Math.max(0.001, (y + 0.3) / (h + 0.3))) + flag];
+    const c = [colK[0], colK[1], colK[2], 0];
+    g.quad([P(a0, -0.3, r0), N(a0), c, U(a0, -0.3)], [P(a1, -0.3, r0), N(a1), c, U(a1, -0.3)], [P(a1, h, r1), N(a1), c, U(a1, h)], [P(a0, h, r1), N(a0), c, U(a0, h)]);
   }
 }
 function pineGeo(V, snowy, variant) {
-  const g = new Geo();
-  const trunk = lin(V.trunk), green = [1, 1, 1];
-  g.cyl(0, -0.3, 0, 0.2, 0.12, 2.4, 6, trunk, 0, 'y', false, -1);
-  PINE_TIERS[variant || 0].forEach(([r, h, y], k) => {
-    const from = g.p.length;
-    g.cyl(0, y, 0, r, 0, h, 7, green, 0, 'y', true, 0, scalec(green, 0.6));
-    if (snowy) g.cyl(0, y + h * 0.42, 0, r * 0.62, 0, h * 0.58, 7, lin('#f4f7fc'), 0.1, 'y', false, -1);
-    turnNew(g, from, k * 0.47);
-  });
-  // self-shading: the canopy darkens towards the trunk and the bottom tiers, tips catch the light
-  for (let i = 0, v = 0; i < g.p.length; i += 3, v += 4) {
-    const y = g.p[i + 1], r = Math.hypot(g.p[i], g.p[i + 2]);
-    if (y < 1.1 && r < 0.3) continue; // trunk
-    const k = (0.62 + 0.38 * C.sstep(0.8, 7.2, y)) * (0.8 + 0.2 * Math.min(1, r / 1.2 + (y > 6 ? 1 : 0)));
-    g.c[v] *= k; g.c[v + 1] *= k; g.c[v + 2] *= k;
+  const S = PINE_SHAPES[variant || 0], R = C.rng(311 + (variant || 0) * 97), g = rawGeo();
+  const trunk = scalec(lin(V.trunk), 2.4);
+  trunkPart(g, S.h * 0.82, 0.21, 0.07, 8, trunk, TA.bark, -2); // uv.y shifted by -2: no instance tint (bark), see LIT_FS mode 10
+  const radAt = y => { const f = Math.min(1, Math.max(0, (y - S.base) / (S.h - S.base))); return S.r1 + (S.r0 - S.r1) * Math.pow(1 - f, 1.1); };
+  // inner cone: dense needles, dark
+  { const rings = 7, seg = 8;
+    for (let k = 0; k < rings; k++) {
+      const y0 = S.base - 0.2 + (S.h - S.base) * k / rings, y1 = S.base - 0.2 + (S.h - S.base) * (k + 1) / rings;
+      const r0 = radAt(y0) * S.core, r1 = k === rings - 1 ? 0 : radAt(y1) * S.core;
+      for (let i = 0; i < seg; i++) {
+        const a0 = i / seg * Math.PI * 2 + k * 0.4, a1 = (i + 1) / seg * Math.PI * 2 + k * 0.4;
+        const P = (a, y, r) => [Math.cos(a) * r, y, Math.sin(a) * r], N = a => nrm3([Math.cos(a), 0.55, Math.sin(a)]);
+        const U = (a, y) => [TA.dense[0] + 0.25 * ((a % (Math.PI * 2)) / (Math.PI * 2)), y / S.h];
+        const cc = y => { const k2 = pineAO(y, S.h, 0.15) * 0.8; return [k2, k2, k2, 0]; };
+        g.quad([P(a0, y0, r0), N(a0), cc(y0), U(a0, y0)], [P(a1, y0, r0), N(a1), cc(y0), U(a1, y0)], [P(a1, y1, r1), N(a1), cc(y1), U(a1, y1)], [P(a0, y1, r1), N(a0), cc(y1), U(a0, y1)]);
+      }
+    }
+  }
+  // whorls of drooping sprays
+  const up = [0, 1, 0];
+  const frond = (y0, th, L, roll, droop) => {
+    const dir = [Math.cos(th), 0, Math.sin(th)], side = [-Math.sin(th), 0, Math.cos(th)];
+    const pt = t => { const r = 0.12 + L * t; return [dir[0] * r, y0 + L * (0.12 * t - droop * t * t), dir[2] * r]; };
+    const tan = t => nrm3([dir[0] * L, L * (0.12 - 2 * droop * t), dir[2] * L]);
+    const segs = 3, wid = L * 0.62;
+    let prev = null;
+    for (let q = 0; q <= segs; q++) {
+      const t = q / segs, P = pt(t), T = tan(t), B = nrm3(cross3(side, T));
+      const ac = [side[0] * Math.cos(roll) + B[0] * Math.sin(roll), side[1] * Math.cos(roll) + B[1] * Math.sin(roll), side[2] * Math.cos(roll) + B[2] * Math.sin(roll)];
+      const w = wid * (0.55 + 0.45 * Math.sin(Math.PI * Math.min(1, 0.25 + t * 0.85)));
+      let cn = nrm3(cross3(ac, T)); if (cn[1] < 0) cn = [-cn[0], -cn[1], -cn[2]];
+      const vol = nrm3([dir[0] + cn[0] * 0.6, 0.6 + cn[1] * 0.6, dir[2] + cn[2] * 0.6]);
+      const k = pineAO(P[1], S.h, t);
+      const col = [k, k, k, 0];
+      const L0 = [P[0] - ac[0] * w / 2, P[1] - ac[1] * w / 2, P[2] - ac[2] * w / 2], R0 = [P[0] + ac[0] * w / 2, P[1] + ac[1] * w / 2, P[2] + ac[2] * w / 2];
+      const row = [[L0, vol, col, [TA.frond[0] + 0.004, 0.01 + t * 0.98]], [R0, vol, col, [TA.frond[1] - 0.004, 0.01 + t * 0.98]]];
+      if (prev) g.quad(prev[0], prev[1], row[1], row[0]);
+      prev = row;
+    }
+  };
+  for (let k = 0; k < S.whorls; k++) {
+    const f = k / (S.whorls - 1), y0 = S.base + (S.h - S.base - 0.55) * f + (R() - 0.5) * 0.18;
+    const L = (S.r1 + (S.r0 - S.r1) * Math.pow(1 - f, 1.1)) * (0.88 + R() * 0.24) * 1.12;
+    const nb = Math.max(4, Math.round(S.br * (1 - f * 0.4)));
+    const ph = k * 2.39996 + R() * 0.4;
+    for (let b = 0; b < nb; b++) frond(y0, ph + b / nb * Math.PI * 2 + (R() - 0.5) * 0.35, L * (0.85 + R() * 0.3), (b % 2 ? 1 : -1) * (0.7 + R() * 0.35), S.droop * (0.8 + R() * 0.4));
+  }
+  // the leader: two crossed sprays standing up at the top
+  for (const th of [0, Math.PI / 2]) {
+    const c = [1, 1, 1, 0], s0 = [Math.cos(th) * 0.3, 0, Math.sin(th) * 0.3], y0 = S.h - 0.75, y1 = S.h + 0.45, n = nrm3([Math.cos(th + Math.PI / 2), 0.4, Math.sin(th + Math.PI / 2)]);
+    g.quad([[-s0[0], y0, -s0[2]], n, c, [TA.frond[0] + 0.004, 0.01]], [[s0[0], y0, s0[2]], n, c, [TA.frond[1] - 0.004, 0.01]], [[s0[0] * 0.4, y1, s0[2] * 0.4], n, c, [TA.frond[1] - 0.004, 0.99]], [[-s0[0] * 0.4, y1, -s0[2] * 0.4], n, c, [TA.frond[0] + 0.004, 0.99]]);
   }
   return g;
 }
-// distant pine: same tiers and colours as pineGeo, but bare cones (5 sides, no undersides) and a stub trunk,
-// about a quarter of the vertices. Drawn past ~80 m where the difference is lost in the haze.
+// far pine: solid skirts with a ragged, drooping rim (alternating branch tips), same colours, a quarter of the cost
 function pineFarGeo(V, snowy, variant) {
-  const g = new Geo();
-  g.cyl(0, -0.3, 0, 0.2, 0.12, 2.4, 3, lin(V.trunk), 0, 'y', false, -1);
-  const layers = PINE_TIERS[variant || 0], N = 5;
-  for (const [r, h, y] of layers) {
-    const cone = (rr, y0, hh, col) => { for (let i = 0; i < N; i++) { const a0 = i / N * Math.PI * 2 + y, a1 = (i + 1) / N * Math.PI * 2 + y;
-      g.tri([Math.cos(a0) * rr, y0, Math.sin(a0) * rr], [Math.cos(a1) * rr, y0, Math.sin(a1) * rr], [0, y0 + hh, 0], col, 0, [0, y0 - 40, 0], [0, 0], [0, 0], [0, 0]); } };
-    cone(r, y, h, [1, 1, 1]);
-    if (snowy) cone(r * 0.62, y + h * 0.42, h * 0.58, lin('#f4f7fc'));
-  }
-  for (let i = 0, v = 0; i < g.p.length; i += 3, v += 4) {
-    const yy = g.p[i + 1], rr = Math.hypot(g.p[i], g.p[i + 2]);
-    if (yy < 1.1 && rr < 0.3) continue;
-    const k = (0.62 + 0.38 * C.sstep(0.8, 7.2, yy)) * (0.8 + 0.2 * Math.min(1, rr / 1.2 + (yy > 6 ? 1 : 0)));
-    g.c[v] *= k; g.c[v + 1] *= k; g.c[v + 2] *= k;
+  const S = PINE_SHAPES[variant || 0], g = rawGeo(), R = C.rng(77 + (variant || 0));
+  trunkPart(g, S.h * 0.5, 0.2, 0.12, 4, scalec(lin(V.trunk), 2.4), TA.bark, -2);
+  const tiers = 5, N = 10;
+  for (let k = 0; k < tiers; k++) {
+    const f0 = k / tiers, f1 = (k + 1.35) / tiers;
+    const yb = S.base + (S.h - S.base) * f0 - 0.35, yt = Math.min(S.h + 0.3, S.base + (S.h - S.base) * f1);
+    const rad = (S.r1 + (S.r0 - S.r1) * Math.pow(1 - f0, 1.1)) * 1.12, top = [0, yt, 0];
+    const rim = [];
+    for (let i = 0; i < N; i++) { const a = i / N * Math.PI * 2 + k * 0.5, rr = rad * (i % 2 ? 0.8 : 1.0) * (0.92 + R() * 0.16); rim.push([Math.cos(a) * rr, yb - (i % 2 ? 0 : rad * S.droop * 0.35), Math.sin(a) * rr, a]); }
+    for (let i = 0; i < N; i++) {
+      const A = rim[i], B = rim[(i + 1) % N];
+      const nA = nrm3([Math.cos(A[3]), 0.7, Math.sin(A[3])]), nB = nrm3([Math.cos(B[3]), 0.7, Math.sin(B[3])]), nT = [0, 1, 0];
+      const k1 = pineAO(yb, S.h, 1) * 0.74, k0 = pineAO(yt, S.h, 0.4) * 0.74; // matched by eye to the near trees' mix of lit sprays and shade
+      const U = (a, y) => [TA.dense[0] + 0.25 * ((a % (Math.PI * 2)) / (Math.PI * 2)), Math.min(0.99, y / S.h)];
+      g.tri([[A[0], A[1], A[2]], nA, [k1, k1, k1, 0], U(A[3], A[1])], [[B[0], B[1], B[2]], nB, [k1, k1, k1, 0], U(B[3], B[1])], [top, nT, [k0, k0, k0, 0], U(A[3], yt)]);
+      // underside, dark, so trees seen from below or across a slope aren't hollow
+      const d = 0.32, uc = [0, -1, 0], ub = [0, yb + 0.6, 0];
+      g.tri([[A[0], A[1], A[2]], uc, [d, d, d, 0], U(A[3], A[1])], [[B[0], B[1], B[2]], uc, [d, d, d, 0], U(B[3], B[1])], [ub, uc, [d, d, d, 0], U(A[3], ub[1])]);
+    }
   }
   return g;
 }
 function birchGeo(V) {
-  const g = new Geo(); const R = C.rng(9);
-  g.cyl(0, -0.3, 0, 0.15, 0.1, 5.0, 6, lin('#e9e6dc'), 0, 'y', false, -1);
-  for (let i = 0; i < 3; i++) g.rock((R() - 0.5) * 1.2, 4.2 + i * 0.9, (R() - 0.5) * 1.2, 1.5 - i * 0.25, [1, 1, 1], R, false);
+  const g = rawGeo(), R = C.rng(9);
+  trunkPart(g, 5.4, 0.16, 0.07, 8, [1.1, 1.1, 1.05], TA.bark, -2);
+  // leaf clumps: three crossed cards each, normals pointing out from the crown centre so the crown lights as a volume
+  const cc = [0, 5.0, 0], clumps = [];
+  for (let i = 0; i < 16; i++) {
+    const a = i * 2.39996 + R() * 0.5, y = 3.7 + (i / 15) * 3.2 + (R() - 0.5) * 0.4, spread = 1.35 * Math.sin(Math.PI * (0.18 + 0.75 * (y - 3.4) / 3.8));
+    clumps.push([Math.cos(a) * spread * (0.6 + R() * 0.4), y, Math.sin(a) * spread * (0.6 + R() * 0.4), 0.62 + R() * 0.32]);
+  }
+  for (const [x, y, z, r] of clumps) {
+    const out = nrm3([x - cc[0], (y - cc[1]) + 0.8, z - cc[2]]);
+    const k = 0.75 + 0.25 * C.sstep(3.8, 6.6, y), col = [k, k, k, 0];
+    for (let q = 0; q < 3; q++) {
+      const a = q * Math.PI / 3 + R() * 0.5, dx = Math.cos(a) * r, dz = Math.sin(a) * r;
+      g.quad([[x - dx, y - r * 1.05, z - dz], out, col, [0.004, 0.01]], [[x + dx, y - r * 1.05, z + dz], out, col, [0.496, 0.01]], [[x + dx, y + r * 1.05, z + dz], out, col, [0.496, 0.99]], [[x - dx, y + r * 1.05, z - dz], out, col, [0.004, 0.99]]);
+    }
+  }
+  return g;
+}
+function birchFarGeo(V) {
+  const g = rawGeo();
+  trunkPart(g, 4.4, 0.15, 0.08, 4, [1.1, 1.1, 1.05], TA.bark, -2);
+  const N = 8, rad = 1.7, yb = 3.6, yt = 7.0, ym = 5.2;
+  for (let i = 0; i < N; i++) {
+    const a0 = i / N * Math.PI * 2, a1 = (i + 1) / N * Math.PI * 2;
+    const P = (a, y, r) => [Math.cos(a) * r, y, Math.sin(a) * r], Nn = (a, ny) => nrm3([Math.cos(a), ny, Math.sin(a)]), U = (a, y) => [0.76 + 0.23 * (a / (Math.PI * 2)), y / 8];
+    const c1 = [0.85, 0.85, 0.85, 0], c0 = [0.6, 0.6, 0.6, 0];
+    g.quad([P(a0, ym, rad), Nn(a0, 0.1), c1, U(a0, ym)], [P(a1, ym, rad), Nn(a1, 0.1), c1, U(a1, ym)], [P(a1, yt, 0.3), Nn(a1, 0.9), c1, U(a1, yt)], [P(a0, yt, 0.3), Nn(a0, 0.9), c1, U(a0, yt)]);
+    g.quad([P(a0, yb, 0.4), Nn(a0, -0.7), c0, U(a0, yb)], [P(a1, yb, 0.4), Nn(a1, -0.7), c0, U(a1, yb)], [P(a1, ym, rad), Nn(a1, 0.1), c1, U(a1, ym)], [P(a0, ym, rad), Nn(a0, 0.1), c1, U(a0, ym)]);
+  }
   return g;
 }
 function cactusGeo() {
@@ -398,20 +593,75 @@ function cactusGeo() {
   g.cyl(-0.8, 2.3, 0, 0.18, 0.16, 1.2, 8, col, sp, 'y', true, 0);
   return g;
 }
-function shrubGeo() { const g = new Geo(); g.rock(0, 0.3, 0, 0.8, [1, 1, 1], C.rng(4), true); return g; }
-function rockGeo() { const g = new Geo(); g.rock(0, 0.4, 0, 1.0, [1, 1, 1], C.rng(17), true); return g; }
-function hayGeo() { const g = new Geo(); g.cyl(-0.65, 0.6, 0, 0.6, 0.6, 1.3, 10, lin('#d9b45a'), 0, 'x', true, 0, lin('#c79d45')); return g; }
+// smooth shading for props built from flat facets: each vertex takes the mean normal of the faces meeting at its
+// position within maxDeg of its own, so curved things shade round while real edges stay crisp
+function smoothGeo(g, maxDeg) {
+  const P = g.p, N = g.n, nv = P.length / 3, cosT = Math.cos(maxDeg * Math.PI / 180), F = N.slice(), groups = new Map();
+  const q = v => Math.round(v * 1000);
+  for (let i = 0; i < nv; i++) { const k = q(P[i * 3]) + ',' + q(P[i * 3 + 1]) + ',' + q(P[i * 3 + 2]); let a = groups.get(k); if (!a) groups.set(k, a = []); a.push(i); }
+  for (const idx of groups.values()) for (const i of idx) {
+    let sx = 0, sy = 0, sz = 0;
+    for (const j of idx) if (F[i * 3] * F[j * 3] + F[i * 3 + 1] * F[j * 3 + 1] + F[i * 3 + 2] * F[j * 3 + 2] >= cosT) { sx += F[j * 3]; sy += F[j * 3 + 1]; sz += F[j * 3 + 2]; }
+    const l = Math.hypot(sx, sy, sz); if (l > 1e-6) { N[i * 3] = sx / l; N[i * 3 + 1] = sy / l; N[i * 3 + 2] = sz / l; }
+  }
+  return g;
+}
+// boulder: an icosphere subdivided twice, pushed in and out by a few broad bumps and some finer knobs, the bottom
+// flattened where it sits in the ground; shaded smooth with the sharper ridges kept
+function boulderGeo(seed, flat) {
+  const R = C.rng(seed), t = (1 + Math.sqrt(5)) / 2;
+  let V = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]].map(nrm3);
+  let F = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+  for (let s = 0; s < 2; s++) {
+    const mid = new Map(), m = (a, b) => { const k = a < b ? a + ',' + b : b + ',' + a; if (!mid.has(k)) { V.push(nrm3([(V[a][0] + V[b][0]) / 2, (V[a][1] + V[b][1]) / 2, (V[a][2] + V[b][2]) / 2])); mid.set(k, V.length - 1); } return mid.get(k); };
+    const NF = []; for (const [a, b, c] of F) { const ab = m(a, b), bc = m(b, c), ca = m(c, a); NF.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]); } F = NF;
+  }
+  const bumps = []; for (let i = 0; i < 7; i++) bumps.push([nrm3([R() - 0.5, R() - 0.5, R() - 0.5]), (R() - 0.35) * 0.32, 2 + R() * 3]);
+  const knobs = []; for (let i = 0; i < 16; i++) knobs.push([nrm3([R() - 0.5, R() - 0.5, R() - 0.5]), (R() - 0.5) * 0.12, 8 + R() * 8]);
+  const sq = [0.9 + R() * 0.35, 0.7 + R() * 0.25, 0.85 + R() * 0.3];
+  const P = V.map(v => {
+    let r = 1;
+    for (const [d, a, k] of bumps) r += a * Math.pow(Math.max(0, v[0] * d[0] + v[1] * d[1] + v[2] * d[2]), k);
+    for (const [d, a, k] of knobs) r += a * Math.pow(Math.max(0, v[0] * d[0] + v[1] * d[1] + v[2] * d[2]), k);
+    let y = v[1] * r * sq[1]; if (flat && y < -0.1) y = -0.1 + (y + 0.1) * 0.25;
+    return [v[0] * r * sq[0], y + 0.35, v[2] * r * sq[2]];
+  });
+  const g = new Geo();
+  for (const [a, b, c] of F) g.tri(P[a], P[b], P[c], [1, 1, 1], 0, [0, 0.35, 0]);
+  return smoothGeo(g, 42);
+}
+function shrubGeo() { const g = new Geo(); g.rock(0, 0.3, 0, 0.8, [1, 1, 1], C.rng(4), true); return smoothGeo(g, 60); }
+function rockGeo() { return boulderGeo(17, true); }
+function hayGeo() { const g = new Geo(); g.cyl(-0.65, 0.6, 0, 0.6, 0.6, 1.3, 16, lin('#d9b45a'), 0, 'x', true, 0, lin('#c79d45')); return smoothGeo(g, 30); }
+// spectators: round limbs and a round head instead of boxes. Shirt and sleeves take the instance colour (uv.y 0),
+// skin, jeans and hair don't (uv.y -1).
+function sphereGeo(g, cx, cy, cz, r, ry, col, mask, NA, NB) {
+  NA = NA || 10; NB = NB || 6;
+  const P = (a, b) => [cx + Math.cos(b) * Math.cos(a) * r, cy + Math.sin(b) * ry, cz + Math.cos(b) * Math.sin(a) * r];
+  const uv = [[0, mask], [0, mask], [0, mask], [0, mask]];
+  for (let i = 0; i < NA; i++) for (let j = 0; j < NB; j++) {
+    const a0 = i / NA * Math.PI * 2, a1 = (i + 1) / NA * Math.PI * 2, b0 = -Math.PI / 2 + j / NB * Math.PI, b1 = -Math.PI / 2 + (j + 1) / NB * Math.PI;
+    g.quad(P(a0, b0), P(a1, b0), P(a1, b1), P(a0, b1), col, 0, [cx, cy, cz], uv);
+  }
+}
 function fanGeo() {
   const g = new Geo();
-  const jeans = lin('#2b3a55'), skin = lin('#d8a27c'), shirt = [1, 1, 1];
-  g.box(0.13, 0.42, 0, 0.17, 0.84, 0.2, jeans, 0, -1);
-  g.box(-0.13, 0.42, 0, 0.17, 0.84, 0.2, jeans, 0, -1);
-  g.box(0, 1.14, 0, 0.5, 0.62, 0.28, shirt, 0, 0);
-  g.box(0.33, 1.42, 0, 0.12, 0.6, 0.12, shirt, 0, 0);
-  g.box(-0.33, 1.42, 0, 0.12, 0.6, 0.12, shirt, 0, 0);
-  g.box(0, 1.6, 0, 0.24, 0.26, 0.24, skin, 0, -1);
-  g.box(0, 1.76, 0, 0.27, 0.07, 0.27, lin('#222222'), 0, -1);
-  return g;
+  const jeans = lin('#2b3a55'), skin = lin('#d8a27c'), shirt = [1, 1, 1], hair = lin('#2a211b'), shoe = lin('#1a1a1c');
+  for (const sx of [-1, 1]) {
+    g.cyl(sx * 0.11, 0.0, 0.02, 0.07, 0.06, 0.09, 8, shoe, 0, 'y', true, -1);
+    g.cyl(sx * 0.11, 0.08, 0, 0.075, 0.09, 0.78, 8, jeans, 0, 'y', true, -1);
+    // arms up, cheering: sleeve, forearm, hand
+    g.cyl(sx * 0.27, 1.22, 0, 0.065, 0.058, 0.3, 7, shirt, 0, 'y', true, 0);
+    g.cyl(sx * 0.29, 1.5, 0, 0.05, 0.045, 0.24, 7, skin, 0, 'y', false, -1);
+    sphereGeo(g, sx * 0.29, 1.76, 0, 0.055, 0.06, skin, -1, 7, 4);
+  }
+  g.cyl(0, 0.82, 0, 0.19, 0.2, 0.18, 10, jeans, 0, 'y', false, -1);         // hips
+  g.cyl(0, 0.98, 0, 0.2, 0.22, 0.44, 10, shirt, 0, 'y', true, 0);           // torso
+  sphereGeo(g, 0, 1.42, 0, 0.215, 0.07, shirt, 0, 10, 4);                   // shoulders
+  g.cyl(0, 1.44, 0, 0.055, 0.055, 0.08, 7, skin, 0, 'y', false, -1);        // neck
+  sphereGeo(g, 0, 1.62, 0, 0.115, 0.13, skin, -1, 10, 6);                   // head
+  sphereGeo(g, 0, 1.68, -0.015, 0.122, 0.09, hair, -1, 10, 4);              // hair / beanie
+  return smoothGeo(g, 50);
 }
 function chevronGeo() {
   const g = new Geo(); const w = 0.85, y0 = 0.75, y1 = 1.55;
@@ -433,12 +683,16 @@ function instData(list, fn) {
 }
 
 // ---------- arches & boards ----------
+// inflatable arch: two fat tubes and a beam, segmented where the air chambers are, the banner on the beam
 function archGeo(width, colPillar) {
-  const g = new Geo();
-  g.box(-width / 2, 2.6, 0, 0.55, 5.4, 0.55, colPillar, 0.2);
-  g.box(width / 2, 2.6, 0, 0.55, 5.4, 0.55, colPillar, 0.2);
-  g.box(0, 4.95, 0, width + 0.6, 1.25, 0.3, colPillar, 0.1);
-  return g;
+  const g = new Geo(), hi = scalec(colPillar, 1.6), lo = scalec(colPillar, 0.75);
+  for (const sx of [-1, 1]) {
+    for (let k = 0; k < 6; k++) { const y = k * 0.86 - 0.2; g.cyl(sx * width / 2, y, 0, 0.5 - (k === 0 ? 0 : 0.03), 0.5, 0.86, 14, k % 2 ? colPillar : hi, 0.15, 'y', false); }
+    g.cyl(sx * width / 2, -0.2, 0, 0.62, 0.55, 0.3, 14, lo, 0.1, 'y', true);
+  }
+  const L = width + 1.0, n = 7;
+  for (let k = 0; k < n; k++) g.cyl(-L / 2 + k * L / n, 4.95, 0, 0.62, 0.62, L / n, 14, k % 2 ? colPillar : hi, 0.15, 'x', k === 0 || k === n - 1);
+  return smoothGeo(g, 50);
 }
 function bannerQuadGeo(width, y0, y1, z) {
   const g = new Geo(); const w = width / 2;
@@ -568,8 +822,8 @@ function tuftAtlas(id) {
     if (depth > 0) for (let k = 0; k < 2; k++) twig(x2, y2, len * (0.55 + R() * 0.2), ang + (k ? 1 : -1) * (0.35 + R() * 0.4), w * 0.7, col, depth - 1);
   };
   if (id === 'pine') {
-    grass(0, 46, 90, 230, '#24401a', '#7aa043');
-    grass(128, 34, 80, 190, '#2a4a1d', '#86aa4c'); dots(128, 9, ['#f3e46a', '#ffffff', '#f6d24a'], 70, 150, 4.5);
+    grass(0, 46, 90, 230, '#26401b', '#7b9945');
+    grass(128, 34, 80, 190, '#2b481e', '#87a14e'); dots(128, 9, ['#f3e46a', '#ffffff', '#f6d24a'], 70, 150, 4.5);
     // fern: arching fronds made of leaflets
     for (let f = 0; f < 7; f++) {
       const a = -1.25 + f * 0.42 + (R() - 0.5) * 0.2, len = 150 + R() * 70;
@@ -730,7 +984,7 @@ function farGeo(W) {
     // elsewhere). Two rows: a nearer, lower one and a taller one further out that the haze softens.
     const snowC = lin('#eef2f8'), rockHi = mixc(far, [0.82, 0.86, 0.9], 0.35);
     const mountain = (x, z, w, h, cc, snowAt) => {
-      const N = 9, M = 4, px = x + (R() - 0.5) * w * 0.35, pz = z + (R() - 0.5) * w * 0.35, base = my - 30;
+      const N = 14, M = 6, v0 = g.p.length, px = x + (R() - 0.5) * w * 0.35, pz = z + (R() - 0.5) * w * 0.35, base = my - 30;
       // each spoke keeps roughly one bearing from the peak down, and every ring reaches further out than the one
       // above it, so the slopes always open outwards (a ring tucked inside the next one folded the foot under
       // into a dark, flat-topped wall facing away from the sun)
@@ -747,12 +1001,14 @@ function farGeo(W) {
         rings.push(ring);
       }
       const top = [px, base + h, pz], ref = [x, base - 50, z];
-      const shade = (y) => { const t = (y - base) / h; return t > snowAt ? snowC : mixc(mixc(cc, [0, 0, 0], 0.18 * (1 - t)), rockHi, Math.max(0, t - 0.25) * 0.8); };
+      const shade = (y) => { const t = (y - base) / h, rock = mixc(mixc(cc, [0, 0, 0], 0.18 * (1 - t)), rockHi, Math.max(0, t - 0.25) * 0.8); return mixc(rock, snowC, C.sstep(snowAt - 0.04, snowAt + 0.04, t)); };
       for (let j = 0; j < N; j++) { const a = rings[0][j], b = rings[0][(j + 1) % N]; g.tri(top, a, b, shade((top[1] + a[1] + b[1]) / 3), 0, ref); }
       for (let k = 0; k < M - 1; k++) for (let j = 0; j < N; j++) {
         const a = rings[k][j], b = rings[k][(j + 1) % N], c = rings[k + 1][j], d = rings[k + 1][(j + 1) % N];
         g.tri(a, c, b, shade((a[1] + b[1] + c[1]) / 3), 0, ref); g.tri(b, c, d, shade((b[1] + c[1] + d[1]) / 3), 0, ref);
       }
+      // colour by vertex height, so rock, scree and snow grade into each other instead of tiling the slope in facets
+      for (let i = v0; i < g.p.length; i += 3) { const c = shade(g.p[i + 1] + (Math.sin(g.p[i] * 0.05) + Math.sin(g.p[i + 2] * 0.043)) * h * 0.04); const v = i / 3 * 4; g.c[v] = c[0]; g.c[v + 1] = c[1]; g.c[v + 2] = c[2]; }
     };
     const frost = st.kind === 'frost';
     for (const [n, r0, rj, hk, tint] of [[40, 0, 450, 0.8, 0], [46, 650, 900, 1.35, 0.12]]) {
@@ -769,7 +1025,8 @@ function farGeo(W) {
   const sk = lin(V.skirt), E = 6000;
   g.quad([cx - E, my - 26, cz - E], [cx + E, my - 26, cz - E], [cx + E, my - 26, cz + E], [cx - E, my - 26, cz + E], sk, 0, [cx, my - 100, cz]);
   g.my = my;
-  return g;
+  // smooth the slopes and the rounded cliff faces; ridges, cliff tops and caprock edges are sharper than this and stay crisp
+  return smoothGeo(g, 72);
 }
 
 // ---------- build stage scene ----------
@@ -790,24 +1047,27 @@ function buildScene(R, W) {
   const rot = o => o.rot;
   if (O.trees.length) {
     const pines = O.trees.filter(t => t.type === 0 || t.type === 2), birches = O.trees.filter(t => t.type === 1);
-    const pc = V.pine.map(lin);
+    const pc = V.pine.map(lin), ptex = R.texture(treeAtlas());
     // per tree: one of the three shapes, a little brighter or darker, and a slight drift towards yellow or blue
     const hh = (o, k) => { const v = Math.sin(o.x * 12.9898 + o.z * 78.233 + k * 37.719) * 43758.5453; return v - Math.floor(v); };
-    for (let vi = 0; vi < PINE_TIERS.length; vi++) {
+    for (let vi = 0; vi < PINE_SHAPES.length; vi++) {
       const set = pines.filter(o => Math.min(2, (hh(o, 0) * 3) | 0) === vi);
       if (!set.length) continue;
       const pineInst = instData(set, o => {
-        const c = pc[(o.c * 3) | 0], k = (st.kind === 'frost' ? 2.4 : 1.9) * (0.84 + hh(o, 1) * 0.3), hu = (hh(o, 2) - 0.5) * 0.18;
+        const c = pc[(o.c * 3) | 0], k = (st.kind === 'frost' ? 3.6 : 3.0) * (0.84 + hh(o, 1) * 0.3), hu = (hh(o, 2) - 0.5) * 0.18;
         return [o.x, o.y, o.z, o.rot, o.s, o.sy, 0, 0, c[0] * k * (1 + hu), c[1] * k, c[2] * k * (1 - hu * 1.4)];
       });
       const pg = R.mesh(pineGeo(V, st.kind === 'frost', vi), pineInst, cull);
-      pg.lod = { m: R.mesh(pineFarGeo(V, st.kind === 'frost', vi), pineInst, cull), dist: 80, shadowDist: 30 };
-      add(pg, { mode: 8, sway: 1 }, true);
+      // the sprays are alpha-tested, the depth pass isn't: every tree casts its shadow with the solid far version
+      pg.lod = { m: R.mesh(pineFarGeo(V, st.kind === 'frost', vi), pineInst, cull), dist: 70, shadowDist: -1 };
+      add(pg, { mode: 10, sway: 1, tex: ptex, a2c: true }, true);
     }
     if (birches.length) {
       const bc = V.birch.map(lin);
-      const bg = R.mesh(birchGeo(V), instData(birches, o => { const c = bc[(o.c * 3) | 0]; return [o.x, o.y, o.z, o.rot, o.s, o.sy, 0, 0, c[0], c[1], c[2]]; }), cull);
-      add(bg, { mode: 8, sway: 1 }, true);
+      const binst = instData(birches, o => { const c = bc[(o.c * 3) | 0]; return [o.x, o.y, o.z, o.rot, o.s, o.sy, 0, 0, c[0] * 1.6, c[1] * 1.6, c[2] * 1.6]; });
+      const bg = R.mesh(birchGeo(V), binst, cull);
+      bg.lod = { m: R.mesh(birchFarGeo(V), binst, cull), dist: 70, shadowDist: -1 };
+      add(bg, { mode: 10, sway: 1, tex: R.texture(leafAtlas()), a2c: true }, true);
     }
   }
   if (O.rocks.length) {
@@ -855,7 +1115,7 @@ function buildScene(R, W) {
     const model = GFX.M4.trs(new Float32Array(16), p.x, p.y, p.z, p.h, 0, 0, 1);
     add(R.mesh(archGeo(T.hw * 2 + 2.4, lin(pillar))), { mode: 0, model }, true);
     const tex = R.texture(bannerCanvas(text, bg, fg, sub));
-    add(R.mesh(bannerQuadGeo(T.hw * 2 + 2.0, 4.42, 5.48, -0.17)), { mode: 2, tex, model }, false);
+    add(R.mesh(bannerQuadGeo(T.hw * 2 + 1.2, 4.5, 5.4, -0.64)), { mode: 2, tex, model }, false);
   };
   placeArch(T.startS, 'STAGE START', '#14171c', '#ffd23a', st.name.toUpperCase() + ' · ' + st.surface.toUpperCase(), '#22262d');
   placeArch(T.splits[0], 'SPLIT 1', '#f3f1ea', '#14171c', null, '#2b2f36');

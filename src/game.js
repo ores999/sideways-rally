@@ -84,6 +84,15 @@ const rallyOn = () => !!(rally && !rally.done && rally.playing);
 let raceT = 0, cdT = 0, cdShown = -1, finishT = 0, doneT = 0, splitsHit = [], ghostRec = [], ghostTimer = 0;
 let noteIdx = 0, called = [], offT = 0, stuckT = 0, wrongT = 0, time = 0, acc = 0, alpha = 0;
 let resultsShown = false, lastMedal = 0;
+// headlights: on by themselves for night and dusk stages, off by day; L (or the pad's d-pad up, or the touch
+// button) switches them whenever you like
+let lightsOn = false;
+function setLights(on, quiet) {
+  lightsOn = !!on;
+  for (const id of ['pLights', 'touchLights']) { const b = $(id); if (b) b.setAttribute('aria-pressed', String(lightsOn)); }
+  if (!quiet) { sfx.click && sfx.click(); $('camTag').textContent = 'Lights · ' + (lightsOn ? 'on' : 'off') + ' (L)'; camTagT = 2; }
+}
+const toggleLights = () => { if (mode === 'race' || mode === 'countdown' || mode === 'done' || mode === 'paused') setLights(!lightsOn); };
 const prev = { x: 0, y: 0, z: 0, h: 0 };
 const evt = { hit: 0, land: 0, shift: false, down: false, kind: '', x: 0, z: 0, nx: 0, nz: 0, front: true };
 let input = { steer: 0, thr: 0, brk: 0, hb: false, analog: false };
@@ -374,7 +383,7 @@ function loadStage(key, after) {
     if (after) after();
   }, 50);
 }
-function disposeCar(m) { if (!m) return; for (const k of ['body', 'glass', 'lens', 'lightF', 'lightR', 'flame', 'wheel', 'wheelBlur', 'caliper']) R.disposeMesh(m[k]); if (m.tex) gl.deleteTexture(m.tex); }
+function disposeCar(m) { if (!m) return; for (const k of ['body', 'glass', 'lens', 'lightF', 'lightR', 'flame', 'wheel', 'wheelBlur', 'caliper']) R.disposeMesh(m[k]); if (m.tex) gl.deleteTexture(m.tex); if (m.tyreTex) gl.deleteTexture(m.tyreTex); }
 function setupCar() {
   P = C.CARS[settings.car];
   disposeCar(carModel);
@@ -654,6 +663,7 @@ function startRace() {
     rally.tries[k] = (rally.tries[k] || 0) + 1; saveRally();
   }
   $('share').hidden = true;
+  setLights(!!S.E.night, true);
   initAudio(); warmSpeech();
   C.resetCar(W, car, W.T.spawnS); snapVis(); resetEffects();
   raceT = 0; cdT = 0; cdShown = -1; finishT = 0; doneT = 0; splitsHit = []; ghostRec = []; ghostTimer = 0;
@@ -765,6 +775,8 @@ $('rRetry').addEventListener('click', retry);
 $('rNext').addEventListener('click', nextStage);
 $('rMenu').addEventListener('click', toMenu);
 $('touchPause').addEventListener('click', togglePause);
+$('touchLights').addEventListener('click', toggleLights);
+$('pLights').addEventListener('click', toggleLights);
 document.addEventListener('visibilitychange', () => { if (document.hidden && (mode === 'race' || mode === 'countdown')) togglePause(); if (A.ctx) { if (document.hidden) A.ctx.suspend(); else A.ctx.resume(); } });
 
 function manualReset() {
@@ -803,6 +815,7 @@ addEventListener('keydown', e => {
   else if ((k === 'KeyE' || k === 'ShiftLeft' || k === 'ShiftRight') && mode === 'race') pendUp++;
   else if ((k === 'KeyQ' || k === 'ControlLeft' || k === 'ControlRight') && mode === 'race') pendDown++;
   else if (k === 'KeyM') { settings.sound = !settings.sound; saveSettings(); updateToggles(); }
+  else if (k === 'KeyL') toggleLights();
   else if (k === 'Enter') {
     if (mode === 'menu') { e.preventDefault(); menuGo(); }
     else if (resultsShown && !$('results').hidden) { e.preventDefault(); retry(); }
@@ -839,6 +852,7 @@ function readInput() {
     if (edge(9)) { if (mode === 'menu') menuGo(); else if (resultsShown && !$('results').hidden) retry(); else togglePause(); }
     if (edge(3) && mode !== 'menu') { settings.cam = (settings.cam + 1) % 4; saveSettings(); showCamTag(); }
     if (edge(8)) manualReset();
+    if (edge(12)) toggleLights();
     if (edge(5) && mode === 'race') pendUp++;
     if (edge(4) && mode === 'race') pendDown++;
     break;
@@ -1082,6 +1096,13 @@ function buildVoice() {
   A.voice = Object.assign({ id: P.id, ex: getTune(P.id).exhaust, V, nodes, oscs, lp, lfo, eg, ib, ig }, tb);
 }
 const sfx = {
+  click() {
+    if (!A.ctx) return; const c = A.ctx, t = c.currentTime;
+    const s = A.noiseSrc(), f = A.filt('bandpass', 3200, 2.5), g = A.gain(0);
+    s.connect(f); f.connect(g); g.connect(A.master);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.12, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0005, t + 0.04);
+    s.stop(t + 0.06);
+  },
   burst(when, dur, type, f, q, vol, atk) {
     const c = A.ctx; if (!c) return;
     const s = c.createBufferSource(); s.buffer = A.noise;
@@ -2135,7 +2156,7 @@ function render() {
   R.env.cam = cam.pos; R.env.fov = cam.fov * Math.PI / 180;
   // headlights
   const fx = Math.sin(vis.h), fz = Math.cos(vis.h);
-  if (E.night) { E.hlOn = E.hlK; E.hlPos = [vis.x + fx * 2.3, vis.y + 0.9, vis.z + fz * 2.3]; const l = Math.hypot(fx, 0.1, fz); E.hlDir = [fx / l, -0.1 / l, fz / l]; }
+  if (lightsOn) { E.hlOn = E.night ? E.hlK : E.overcast ? 0.5 : 0.25; E.hlPos = [vis.x + fx * 2.3, vis.y + 0.9, vis.z + fz * 2.3]; const l = Math.hypot(fx, 0.1, fz); E.hlDir = [fx / l, -0.1 / l, fz / l]; }
   else E.hlOn = 0;
   // shadow pass: a near cascade (32 m, about 1.5 cm a texel) around the car and a far one (140 m) for the scenery
   if (E.shadows) {
@@ -2175,9 +2196,9 @@ function render() {
   // car
   const dcol = DIRT[W.st.kind].col, baseY = vis.y + susp.heave;
   R.drawLit(carModel.body, { model: carMat, mode: 5, tex: carModel.tex, dirt, carY: baseY, dirtCol: dcol });
-  for (let i = 0; i < 4; i++) R.drawLit(carModel.wheel, { model: wheelMatrix(i), dirt: dirt * 0.9, carY: baseY, dirtCol: dcol });
+  for (let i = 0; i < 4; i++) R.drawLit(carModel.wheel, { model: wheelMatrix(i), mode: 11, tex: carModel.tyreTex, dirt: dirt * 0.9, carY: baseY, dirtCol: dcol });
   for (let i = 0; i < 4; i++) R.drawLit(carModel.caliper, { model: wheelMatrix(i, true), dirt: dirt * 0.6, carY: baseY, dirtCol: dcol });
-  if (!(settings.cam === 2 && (mode === 'race' || mode === 'countdown'))) R.drawLit(carModel.lightF, { model: carMat, mode: 4, tint: E.night ? [2.6, 2.6, 2.6] : [1.1, 1.1, 1.1] });
+  if (!(settings.cam === 2 && (mode === 'race' || mode === 'countdown'))) R.drawLit(carModel.lightF, { model: carMat, mode: 4, tint: lightsOn ? (E.night ? [2.6, 2.6, 2.6] : [1.9, 1.9, 1.9]) : [0.3, 0.3, 0.3] });
   if (flameT > 0) R.drawLit(carModel.flame, { model: carMat, mode: 4, tint: [2.6 + Math.random(), 1.6 + Math.random() * 0.6, 0.9] });
   const braking = (mode === 'race' && input.brk > 0.1) || mode === 'done' || (mode === 'race' && input.hb);
   R.drawLit(carModel.lightR, { model: carMat, mode: 4, tint: braking ? [3.2, 3.2, 3.2] : [0.6, 0.6, 0.6] });
