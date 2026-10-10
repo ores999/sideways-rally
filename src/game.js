@@ -1195,7 +1195,9 @@ function initAudio() {
   A.ctx = ctx;
   const master = ctx.createGain(); master.gain.value = settings.sound ? 0.55 : 0;
   const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4;
-  master.connect(comp); comp.connect(ctx.destination); A.master = master;
+  // pausing silences the whole game (engine, gravel, crowd, ambience, reverb tails) and resuming brings it back
+  const pz = ctx.createGain(); A.pz = pz;
+  master.connect(pz); pz.connect(comp); comp.connect(ctx.destination); A.master = master;
   const nb = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate); const d = nb.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   A.noise = nb;
@@ -1521,6 +1523,7 @@ function updateAudio(dt) {
   const rpm = pv ? A.revRpm : car.rpm, thr = racing ? car.thrE || input.thr : pv ? A.revThr : 0, boost = pv ? A.revB : car.boost;
   const tune = getTune(P.id), sport = tune.exhaust === 'sport';
   const lim = car.limiter > 0 ? 0.35 : 1;
+  A.pz.gain.setTargetAtTime(mode === 'paused' ? 0 : 1, t, mode === 'paused' ? 0.03 : 0.08);
   // ---- where the car is for the listener (the camera) ----
   buildReverb();
   const onboard = settings.cam === 2 && racing;
