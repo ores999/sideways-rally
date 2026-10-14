@@ -226,7 +226,7 @@ function terrainMesh(W) {
   };
   const O = W.O;
   if (O) {
-    for (const t of O.trees || []) shade(t.x, t.z, 5.5 * (t.s || 1), st.kind === 'frost' ? 0.22 : 0.3);
+    for (const t of O.trees || []) shade(t.x, t.z, 5.5 * (t.s || 1) * (t.type === 3 ? 1.3 : 1), st.kind === 'frost' ? 0.22 : t.type === 3 ? 0.36 : 0.3);
     for (const r of O.rocks || []) shade(r.x, r.z, 2.5 * (r.s || 1), 0.25);
   }
   // indices grouped in square blocks so the renderer can skip blocks outside the view. Each block also has coarser
@@ -347,7 +347,16 @@ const PINE_SHAPES = [
   { h: 7.4, base: 1.25, whorls: 9, r0: 1.95, r1: 0.32, br: 8, droop: 0.42, core: 0.55 },
   { h: 7.9, base: 1.0, whorls: 11, r0: 1.5, r1: 0.26, br: 7, droop: 0.5, core: 0.6 },
   { h: 7.0, base: 1.5, whorls: 7, r0: 2.25, r1: 0.4, br: 8, droop: 0.36, core: 0.5 },
+  // old growth (Dark Pines, tree type 3): 20-30 m with the crown held high over a long bare trunk (`tr` = trunk radius
+  // at the foot and at the top, `stubs` = dead lower branches left on it): a spruce, a pine with a rounded crown, a fir
+  // `roll` = how far the sprays are turned out of the horizontal: flatter here, these crowns are mostly seen from below
+  { h: 23, base: 7, whorls: 16, r0: 2.9, r1: 0.35, br: 10, droop: 0.48, core: 0.42, tr: [0.36, 0.09], stubs: 7, roll: 0.4 },
+  { h: 21, base: 10.5, whorls: 11, r0: 3.1, r1: 0.6, br: 9, droop: 0.3, core: 0.4, tr: [0.4, 0.12], stubs: 5, round: 0.45, roll: 0.4 },
+  { h: 26, base: 8.5, whorls: 17, r0: 2.4, r1: 0.3, br: 9, droop: 0.42, core: 0.45, tr: [0.34, 0.08], stubs: 9, roll: 0.4 },
 ];
+const TALL = 3; // index of the first old-growth shape
+// crown radius at fraction f of the way from its foot to the top; `round` pulls the foot in for a rounded crown
+const crownR = (S, f) => (S.r1 + (S.r0 - S.r1) * Math.pow(1 - f, 1.1)) * (S.round ? 1 - S.round * (1 - C.sstep(0, 0.35, f)) : 1);
 // texture atlas (512²): u 0-0.5 one needle spray (base at v=0, tip at v=1), 0.5-0.75 bark, 0.75-1 dense needles
 const TA = { frond: [0, 0.5], bark: [0.5, 0.75], dense: [0.75, 1] };
 let treeAtlasData = null, leafAtlasData = null;
@@ -473,13 +482,53 @@ function trunkPart(g, h, r0, r1, seg, colK, uvr, flag) {
     g.quad([P(a0, -0.3, r0), N(a0), c, U(a0, -0.3)], [P(a1, -0.3, r0), N(a1), c, U(a1, -0.3)], [P(a1, h, r1), N(a1), c, U(a1, h)], [P(a0, h, r1), N(a0), c, U(a0, h)]);
   }
 }
+// an old tree's trunk: a flared foot with a few root lobes, a little mossy, tapering all the way up. The bark texture
+// runs once over the bare part and again inside the crown, so it isn't stretched over 20 m. Dead branch stubs stick
+// out of the bare part, as on a real old conifer that has shed its lower branches.
+function oldTrunk(g, S, seg, col, R, stubs) {
+  const top = S.h * 0.82, r0 = S.tr[0], r1 = S.tr[1], rAt = y => r0 + (r1 - r0) * Math.max(0, y) / top;
+  const lob = R() * 6.28, span = S.base + 0.9;
+  // [height, flare, lobes, moss]
+  const rings = [[-0.3, 1.6, 1, 1], [0.25, 1.28, 0.6, 0.7], [0.9, 1.07, 0.2, 0.25], [1.9, 1, 0, 0], [S.base + 0.6, 1, 0, 0], [top, 1, 0, 0]];
+  const ring = (k, a) => { const [y, fl, lb] = rings[k]; const r = rAt(y) * fl * (1 + lb * 0.16 * Math.cos(4 * a + lob)); return [Math.cos(a) * r, y, Math.sin(a) * r]; };
+  const tint = k => { const m = rings[k][3]; return [col[0] * (1 - 0.3 * m), col[1] * (1 - 0.12 * m), col[2] * (1 - 0.4 * m), 0]; };
+  for (let k = 0; k < rings.length - 1; k++) {
+    const inner = k === rings.length - 2;
+    const v0 = inner ? 0.001 : Math.max(0.001, (rings[k][0] + 0.3) / span), v1 = inner ? 0.999 : Math.min(0.999, (rings[k + 1][0] + 0.3) / span);
+    const ny0 = 0.15 + (rings[k][1] - 1) * 0.9, ny1 = 0.15 + (rings[k + 1][1] - 1) * 0.9;
+    for (let i = 0; i < seg; i++) {
+      const a0 = i / seg * Math.PI * 2, a1 = (i + 1) / seg * Math.PI * 2;
+      const U = (a, v) => [TA.bark[0] + (TA.bark[1] - TA.bark[0]) * (a / (Math.PI * 2)), v - 2];
+      const N = (a, ny) => nrm3([Math.cos(a), ny, Math.sin(a)]);
+      g.quad([ring(k, a0), N(a0, ny0), tint(k), U(a0, v0)], [ring(k, a1), N(a1, ny0), tint(k), U(a1, v0)],
+        [ring(k + 1, a1), N(a1, ny1), tint(k + 1), U(a1, v1)], [ring(k + 1, a0), N(a0, ny1), tint(k + 1), U(a0, v1)]);
+    }
+  }
+  // dead stubs: thin three-sided twigs leaving the trunk slightly downwards, longer higher up
+  const dc = [col[0] * 0.85, col[1] * 0.85, col[2] * 0.85, 0];
+  for (let i = 0; i < stubs; i++) {
+    const y = 2.4 + (S.base - 2.6) * (i + R() * 0.8) / stubs, th = R() * 6.28, r = rAt(y);
+    const len = (0.45 + R() * 0.9) * (0.6 + 0.4 * y / S.base), rb = 0.035 + r * 0.1;
+    const d = nrm3([Math.cos(th), -0.2 - R() * 0.35, Math.sin(th)]), s1 = nrm3(cross3(d, [0, 1, 0])), s2 = cross3(s1, d);
+    const b = [Math.cos(th) * r * 0.85, y, Math.sin(th) * r * 0.85], t = [b[0] + d[0] * len, b[1] + d[1] * len, b[2] + d[2] * len];
+    for (let q = 0; q < 3; q++) {
+      const off = a => [s1[0] * Math.cos(a) + s2[0] * Math.sin(a), s1[1] * Math.cos(a) + s2[1] * Math.sin(a), s1[2] * Math.cos(a) + s2[2] * Math.sin(a)];
+      const a0 = q / 3 * Math.PI * 2, a1 = (q + 1) / 3 * Math.PI * 2, o0 = off(a0), o1 = off(a1);
+      const P = (p, o, w) => [p[0] + o[0] * w, p[1] + o[1] * w, p[2] + o[2] * w], u0 = TA.bark[0] + 0.01 + q * 0.07, u1 = u0 + 0.06;
+      g.quad([P(b, o0, rb), o0, dc, [u0, 0.4 - 2]], [P(b, o1, rb), o1, dc, [u1, 0.4 - 2]], [P(t, o1, 0.008), o1, dc, [u1, 0.46 - 2]], [P(t, o0, 0.008), o0, dc, [u0, 0.46 - 2]]);
+    }
+  }
+}
 // mid: the version for the middle distance (100-230 m): about half the whorls, fewer and wider single-segment sprays,
 // a coarser core. Same atlas and colours, so the dissolve from the full tree is invisible.
 function pineGeo(V, snowy, variant, mid) {
   const S = PINE_SHAPES[variant || 0], R = C.rng(311 + (variant || 0) * 97), g = rawGeo();
   const trunk = scalec(lin(V.trunk), 2.4);
-  trunkPart(g, S.h * 0.82, 0.21, 0.07, mid ? 5 : 8, trunk, TA.bark, -2); // uv.y shifted by -2: no instance tint (bark), see LIT_FS mode 10
-  const radAt = y => { const f = Math.min(1, Math.max(0, (y - S.base) / (S.h - S.base))); return S.r1 + (S.r0 - S.r1) * Math.pow(1 - f, 1.1); };
+  // uv.y shifted by -2: no instance tint (bark), see LIT_FS mode 10
+  if (S.tr && mid) trunkPart(g, S.base + 1.5, S.tr[0] * 1.08, S.tr[0] * 0.75, 6, trunk, TA.bark, -2); // flare and stubs are lost at 100 m
+  else if (S.tr) oldTrunk(g, S, 10, trunk, R, S.stubs);
+  else trunkPart(g, S.h * 0.82, 0.21, 0.07, mid ? 5 : 8, trunk, TA.bark, -2);
+  const radAt = y => crownR(S, Math.min(1, Math.max(0, (y - S.base) / (S.h - S.base))));
   // inner cone: dense needles, dark
   { const rings = mid ? 4 : 7, seg = mid ? 6 : 8;
     for (let k = 0; k < rings; k++) {
@@ -516,13 +565,14 @@ function pineGeo(V, snowy, variant, mid) {
       prev = row;
     }
   };
-  const whorls = mid ? Math.round(S.whorls * 0.55) : S.whorls;
+  const whorls = mid ? Math.round(S.whorls * (S.tr ? 0.45 : 0.55)) : S.whorls;
   for (let k = 0; k < whorls; k++) {
-    const f = k / (whorls - 1), y0 = S.base + (S.h - S.base - 0.55) * f + (R() - 0.5) * 0.18;
-    const L = (S.r1 + (S.r0 - S.r1) * Math.pow(1 - f, 1.1)) * (0.88 + R() * 0.24) * 1.12;
-    const nb = Math.max(mid ? 3 : 4, Math.round(S.br * (mid ? 0.62 : 1) * (1 - f * 0.4)));
+    const f = k / (whorls - 1), y0 = S.base + (S.h - S.base - 0.55) * f + (R() - 0.5) * (S.tr ? 0.4 : 0.18);
+    const L = crownR(S, f) * (0.88 + R() * 0.24) * 1.12;
+    // an old tree's lowest whorls are thinning out, the light no longer reaches them
+    const nb = Math.max(mid ? 3 : 4, Math.round(S.br * (mid ? 0.62 : 1) * (1 - f * 0.4) * (S.tr && f < 0.15 ? 0.6 : 1)));
     const ph = k * 2.39996 + R() * 0.4;
-    for (let b = 0; b < nb; b++) frond(y0, ph + b / nb * Math.PI * 2 + (R() - 0.5) * 0.35, L * (0.85 + R() * 0.3), (b % 2 ? 1 : -1) * (0.7 + R() * 0.35), S.droop * (0.8 + R() * 0.4));
+    for (let b = 0; b < nb; b++) frond(y0, ph + b / nb * Math.PI * 2 + (R() - 0.5) * 0.35, L * (0.85 + R() * 0.3), (b % 2 ? 1 : -1) * ((S.roll || 0.7) + R() * 0.35), S.droop * (0.8 + R() * 0.4));
   }
   // the leader: two crossed sprays standing up at the top
   for (const th of [0, Math.PI / 2]) {
@@ -534,12 +584,13 @@ function pineGeo(V, snowy, variant, mid) {
 // far pine: solid skirts with a ragged, drooping rim (alternating branch tips), same colours, a quarter of the cost
 function pineFarGeo(V, snowy, variant) {
   const S = PINE_SHAPES[variant || 0], g = rawGeo(), R = C.rng(77 + (variant || 0));
-  trunkPart(g, S.h * 0.5, 0.2, 0.12, 4, scalec(lin(V.trunk), 2.4), TA.bark, -2);
-  const tiers = 5, N = 10;
+  if (S.tr) trunkPart(g, S.base + 1.5, S.tr[0] * 1.08, S.tr[0] * 0.75, 5, scalec(lin(V.trunk), 2.4), TA.bark, -2);
+  else trunkPart(g, S.h * 0.5, 0.2, 0.12, 4, scalec(lin(V.trunk), 2.4), TA.bark, -2);
+  const tiers = S.tr ? 6 : 5, N = 10;
   for (let k = 0; k < tiers; k++) {
     const f0 = k / tiers, f1 = (k + 1.35) / tiers;
     const yb = S.base + (S.h - S.base) * f0 - 0.35, yt = Math.min(S.h + 0.3, S.base + (S.h - S.base) * f1);
-    const rad = (S.r1 + (S.r0 - S.r1) * Math.pow(1 - f0, 1.1)) * 1.12, top = [0, yt, 0];
+    const rad = crownR(S, f0) * 1.12, top = [0, yt, 0];
     const rim = [];
     for (let i = 0; i < N; i++) { const a = i / N * Math.PI * 2 + k * 0.5, rr = rad * (i % 2 ? 0.8 : 1.0) * (0.92 + R() * 0.16); rim.push([Math.cos(a) * rr, yb - (i % 2 ? 0 : rad * S.droop * 0.35), Math.sin(a) * rr, a]); }
     for (let i = 0; i < N; i++) {
@@ -1059,12 +1110,13 @@ function buildScene(R, W) {
   const cull = { cell: 48, cullDist: S.E.fog[1] + 40 };
   const rot = o => o.rot;
   if (O.trees.length) {
-    const pines = O.trees.filter(t => t.type === 0 || t.type === 2), birches = O.trees.filter(t => t.type === 1);
+    const pines = O.trees.filter(t => t.type !== 1), birches = O.trees.filter(t => t.type === 1);
     const pc = V.pine.map(lin), ptex = R.texture(treeAtlas());
-    // per tree: one of the three shapes, a little brighter or darker, and a slight drift towards yellow or blue
+    // per tree: one of three shapes (the old-growth ones for type 3), a little brighter or darker, and a slight drift
+    // towards yellow or blue
     const hh = (o, k) => { const v = Math.sin(o.x * 12.9898 + o.z * 78.233 + k * 37.719) * 43758.5453; return v - Math.floor(v); };
     for (let vi = 0; vi < PINE_SHAPES.length; vi++) {
-      const set = pines.filter(o => Math.min(2, (hh(o, 0) * 3) | 0) === vi);
+      const set = pines.filter(o => (o.type === 3 ? TALL : 0) + Math.min(2, (hh(o, 0) * 3) | 0) === vi);
       if (!set.length) continue;
       const pineInst = instData(set, o => {
         const c = pc[(o.c * 3) | 0], k = (st.kind === 'frost' ? 3.6 : 3.0) * (0.84 + hh(o, 1) * 0.3), hu = (hh(o, 2) - 0.5) * 0.18;
@@ -1073,8 +1125,10 @@ function buildScene(R, W) {
       const pg = R.mesh(pineGeo(V, st.kind === 'frost', vi), pineInst, cull);
       // full trees to ~100 m, the lighter version to ~230 m, solid skirts beyond (in the haze by then), each swap a
       // dissolve over a band. The sprays are alpha-tested and the depth pass isn't: shadows come from the skirts.
-      pg.lods = [{ m: pg, dist: LOD_NEAR, band: 18 }, { m: R.mesh(pineGeo(V, st.kind === 'frost', vi, true), pineInst, cull), dist: LOD_MID, band: 30 }, { m: R.mesh(pineFarGeo(V, st.kind === 'frost', vi), pineInst, cull) }];
-      add(pg, { mode: 10, sway: 1, tex: ptex, a2c: true }, true);
+      // the old trees have about twice the sprays; past ~95 m the lighter version can't be told from them
+      pg.lods = [{ m: pg, dist: vi >= TALL ? LOD_NEAR - 35 : LOD_NEAR, band: 18 }, { m: R.mesh(pineGeo(V, st.kind === 'frost', vi, true), pineInst, cull), dist: LOD_MID, band: 30 }, { m: R.mesh(pineFarGeo(V, st.kind === 'frost', vi), pineInst, cull) }];
+      // a 25 m tree sways about as far as a young one at the top, not three times as far
+      add(pg, { mode: 10, sway: vi >= TALL ? 0.4 : 1, tex: ptex, a2c: true }, true);
     }
     if (birches.length) {
       const bc = V.birch.map(lin);

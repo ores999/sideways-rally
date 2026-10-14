@@ -633,7 +633,15 @@ function placeObjects(T, TR, nz) {
     }
   };
   if (st.rows) {
-    // rows of pines walking along both verges, then the forest filling in behind them
+    // rows of old pines walking along both verges, then the forest filling in behind them. Most are old growth
+    // (type 3: 18-30 m, crowns high over bare trunks, so the road runs under a roof of branches); the young ones
+    // in between keep the forest closed at eye level under the crowns.
+    const tree = (x, z, d, young, birch) => {
+      const sc = birch ? 0.8 + R() * 0.6 : young ? 0.6 + R() * 0.4 : 0.85 + R() * 0.3;
+      const sy = young || birch ? sc * (0.9 + R() * 0.4) : 0.85 + R() * 0.35;
+      out.trees.push({ x, z, y: terrainH(TR, x, z) - 0.2, rot: R() * 6.28, s: sc, sy, type: birch ? 1 : young ? 0 : 3, c: R() });
+      if (d < 40) addCol(x, z, (young || birch ? 0.45 : 0.5) * sc, 'tree');
+    };
     const rows = [[hw + 4.6, 5.5], [hw + 8.5, 6], [hw + 13, 6.5], [hw + 19, 7.5]];
     for (const side of [-1, 1]) for (const [off, gap] of rows) {
       for (let s = 0; s < T.L; s += gap * (0.75 + R() * 0.5)) {
@@ -643,17 +651,10 @@ function placeObjects(T, TR, nz) {
         const x = T.X[i] + rx * o + (R() - 0.5) * 1.5, z = T.Z[i] + rz * o + (R() - 0.5) * 1.5;
         const d = roadDist(x, z);
         if (d < hw + 4.2) continue; // the inside of bends, where another part of the road passes close
-        const sc = 0.8 + R() * 0.55;
-        out.trees.push({ x, z, y: terrainH(TR, x, z) - 0.2, rot: R() * 6.28, s: sc, sy: sc * (0.95 + R() * 0.4), type: 0, c: R() });
-        if (d < 40) addCol(x, z, 0.45 * sc, 'tree');
+        tree(x, z, d, R() < 0.2, false);
       }
     }
-    scatter(3200, hw + 22, 170, 1.4, (x, z, d, s) => {
-      const sc = 0.8 + R() * 0.6;
-      out.trees.push({ x, z, y: terrainH(TR, x, z) - 0.2, rot: R() * 6.28, s: sc, sy: sc * (0.9 + R() * 0.4), type: R() < 0.06 ? 1 : 0, c: R() });
-      if (d < 40) addCol(x, z, 0.45 * sc, 'tree');
-      return true;
-    });
+    scatter(3200, hw + 22, 170, 1.4, (x, z, d, s) => { const k = R(); tree(x, z, d, k < 0.26, k < 0.06); return true; });
     scatter(110, hw + 3.2, 30, 1.4, (x, z, d, s) => {
       if (nearStartFinish(s)) return false;
       const sc = 0.4 + R() * 0.8; out.rocks.push({ x, z, y: terrainH(TR, x, z) - 0.15 * sc, rot: R() * 6.28, s: sc, sy: sc * (0.6 + R() * 0.4), c: R() });
