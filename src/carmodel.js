@@ -10,6 +10,8 @@ const SHAPES = {
   boxhatch: { zf: 1.98, zr: -1.97, W: 1.78, nose: 0.66, hoodF: 0.84, hoodB: 0.95, zW: 0.88, belt: 1.0, roof: 1.44, zRoofF: 0.24, zRoofR: -1.62, zRearG: -1.93, tail: 0.98, wbOff: 0.05, archR: 0.44, kind: 'hatch', boxy: true, flares: true },
   small:    { zf: 1.92, zr: -1.93, W: 1.78, nose: 0.6, hoodF: 0.76, hoodB: 0.9, zW: 0.78, belt: 0.96, roof: 1.38, zRoofF: 0.0, zRoofR: -1.38, zRearG: -1.9, tail: 0.95, wbOff: 0.0, archR: 0.44, kind: 'hatch', flares: true, scoop: true },
   liftback: { zf: 2.18, zr: -2.14, W: 1.78, nose: 0.55, hoodF: 0.73, hoodB: 0.89, zW: 0.6, belt: 0.95, roof: 1.33, zRoofF: -0.12, zRoofR: -1.02, zRearG: -1.96, tail: 0.98, wbOff: 0.12, archR: 0.43, kind: 'fastback' },
+  // the bonus pickup: a short cab, then an open bed (floor at `bed`, side walls up to `tail`) with the tailgate at zr
+  pickup:   { zf: 2.25, zr: -2.25, W: 1.8, nose: 0.68, hoodF: 0.86, hoodB: 1.0, zW: 0.86, belt: 1.04, roof: 1.56, zRoofF: 0.08, zRoofR: -0.72, zRearG: -0.8, tail: 1.03, bed: 0.7, wbOff: 0.02, archR: 0.45, kind: 'pickup', flares: true },
   coupe:    { zf: 2.15, zr: -2.1, W: 1.84, nose: 0.56, hoodF: 0.8, hoodB: 0.95, zW: 0.5, belt: 1.0, roof: 1.37, zRoofF: -0.08, zRoofR: -1.12, zRearG: -1.98, tail: 1.02, wbOff: 0.2, archR: 0.45, kind: 'fastback', boxy: true, flares: true },
 };
 const WR = 0.335;
@@ -79,7 +81,13 @@ function bodyProfile(S, wb) {
   top.push([S.zf - 0.45, S.hoodF + 0.03]);
   if (S.boxy) top.push([(S.zf + S.zW) / 2, (S.hoodF + S.hoodB) / 2 + 0.01]);
   top.push([S.zW, S.hoodB]);
-  if (S.kind === 'sedan') {
+  if (S.kind === 'pickup') {
+    const bed = (z, y) => Object.assign([z, y], { bed: true });
+    top.push([S.zRearG + 0.02, S.belt]);
+    top.push(bed(S.zRearG - 0.04, S.tail));   // the bed's top rails run from the cab back to the tailgate:
+    top.push(bed(S.zr + 0.06, S.tail));       // that edge is left open (the bed is built inside it)
+    top.push([S.zr - 0.01, S.tail - 0.12]);
+  } else if (S.kind === 'sedan') {
     top.push([S.zRearG - 0.02, S.belt + 0.02]);
     top.push([S.zr + 0.3, S.deck]);
     top.push([S.zr + 0.06, S.deck - 0.03]);
@@ -92,7 +100,7 @@ function bodyProfile(S, wb) {
   top.push([S.zr - 0.02, yb + 0.22]);
   top.push([S.zr + 0.1, yb + 0.02]);
   // bottom from rear to front with arches
-  const out = top.map(p => ({ p, arch: false }));
+  const out = top.map(p => ({ p, arch: false, bed: !!p.bed }));
   // reverse orientation later if needed; build bottom
   const th0 = Math.asin((yb - cy) / R);
   const arch = (cz) => { const pts = []; const n = 12; for (let i = 0; i <= n; i++) { const t = Math.PI - th0 - (Math.PI - 2 * th0) * i / n; pts.push({ p: [cz + R * Math.cos(t), cy + R * Math.sin(t)], arch: true }); } return pts; };
@@ -115,8 +123,8 @@ function faceQuad(g, a, b, c, d, out, col, spec, ua, ub, uc, ud) {
 // perimeter (bonnet, roof line, nose, tail, arch lips) by two chamfer facets, so the body stops reading as a slab.
 function extrudeProfile(g, prof, x0, x1, opt, uv) {
   let pts = prof.map(o => o.p);
-  const flags = prof.map(o => o.arch);
-  if (signedArea(pts) < 0) { pts = pts.slice().reverse(); flags.reverse(); }
+  const flags = prof.map(o => o.arch), beds = prof.map(o => !!o.bed);
+  if (signedArea(pts) < 0) { pts = pts.slice().reverse(); flags.reverse(); beds.reverse(); }
   const m = pts.length, bv = opt.bevel || 0;
   // outward edge normals in (z, y) and mitred vertex normals (length-limited so sharp corners don't spike)
   const en = pts.map((A, i) => { const B = pts[(i + 1) % m]; const dz = B[0] - A[0], dy = B[1] - A[1], l = Math.hypot(dz, dy) || 1; return [dy / l, -dz / l]; });
@@ -147,7 +155,7 @@ function extrudeProfile(g, prof, x0, x1, opt, uv) {
     // perimeter face between the two shoulders
     // split across the width so the body warp (crown, bowed ends) can curve it
     const out = [0, n[1], n[0]], NC = isArch ? 1 : 8;
-    for (let c = 0; c < NC; c++) {
+    for (let c = 0; c < NC && !(beds[i] && beds[j]); c++) {
       const xa = -hx + 2 * hx * c / NC, xb = -hx + 2 * hx * (c + 1) / NC;
       const a0 = [xa, A[1], A[0]], a1 = [xb, A[1], A[0]], b0 = [xa, B[1], B[0]], b1 = [xb, B[1], B[0]];
       if (top) faceQuad(g, a0, b0, b1, a1, out, white, spec, uv.top(xa, A[0]), uv.top(xa, B[0]), uv.top(xb, B[0]), uv.top(xb, A[0]));
@@ -232,7 +240,7 @@ function cabin(g, S, hw, uv, glass, roofTex, gg) {
     quadUV(g, [x0, y0, za], [x0, y0, zbb], [x1, y1, zbb], [x1, y1, za], [1, 1, 1], 0.3, [0, y0, (za + zbb) / 2], uvs);
   }
   // rear wiper resting along the bottom of the rear screen (hatches and liftbacks)
-  if (S.kind !== 'sedan' && !(S.boxy && S.kind === 'fastback')) {
+  if (S.kind !== 'sedan' && S.kind !== 'pickup' && !(S.boxy && S.kind === 'fastback')) {
     const dz = S.zRoofR - S.zRearG, dy = S.roof - S.belt, l = Math.hypot(dz, dy), up = [0, dy / l, dz / l], nO = [0, dz / l, -dy / l];
     const at = (x, s, h) => [x, S.belt + up[1] * s + nO[1] * h, S.zRearG + up[2] * s + nO[2] * h];
     const a = 0.2, dir = [Math.cos(a), up[1] * Math.sin(a), up[2] * Math.sin(a)];
@@ -488,6 +496,48 @@ function interior(g, S, hw, spec) {
   for (const dz of [-t / 2, t / 2]) quadUV(g, [A[0], A[1], zh + dz], [B[0], B[1], zh + dz], [C[0], C[1], zh + dz], [D[0], D[1], zh + dz], cage, 0.5, [0, A[1], zh - dz * 40]);
 }
 
+// The pickup's open bed: a black liner (floor and inner walls) inside the extruded body, the back of the cab and the
+// inside of the tailgate in body colour, gold caps on the bed rails, roof bars, and two speaker boxes against the cab
+// facing back. The speaker cones (surround, cone, dust cap) go in their own mesh so they can pump with the bass.
+function pickupBed(g, S, hw, base, lower, gold) {
+  const liner = [0.032, 0.033, 0.037], hx = hw - 0.075, zF = S.zRearG - 0.04, zT = S.zr + 0.065, yF = S.bed, yT = S.tail, zc = (zF + zT) / 2;
+  colStrip(g, [-hx, yF, zT], [hx, yF, zT], [-hx, yF, zF], [hx, yF, zF], 6, liner, 0.12, [0, yF - 3, zc]);
+  for (const sx of [-1, 1]) {
+    for (let k = 0; k < 6; k++) { const za = zF + (zT - zF) * k / 6, zb = zF + (zT - zF) * (k + 1) / 6; quadUV(g, [sx * hx, yF, za], [sx * hx, yF, zb], [sx * hx, yT, zb], [sx * hx, yT, za], liner, 0.12, [sx * (hx + 3), (yF + yT) / 2, (za + zb) / 2]); }
+    // gold caps along the top of the bed walls, and the roof bars on little feet
+    box(g, sx * (hw - 0.045), yT + 0.012, zc, 0.075, 0.024, zT - zF - 0.02, gold, 0.92);
+    const rx = sx * 0.58, ry = S.roof + 0.075;
+    box(g, rx, ry, (S.zRoofF + S.zRoofR) / 2, 0.035, 0.03, S.zRoofF - S.zRoofR - 0.1, [0.03, 0.03, 0.033], 0.45);
+    for (const z of [S.zRoofF - 0.1, S.zRoofR + 0.1]) box(g, rx, S.roof + 0.04, z, 0.05, 0.05, 0.07, [0.03, 0.03, 0.033], 0.3);
+  }
+  colStrip(g, [-hx, yF, zF], [hx, yF, zF], [-hx, yT, zF], [hx, yT, zF], 6, base, 0.5, [0, (yF + yT) / 2, zF + 3]);
+  colStrip(g, [-hx, yF, zT], [hx, yF, zT], [-hx, yT, zT], [hx, yT, zT], 6, base, 0.5, [0, (yF + yT) / 2, zT - 3]);
+  // speaker boxes: carpeted, with two woofers each behind gold rings and a little gold tweeter on top
+  const spk = new Geo(), carpet = [0.022, 0.023, 0.027], rubber = [0.012, 0.012, 0.014], cone = [0.06, 0.062, 0.068];
+  const bw = 0.7, bh = 0.5, bd = 0.42, by = yF + bh / 2, bz = zF - 0.03 - bd / 2, face = bz - bd / 2;
+  const ring = (geo, cx, cy, z, r0, r1, c, sp, ref) => { for (let k = 0; k < 20; k++) { const a0 = k / 20 * 6.2832, a1 = (k + 1) / 20 * 6.2832, P = (a, r) => [cx + Math.cos(a) * r, cy + Math.sin(a) * r, z]; quadUV(geo, P(a0, r0), P(a1, r0), P(a1, r1), P(a0, r1), c, sp, ref); } };
+  for (const sx of [-1, 1]) {
+    const cx = sx * (bw / 2 + 0.02);
+    box(g, cx, by, bz, bw, bh, bd, carpet, 0.04);
+    for (const ox of [-0.17, 0.17]) {
+      const x = cx + ox, y = by - 0.02, ref = [x, y, face + 5];
+      // everything stands proud of the box face (anything behind it would be hidden by it): a gold ring on the face,
+      // a gold band out to the rubber surround, the cone dishing back towards a domed dust cap
+      ring(g, x, y, face - 0.004, 0.128, 0.152, gold, 0.92, ref);
+      for (let k = 0; k < 20; k++) { const a0 = k / 20 * 6.2832, a1 = (k + 1) / 20 * 6.2832, P = (a, z) => [x + Math.cos(a) * 0.129, y + Math.sin(a) * 0.129, z];
+        quadUV(g, P(a0, face - 0.004), P(a1, face - 0.004), P(a1, face - 0.03), P(a0, face - 0.03), gold, 0.92, [x, y, face - 0.017]); }
+      ring(spk, x, y, face - 0.028, 0.1, 0.128, rubber, 0.3, ref);                     // surround
+      for (let k = 0; k < 20; k++) {                                                  // the cone
+        const a0 = k / 20 * 6.2832, a1 = (k + 1) / 20 * 6.2832, P = (a, r, z) => [x + Math.cos(a) * r, y + Math.sin(a) * r, z];
+        quadUV(spk, P(a0, 0.1, face - 0.028), P(a1, 0.1, face - 0.028), P(a1, 0.036, face - 0.009), P(a0, 0.036, face - 0.009), cone, 0.25, ref);
+      }
+      blob(spk, x, y, face - 0.012, 0.04, 0.04, 0.026, [0.015, 0.015, 0.017], 0.85, false); // dust cap
+    }
+    cylUV(g, cx, yF + bh + 0.025, bz - 0.05, 0.035, 0.05, 0.05, 10, gold, 0.92, 'y', true);  // tweeter horn
+  }
+  return spk;
+}
+
 function carGeo(spec, night) {
   const S = SHAPES[spec.shape]; const col = spec.col;
   const base = lin(col.base), roofC = lin(col.roof), lower = lin(col.lower);
@@ -498,7 +548,7 @@ function carGeo(spec, night) {
   extrudeProfile(g, prof.pts, -hw, hw, { spec: 0.6, edgeCol: base, archCol: dark, topTex: true, bevel: 0.075 }, uv);
   cabin(g, S, hw, uv, glass, roofC, gg);
   interior(g, S, hw, spec);
-  for (const z of [prof.fz, prof.rz]) fender(g, z, hw, S.archR, S.flares ? 0.1 : 0.065, base);
+  for (const z of [prof.fz, prof.rz]) fender(g, z, hw, S.archR, S.flares ? 0.1 : 0.065, S.kind === 'pickup' ? lower : base); // the Cross has black plastic arches
   // side skirts
   for (const sx of [-1, 1]) box(g, sx * (hw + 0.02), 0.28, (prof.fz + prof.rz) / 2, 0.05, 0.08, (prof.fz - prof.rz) - 2 * S.archR - 0.12, lower, 0.3);
   // front bumper, splitter, grille, intakes, fog lights, tow hook
@@ -555,7 +605,9 @@ function carGeo(spec, night) {
     for (const sx of [-1, 1]) box(g, sx * 0.5, S.hoodF + 0.1, S.zf - 0.15, 0.3, 0.06, 0.14, black, 0.2); // front wing blades
   }
   // roof intake: a forward-facing scoop that blends back into the roof
-  if (S.scoop || spec.id === 'delta') scoop(g, S.roof + 0.02, S.zRoofF - 0.25, S.zRoofF - 0.72, 0.44, 0.11, roofC, 0.5);
+  let spk = null;
+  if (S.kind === 'pickup') spk = pickupBed(g, S, hw, base, lower, lin(col.gold || '#d4a62a'));
+  else if (S.scoop || spec.id === 'delta') scoop(g, S.roof + 0.02, S.zRoofF - 0.25, S.zRoofF - 0.72, 0.44, 0.11, roofC, 0.5);
   else scoop(g, S.roof + 0.02, S.zRoofF - 0.22, S.zRoofF - 0.55, 0.32, 0.075, black, 0.25);
   // antenna
   box(g, 0.25, S.roof + 0.2, S.zRoofR + 0.25, 0.012, 0.4, 0.012, black, 0);
@@ -591,6 +643,22 @@ function carGeo(spec, night) {
     disc(lf, x - sx * 0.035, y, z + 0.012, 0.056, hl, 1);
     disc(lf, x + sx * 0.1, y, z + 0.012, 0.045, sc(hl, 0.85), 1);
     rect(lf, x + sx * 0.15, y - 0.05, x + sx * 0.195, y + 0.05, z + 0.012, sc(amber, 0.45), 1);
+    if (S.kind === 'pickup') {
+      // tall lamps on the corners of the bed: red cells on top, amber and clear lenses below, one dark cover
+      const xo = sx * (hw - 0.05), xi = sx * (hw - 0.23), y0 = S.tail - 0.4, y1 = S.tail - 0.07, xm = (xo + xi) / 2;
+      prism(g, rrect(Math.min(xo, xi) - 0.012, Math.max(xo, xi) + 0.012, zr - 0.003, zr + 0.027, 0.01), y0 - 0.012, y1 + 0.012, [0.012, 0.013, 0.015], 0.9);
+      rect(lr, xo, y1 - 0.2, xi, y1, zr - 0.004, sc(red, 0.3), -1);
+      for (let c = 0; c < 2; c++) for (let r = 0; r < 3; r++) {
+        const xa = xo - sx * (0.012 + c * 0.08), xb = xa - sx * 0.074, ya = y1 - 0.195 + r * 0.064;
+        rect(lr, xa, ya, xb, ya + 0.058, zr - 0.006, sc(red, (c + r) % 2 ? 0.78 : 1), -1);
+        rect(lr, xa - sx * 0.016, ya + 0.014, xb + sx * 0.016, ya + 0.044, zr - 0.007, sc(red, 1.15), -1);
+      }
+      const lensR = (ya, yb, c) => quadUV(g, [xo, ya, zr - 0.005], [xi, ya, zr - 0.005], [xi, yb, zr - 0.005], [xo, yb, zr - 0.005], c, 0.95, [xm, (ya + yb) / 2, zr + 5]);
+      lensR(y0 + 0.07, y1 - 0.205, lin('#c86a12'));
+      lensR(y0, y0 + 0.065, lin('#b9bcc0'));
+      rect(lens, xo + sx * 0.004, y0 - 0.006, xi - sx * 0.004, y1 + 0.006, zr - 0.013, [0.42, 0.1, 0.09], -1);
+      continue;
+    }
     // tail: a glossy housing; outboard a red lamp made of reflector cells (the only part that glows), then an amber
     // indicator and a clear reverse lamp that only catch the light, all under one clear cover
     const xo = sx * (hw - 0.06), xi = sx * (hw - 0.42);
@@ -618,10 +686,10 @@ function carGeo(spec, night) {
     fl.quad([ex - ca, 0.3 - sa, ez], [ex + ca, 0.3 + sa, ez], [ex + ca * 0.3, 0.3 + sa * 0.3, ez - 0.55], [ex - ca * 0.3, 0.3 - sa * 0.3, ez - 0.55], lin('#ff9a3a'), 0, [ex, 0.3, ez + 3]);
   }
   for (let i = 3; i < lens.c.length; i += 4) lens.c[i] = 0.95;
-  warpCar([g, gg, lf, lr, fl, lens], S);
+  warpCar(spk ? [g, gg, lf, lr, fl, lens, spk] : [g, gg, lf, lr, fl, lens], S);
   smoothNormals(g, 36); smoothNormals(gg, 36);
   curveSides(g);
-  return { body: g, glass: gg, lens, lightF: lf, lightR: lr, flame: fl, shape: S, fz: prof.fz, rz: prof.rz };
+  return { body: g, glass: gg, lens, lightF: lf, lightR: lr, flame: fl, spk, shape: S, fz: prof.fz, rz: prof.rz };
 }
 
 // ---------- wheels ----------
@@ -797,6 +865,14 @@ function liveryCanvas(spec) {
         text('TORQUE OIL', -0.2, 0.4, 22, '#1d1f22');
         roundel(0.35, 0.78);
         break;
+      case 'saveiro':
+        // Cross trim: black cladding along the sills, a gold pinstripe at the shoulder, the names on the bed and door
+        band(0.12, 0.4, col.lower); band(0.4, 0.412, col.gold);
+        band(0.86, 0.872, col.gold);
+        // (the bed side above the rear arch is only ~25 cm tall; the door takes the name)
+        text('CROSS', -1.45, 0.93, 30, col.gold, { skew: 0 });
+        text('SAVEIRO', 0.35, 0.62, 26, '#2a2c30', { skew: 0 });
+        break;
       case 'kwattro':
         band(0.3, 0.42, col.stripe); band(0.42, 0.46, col.stripe2);
         text('QUATTRO', 0.2, 0.68, 44, col.stripe);
@@ -865,6 +941,13 @@ function liveryCanvas(spec) {
       if ('letterSpacing' in g) g.letterSpacing = (sp || 0) + 'px';
       g.fillText(str, 0, 0); g.restore();
     };
+    const pickup = S.kind === 'pickup';
+    if (pickup) {
+      // a pickup's tailgate: the name pressed big across it, a gold CROSS badge, the shut line round the whole gate
+      label('SAVEIRO', 0, 0.782, 0.085, 'rgba(255,255,255,0.7)', 800, 9);
+      label('SAVEIRO', 0, 0.79, 0.085, '#2a2c30', 800, 9);
+      label('CROSS', -(hw - 0.42), 0.682, 0.036, col.gold || '#d4a62a', 800, 3);
+    } else {
     // black garnish between the lamps with the make in silver letters
     g.fillStyle = '#111315'; g.fillRect(RX(gw), RY(ty + 0.04), RX(-gw) - RX(gw), RY(ty - 0.06) - RY(ty + 0.04));
     g.fillStyle = 'rgba(255,255,255,0.08)'; g.fillRect(RX(gw), RY(ty + 0.04), RX(-gw) - RX(gw), 2);
@@ -879,9 +962,10 @@ function liveryCanvas(spec) {
     };
     const acc = col.stripe === '#f2f2ee' ? col.base : col.stripe;
     stick(hw - 0.25, 'SIDEWAYS', '#ffffff', acc); stick(-(hw - 0.25), 'TORQUE OIL', '#16181b', '#f2f2ee');
+    }
     // tailgate (or boot lid) shut lines, around the lamps, and a lock
     g.lineCap = 'round'; g.lineJoin = 'round';
-    const lid = S.kind === 'sedan' ? [[gw + 0.02, S.deck - 0.03], [gw + 0.02, ty - 0.1], [-gw - 0.02, ty - 0.1], [-gw - 0.02, S.deck - 0.03]]
+    const lid = pickup ? [[hw - 0.26, 1.05], [hw - 0.26, 0.52], [-(hw - 0.26), 0.52], [-(hw - 0.26), 1.05]] : S.kind === 'sedan' ? [[gw + 0.02, S.deck - 0.03], [gw + 0.02, ty - 0.1], [-gw - 0.02, ty - 0.1], [-gw - 0.02, S.deck - 0.03]]
       : [[hw - 0.1, 1.05], [hw - 0.1, ty + 0.1], [gw + 0.02, ty + 0.1], [gw + 0.02, ty - 0.11], [-gw - 0.02, ty - 0.11], [-gw - 0.02, ty + 0.1], [-(hw - 0.1), ty + 0.1], [-(hw - 0.1), 1.05]];
     for (const [w, c, o] of [[3, 'rgba(0,0,0,0.38)', 0], [1, 'rgba(255,255,255,0.2)', 1.6]]) {
       g.lineWidth = w; g.strokeStyle = c; g.beginPath();
@@ -914,6 +998,16 @@ function liveryCanvas(spec) {
     case 'pejo': lane(0.5, col.stripe, S.zW, 2.3); lane(0.2, col.stripe2, S.zW, 2.3); break;
     case 'kwattro': lane(0.36, col.stripe, S.zW, 2.3); lane(0.08, col.stripe2, S.zW, 2.3); break;
     case 'selica': lane(0.42, col.stripe, S.zW, 2.3); lane(0.06, col.stripe2, S.zW, 2.3); break;
+    case 'saveiro': {
+      // a little gold crown on the bonnet, the No. 1 inside it
+      const cx = TX((S.zf + S.zW) / 2 + 0.05), cy = TY(0);
+      g.save(); g.translate(cx, cy); g.rotate(-Math.PI / 2); g.scale(1.6, 1.6);
+      g.fillStyle = col.gold; g.beginPath();
+      g.moveTo(-34, 18); g.lineTo(-38, -16); g.lineTo(-18, 2); g.lineTo(0, -24); g.lineTo(18, 2); g.lineTo(38, -16); g.lineTo(34, 18); g.closePath(); g.fill();
+      g.fillStyle = '#1b1c1f'; g.font = `900 22px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('1', 0, 6);
+      g.restore();
+      break;
+    }
   }
   // bonnet shut lines and the scuttle in front of the screen
   g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineCap = 'round';
@@ -924,6 +1018,7 @@ function liveryCanvas(spec) {
   // roof number
   const rx = TX((S.zRoofF + S.zRoofR) / 2), ry = TY(0);
   g.save(); g.translate(rx, ry); g.rotate(Math.PI / 2);
+  if (spec.bonus) g.scale(0, 0);
   g.fillStyle = '#ffffff'; g.fillRect(-60, -46, 120, 92);
   g.fillStyle = '#111'; g.font = `900 84px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(spec.num), 0, 4);
   g.restore();
@@ -932,15 +1027,21 @@ function liveryCanvas(spec) {
   g.fillStyle = col.text === '#ffffff' ? '#ffd23a' : col.text; g.font = `800 34px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillText(spec.name.split(' ')[0].toUpperCase() + ' · SIDEWAYS RALLY TEAM', 320, AT.ex + 26);
   g.fillStyle = '#f4f2ea'; g.fillRect(676, AT.ex, 348, 48);
-  g.fillStyle = '#111'; g.font = `800 30px ${FONT}`; g.fillText('SIDEWAYS RALLY ' + spec.num, 850, AT.ex + 26);
+  if (spec.bonus) {
+    // a Mercosur plate: blue band with the country on top, black letters
+    g.fillStyle = '#1d3f95'; g.fillRect(676, AT.ex, 348, 11);
+    g.fillStyle = '#ffffff'; g.font = `800 9px ${FONT}`; g.fillText('REPÚBLICA ARGENTINA', 850, AT.ex + 6);
+    g.fillStyle = '#111'; g.font = `800 32px ${FONT}`; g.fillText('AE 001 OP', 850, AT.ex + 31);
+  } else { g.fillStyle = '#111'; g.font = `800 30px ${FONT}`; g.fillText('SIDEWAYS RALLY ' + spec.num, 850, AT.ex + 26); }
   g.fillStyle = '#ffffff'; g.fillRect(636, AT.ex + 50, 204, 50);
   g.fillStyle = spec.col.stripe === '#f2f2ee' ? spec.col.base : spec.col.stripe; g.font = `800 26px ${FONT}`; g.fillText('SIDEWAYS', 738, AT.ex + 76);
   // crew names for the rear side windows: dark sticker band, a small flag, white letters (invented names)
   const CREW = { foca: 'M. KORPELA · T. LAHTI', impressa: 'A. McLEOD · D. FINDLAY', lancha: 'T. MAKELA · R. MANNILA', delta: 'J. KANKARE · P. VIRTA',
-    pejo: 'A. VATAJA · T. HARJU', kwattro: 'K. ERIKSEN · L. HOLM', selica: 'M. TORRES · L. MOYANO' };
+    pejo: 'A. VATAJA · T. HARJU', kwattro: 'K. ERIKSEN · L. HOLM', selica: 'M. TORRES · L. MOYANO', saveiro: 'No. 1 ON THIS ROAD' };
   g.fillStyle = '#0c0f13'; g.fillRect(0, AT.ex + 52, 630, 46);
   const flag = [['#003580', '#ffffff'], ['#ffffff', '#003580'], ['#d52b1e', '#ffffff']][spec.num % 3];
-  g.fillStyle = flag[0]; g.fillRect(12, AT.ex + 62, 40, 26); g.fillStyle = flag[1]; g.fillRect(24, AT.ex + 62, 7, 26); g.fillRect(12, AT.ex + 72, 40, 6);
+  if (spec.bonus) { g.fillStyle = '#74acdf'; g.fillRect(12, AT.ex + 62, 40, 26); g.fillStyle = '#ffffff'; g.fillRect(12, AT.ex + 70.5, 40, 9); g.fillStyle = '#f6b40e'; g.beginPath(); g.arc(32, AT.ex + 75, 3, 0, 7); g.fill(); }
+  else { g.fillStyle = flag[0]; g.fillRect(12, AT.ex + 62, 40, 26); g.fillStyle = flag[1]; g.fillRect(24, AT.ex + 62, 7, 26); g.fillRect(12, AT.ex + 72, 40, 6); }
   g.fillStyle = '#f4f2ea'; g.font = `800 30px ${FONT}`; g.textAlign = 'left'; g.textBaseline = 'middle';
   g.fillText(CREW[spec.id] || 'SIDEWAYS RALLY TEAM', 64, AT.ex + 76);
   // white texel
@@ -953,6 +1054,7 @@ function buildCar(R, spec, night) {
   return {
     spec, shape: cg.shape, fz: cg.fz, rz: cg.rz,
     body: R.mesh(cg.body), glass: R.mesh(cg.glass), lens: R.mesh(cg.lens), lightF: R.mesh(cg.lightF), lightR: R.mesh(cg.lightR), flame: R.mesh(cg.flame),
+    spk: cg.spk ? R.mesh(cg.spk) : null,
     tex: R.texture(liveryCanvas(spec)),
     wheel: R.mesh((() => { const w = wheelGeo(spec); smoothNormals(w, 30); return w; })()), wheelBlur: R.mesh(wheelBlurGeo(spec)), caliper: R.mesh(caliperGeo(spec)),
     tyreTex: R.texture(tyreCanvas()),
