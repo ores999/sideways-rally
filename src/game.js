@@ -66,7 +66,7 @@ function loadPB(key, car) {
   try { r.ghost = r.q ? unpackGhost(b64d(r.q)).g : r.g ? dec(r.g) : null; } catch (e) { return null; }
   return r.ghost ? r : null;
 }
-function stageBest(key) { let best = null; for (const c of C.CARS) { const r = store.get(pbKey(key, c.id), null); if (r && (!best || r.t < best.t)) best = { t: r.t, car: c.id }; } return best; }
+function stageBest(key) { let best = null; for (const c of C.CARS) { if (c.bonus) continue; const r = store.get(pbKey(key, c.id), null); if (r && (!best || r.t < best.t)) best = { t: r.t, car: c.id }; } return best; }
 // earlier versions kept one best per stage (whatever the car): it becomes that car's best
 for (const st of C.STAGES) { const r = store.get('pb.' + st.id, null); if (r && r.t) { if (r.car && !store.get(pbKey(st.id, r.car), null)) store.set(pbKey(st.id, r.car), r); store.del('pb.' + st.id); } }
 const carById = id => C.CARS.find(c => c.id === id);
@@ -774,7 +774,7 @@ async function onlineSync() {
   const withG = !online.noGhost;
   const all = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && !isBonus(carById(e.c)) && (!sent.has(id(e)) || (withG && !sentG.has(id(e)) && ownGhost(e))));
   const todo = all.slice(0, withG ? 25 : 200);
-  if (!todo.length) return;
+  if (!todo.length) { syncBonus(sent, id); return; }
   syncing = true;
   let retry = false;
   try {
@@ -792,8 +792,24 @@ async function onlineSync() {
     online.status = 'ok'; renderTimes();
     if (settings.leadGhost && W) onlineGhost(mapKey(W.st.key)); // your new run may be the No. 1 now
     retry = all.length > todo.length;
+    if (!retry) syncBonus(sent, id);
   } catch (e) { online.status = 'error'; }
   finally { syncing = false; if (retry) setTimeout(onlineSync, 1500); }
+}
+// Saveiro times go up in a request of their own and without ghosts: a server whose car check doesn't list the
+// Saveiro yet (online/supabase.sql not updated) refuses them, and that must not hold back anyone's real times
+async function syncBonus(sent, id) {
+  if (online.noBonus || !settings.name) return;
+  const me = settings.name.toLowerCase();
+  const todo = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && isBonus(carById(e.c)) && !sent.has(id(e))).slice(0, 50);
+  if (!todo.length) return;
+  try {
+    const r = await fetch(ONLINE.url.replace(/\/$/, '') + '/rest/v1/times', { method: 'POST', headers: onlineHeaders(true),
+      body: JSON.stringify(todo.map(e => ({ name: e.n, stage: e.k, car: e.c, time: +e.t.toFixed(3), splits: (e.s || []).slice(0, 4).map(x => +(+x).toFixed(3)) }))) });
+    if (!r.ok) { online.noBonus = true; return; }
+    for (const e of todo) { sent.add(id(e)); online.cache.delete(mapKey(e.k)); }
+    store.set('sent', [...sent].slice(-3000)); renderTimes();
+  } catch (e) { /* offline: next time */ }
 }
 // ---- the No. 1's ghost: the fastest recorded run on this road (yours, a friend's challenge, or the online board's),
 // drawn in gold with a name tag when the "No. 1 ghost" option is on ----
@@ -843,7 +859,7 @@ function renderTimes() {
     const keys = [...new Set([key, mapKey(curKeyMenu()), ...b.map(e => mapKey(e.k))])].filter(k => C.stageDef(k));
     keys.sort((a, c) => (a === key ? -1 : c === key ? 1 : 0) || C.stageTitle(C.stageDef(a)).localeCompare(C.stageTitle(C.stageDef(c))));
     for (const k of keys) { const o = el('option', null, C.stageTitle(C.stageDef(k)) + (/^daily-/.test(k) ? ' · ' + k.slice(12, 14) + '/' + k.slice(10, 12) : '')); o.value = k; o.selected = k === key; ss.append(o); }
-    for (const [v, t] of [['all', 'All cars'], ...C.CARS.filter(c => !c.bonus).map(c => [c.id, shortCar(c.id)])]) { const o = el('option', null, t); o.value = v; o.selected = v === timesCar; cs.append(o); }
+    for (const [v, t] of [['all', 'All cars'], ...C.CARS.map(c => [c.id, shortCar(c.id)])]) { const o = el('option', null, t); o.value = v; o.selected = v === timesCar; cs.append(o); }
     ss.addEventListener('change', () => { timesStage = ss.value; renderTimes(); });
     ss.title = 'Day, night and rain runs of a stage share its table';
     cs.addEventListener('change', () => { timesCar = cs.value; renderTimes(); });
@@ -862,13 +878,18 @@ function renderTimes() {
     if (!rows.length) { box.append(el('p', 'empty', 'No times on this stage yet. Set one, or open a friend\'s link.')); continue; }
     const tb = el('table', 'tt board'), hr = el('tr');
     ['', 'Driver', 'Car', 'Time', 'Gap'].forEach(h => hr.append(el('th', null, h))); tb.append(hr);
-    const lead = rows[0].t, me = driverName().toLowerCase();
-    rows.forEach((e, i) => {
-      const tr = el('tr', e.ai ? 'ai' : e.n.toLowerCase() === me ? 'me' : '');
+    // the Saveiro's times are listed where they fall, gold and without a place: they never count, so places and gaps
+    // run from the best time in a real car
+    const counted = rows.filter(e => !isBonus(carById(e.c))), lead = (counted[0] || rows[0]).t, me = driverName().toLowerCase();
+    let place = 0;
+    rows.forEach(e => {
+      const bonus = isBonus(carById(e.c));
+      const tr = el('tr', (bonus ? 'bonus ' : '') + (e.ai ? 'ai' : e.n.toLowerCase() === me ? 'me' : ''));
       // night and rain runs share the table with a small tag, so you can see where a time came from
       const cond = e.k && /-(night|rain)$/.test(e.k) ? C.condName(C.stageDef(e.k)) : '';
-      const carTd = el('td', null, shortCar(e.c)); if (cond) carTd.append(el('span', 'cond', cond));
-      tr.append(el('td', null, String(i + 1)), el('td', null, e.n), carTd, el('td', null, fmt(e.t)), el('td', null, i ? '+' + (e.t - lead).toFixed(2) : '—'));
+      const carTd = el('td', null, shortCar(e.c)); if (cond) carTd.append(el('span', 'cond', cond)); if (bonus) carTd.append(el('span', 'cond nc', 'doesn\'t count'));
+      const first = !bonus && place === 0, d = e.t - lead;
+      tr.append(el('td', null, bonus ? '—' : String(++place)), el('td', null, e.n), carTd, el('td', null, fmt(e.t)), el('td', null, first ? '—' : (d < 0 ? '−' : '+') + Math.abs(d).toFixed(2)));
       tb.append(tr);
     });
     box.append(tb);
@@ -975,20 +996,20 @@ function finish() {
   const ghost = new Float32Array(ghostRec);
   const bonus = isBonus(P);
   lastRun = bonus ? null : { key, car: P.id, t: finishT, splits: splitsHit.slice(), ghost };
-  if (bonus) { /* the Saveiro's times never count: no best, no medal, nothing on the board */ }
-  else if (isPB) {
+  // the Saveiro's times go on the board (marked, without a place) but never count: no medal, no record, no No. 1
+  if (isPB) {
     store.set(pbKey(key, P.id), { t: finishT, car: P.id, splits: splitsHit.slice(), q: b64e(packGhost(ghost)), at: Date.now() });
     pb = { t: finishT, car: P.id, splits: splitsHit.slice(), ghost }; pb.sArr = refCurve(ghost);
   }
   if (!bonus && medal > store.get('medal.' + key, 0)) store.set('medal.' + key, medal);
-  if (!bonus && settings.name && boardAdd([{ n: settings.name, k: key, c: P.id, t: finishT, s: splitsHit.slice(), d: Date.now() }])) onlineSync();
+  if (settings.name && boardAdd([{ n: settings.name, k: key, c: P.id, t: finishT, s: splitsHit.slice(), d: Date.now() }])) onlineSync();
   rallyLeg = rallyOn() ? rallyFinishLeg(finishT) : null;
   center(`<div class="mid yel">Finish</div><div class="sub">${fmt(finishT)}</div>`, 2.4);
   sfx.beep(880, 0.12); setTimeout(() => sfx.beep(1320, 0.25), 140);
   const beat = chal && finishT < chal.t;
   say(rallyLeg ? (rallyLeg.pos === 1 ? 'Stop. Fastest time. Mega.' : 'Stop. Good stage.') : beat ? `Stop. We beat ${chal.n}.` : medal === 3 ? 'Stage win. Mega.' : medal ? 'Stop. Good stage.' : 'Stop. We go again.');
-  buildResults(old, !bonus && isPB, medal, oldBest);
-  if (bonus) { $('rPB').hidden = false; $('rPB').textContent = 'Saveiro run · doesn\'t count'; $('rShare').hidden = true; }
+  buildResults(old, isPB, medal, oldBest);
+  if (bonus) { $('rPB').hidden = false; $('rPB').textContent = (isPB ? 'New best in the Saveiro' : 'Saveiro run') + ' · on the board, doesn\'t count for No. 1'; $('rShare').hidden = true; }
   else loadLead();
 }
 function buildResults(old, isPB, medal, oldBest) {

@@ -7,7 +7,7 @@ create table if not exists public.times (
   created_at timestamptz not null default now(),
   name text not null check (char_length(name) between 1 and 20),
   stage text not null check (stage ~ '^(pine|frost|mesa|forest)(-r)?(-night|-rain)?$' or stage ~ '^daily-[0-9]{8}$'),
-  car text not null check (car in ('foca', 'impressa', 'lancha', 'delta', 'pejo', 'kwattro', 'selica')),
+  car text not null check (car in ('foca', 'impressa', 'lancha', 'delta', 'pejo', 'kwattro', 'selica', 'saveiro')),
   time real not null check (time > 20 and time < 1200),
   splits real[] not null default '{}' check (cardinality(splits) <= 4)
 );
@@ -31,3 +31,8 @@ grant select on public.best_times to anon, authenticated;
 -- 2026-10 · the No. 1's ghost. Run this once more (it only adds a column): each time can carry its run as a packed,
 -- deflated, base64url ghost (3–6 KB), so the fastest driver on a road can be raced the way they drove it.
 alter table public.times add column if not exists ghost text check (ghost is null or char_length(ghost) < 40000);
+
+-- 2026-10 · the Saveiro's times are listed on the board (they never count for No. 1, the game sees to that).
+-- Lets the bonus car through the car check.
+alter table public.times drop constraint if exists times_car_check;
+alter table public.times add constraint times_car_check check (car in ('foca', 'impressa', 'lancha', 'delta', 'pejo', 'kwattro', 'selica', 'saveiro'));
