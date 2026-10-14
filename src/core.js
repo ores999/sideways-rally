@@ -181,7 +181,7 @@ const STAGES = [
     ] },
   { id: 'frost', kind: 'frost', name: 'Frostvik', region: 'Northern Snow Bowl', surface: 'Snow', tag: 'Snowbanks, ice and dusk',
     grip: 0.74, offGrip: 0.5, offDrag: 2.2, tyreB: 7.5, hw: 4.3, h0: 1.2, seed: 2207, blend: 26, rival: 'Kalle Rovanpeara',
-    bank: 1.3, bankK: 60, bankDamp: 5, bankScrub: 0.5, night: true, snow: true,
+    bank: 1.3, bankDrag: 0.9, night: true, snow: true,
     elev: { a1: 5, l1: 200, p1: 1.1, a2: 2.0, l2: 75, p2: 0.2 },
     segs: [
       ['S', 140], ['R', 5, 45], ['S', 60], ['L', 4, 70], ['S', 90], ['C', 1.4], ['S', 70], ['R', 3, 90, 'dc'],
@@ -1069,8 +1069,16 @@ function collide(W, c) {
 function softWalls(W, c, dt) {
   const st = W.st, T = W.T;
   let off = null, k = 0, damp = 0, scrub = 0, hard = 2.2;
-  if (st.bank) { off = st.bank; k = st.bankK; damp = st.bankDamp; scrub = st.bankScrub; }
-  else if (T.walls.length) {
+  if (st.bank) {
+    // snowbanks are deep snow, not a wall: the further the car ploughs in, the harder they slow it, but they never
+    // push it back or bounce it onto the road (that read as being steered by an invisible rail)
+    const p = Math.abs(c.lat) - (T.hw + st.bank);
+    c.bankP = Math.max(0, p);
+    // strongest through the bank itself (its crest is ~1 m in), lighter in the open snow beyond it
+    if (p > 0) { const sc = Math.exp(-st.bankDrag * sstep(0, 1, p) * (1 - 0.65 * sstep(2, 3.4, p)) * dt); c.vx *= sc; c.vz *= sc; }
+    return;
+  }
+  if (T.walls.length) {
     for (const w of T.walls) if (c.s >= w.s0 && c.s <= w.s1) { off = w.off; k = 260; damp = 16; scrub = 1.2; hard = 0.7; }
   }
   c.bankP = 0;
