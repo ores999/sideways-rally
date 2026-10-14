@@ -46,10 +46,11 @@ function pushTri(g, a, b, c, n, col, spec, ua, ub, uc) {
   for (const v of [a, b, c]) { g.p.push(v[0], v[1], v[2]); g.n.push(n[0], n[1], n[2]); g.c.push(col[0], col[1], col[2], spec); }
   g.u.push(ua[0], ua[1], ub[0], ub[1], uc[0], uc[1]);
 }
-const WHITE_UV = [0.995, 0.004];
-
-// Atlas layout (1024 px): right side 0..220, left side 232..452, top view 470..912, extras 920..1024
-const AT = { side: 220, rY: 0, lY: 232, tY: 470, tH: 442, ex: 924, px: 232 };
+// Atlas layout (1024 × 1280 units, painted at 2×): right side 0..220, left side 232..452, top view 470..912,
+// extras 920..1024, the tail panel 1030..1250 (seen from behind, the car's left on the left), a white texel at the bottom
+const AT = { side: 220, rY: 0, lY: 232, tY: 470, tH: 442, ex: 924, px: 232, rr: 1030, rH: 220, H: 1280 };
+const V = y => 1 - y / AT.H;
+const WHITE_UV = [0.995, V(1276)];
 function mkUV(S) {
   const L = 4.4, z0 = -2.2, yTop = 1.05, yb = 0.12;
   return {
@@ -57,9 +58,11 @@ function mkUV(S) {
       const fx = side > 0 ? (2.2 - z) / L : (z - z0) / L;
       const fy = (yTop - y) / (yTop - yb);
       const top = side > 0 ? AT.lY : AT.rY;
-      return [fx, 1 - (top + fy * AT.side) / 1024];
+      return [fx, V(top + fy * AT.side)];
     },
-    top(x, z) { const fx = (z - z0) / L; const fy = (0.95 - x) / 1.9; return [fx, 1 - (AT.tY + fy * AT.tH) / 1024]; },
+    top(x, z) { const fx = (z - z0) / L; const fy = (0.95 - x) / 1.9; return [fx, V(AT.tY + fy * AT.tH)]; },
+    // the tail panel: u across the car from its left (+x), v down from the top of the tail
+    rear(x, y) { return [(S.W / 2 - x) / S.W, V(AT.rr + (1.05 - y) / 0.85 * AT.rH)]; },
   };
 }
 
@@ -140,7 +143,7 @@ function extrudeProfile(g, prof, x0, x1, opt, uv) {
     const j = (i + 1) % m, A = pts[i], B = pts[j], n = en[i];
     const isArch = flags[i] && flags[j];
     const col = isArch ? opt.archCol : opt.edgeCol, spec = isArch ? 0 : opt.spec;
-    const top = !isArch && n[1] > 0.55 && opt.topTex;
+    const top = !isArch && n[1] > 0.55 && opt.topTex, back = !isArch && !top && n[0] < -0.5 && opt.topTex;
     // perimeter face between the two shoulders
     // split across the width so the body warp (crown, bowed ends) can curve it
     const out = [0, n[1], n[0]], NC = isArch ? 1 : 8;
@@ -148,6 +151,7 @@ function extrudeProfile(g, prof, x0, x1, opt, uv) {
       const xa = -hx + 2 * hx * c / NC, xb = -hx + 2 * hx * (c + 1) / NC;
       const a0 = [xa, A[1], A[0]], a1 = [xb, A[1], A[0]], b0 = [xa, B[1], B[0]], b1 = [xb, B[1], B[0]];
       if (top) faceQuad(g, a0, b0, b1, a1, out, white, spec, uv.top(xa, A[0]), uv.top(xa, B[0]), uv.top(xb, B[0]), uv.top(xb, A[0]));
+      else if (back) faceQuad(g, a0, b0, b1, a1, out, white, spec, uv.rear(xa, A[1]), uv.rear(xa, B[1]), uv.rear(xb, B[1]), uv.rear(xb, A[1]));
       else faceQuad(g, a0, b0, b1, a1, out, col, spec, WHITE_UV, WHITE_UV, WHITE_UV, WHITE_UV);
     }
     if (!bv) continue;
@@ -219,7 +223,7 @@ function cabin(g, S, hw, uv, glass, roofTex, gg) {
     }
   }
   // crew-name stickers along the bottom of the side glass, behind the B-pillar
-  const nv0 = 1 - (AT.ex + 52) / 1024, nv1 = 1 - (AT.ex + 98) / 1024;
+  const nv0 = V(AT.ex + 52), nv1 = V(AT.ex + 98);
   const zb2 = (S.zRoofF + S.zRoofR) / 2 + 0.02, len = Math.min(0.62, Math.max(0.3, zb2 - S.zRearG - 0.1));
   for (const side of [-1, 1]) {
     const y0 = S.belt + 0.03, y1 = S.belt + 0.085, x0 = side * (wAt(y0) + 0.006), x1 = side * (wAt(y1) + 0.006);
@@ -227,14 +231,32 @@ function cabin(g, S, hw, uv, glass, roofTex, gg) {
     const uvs = side > 0 ? [[0, nv1], [0.615, nv1], [0.615, nv0], [0, nv0]] : [[0.615, nv1], [0, nv1], [0, nv0], [0.615, nv0]];
     quadUV(g, [x0, y0, za], [x0, y0, zbb], [x1, y1, zbb], [x1, y1, za], [1, 1, 1], 0.3, [0, y0, (za + zbb) / 2], uvs);
   }
+  // rear wiper resting along the bottom of the rear screen (hatches and liftbacks)
+  if (S.kind !== 'sedan' && !(S.boxy && S.kind === 'fastback')) {
+    const dz = S.zRoofR - S.zRearG, dy = S.roof - S.belt, l = Math.hypot(dz, dy), up = [0, dy / l, dz / l], nO = [0, dz / l, -dy / l];
+    const at = (x, s, h) => [x, S.belt + up[1] * s + nO[1] * h, S.zRearG + up[2] * s + nO[2] * h];
+    const a = 0.2, dir = [Math.cos(a), up[1] * Math.sin(a), up[2] * Math.sin(a)];
+    const sd = [nO[1] * dir[2] - nO[2] * dir[1], nO[2] * dir[0] - nO[0] * dir[2], nO[0] * dir[1] - nO[1] * dir[0]];
+    const p0 = at(-0.04, 0.07, 0.012), arm = [p0[0] + dir[0] * 0.44, p0[1] + dir[1] * 0.44, p0[2] + dir[2] * 0.44];
+    const blk = [0.018, 0.019, 0.021];
+    bar(g, p0, arm, sd, nO, 0.018, 0.012, blk, 0.35);
+    const b0 = at(-0.04, 0.07, 0.003), m = (k, o) => [b0[0] + dir[0] * k + sd[0] * o, b0[1] + dir[1] * k + sd[1] * o, b0[2] + dir[2] * k + sd[2] * o];
+    bar(g, m(0.02, 0.016), m(0.5, 0.016), sd, nO, 0.012, 0.01, blk, 0.2);
+    cylUV(g, p0[0], p0[1], p0[2], 0.022, 0.022, 0.02, 8, blk, 0.4, 'y', true);
+  }
   // sunstrip on the windscreen top
   const s0 = 0.82, s1 = 0.97;
   const lerpP = (t) => [prof[0][0] + (prof[1][0] - prof[0][0]) * t, prof[0][1] + (prof[1][1] - prof[0][1]) * t];
   const q0 = lerpP(s0), q1 = lerpP(s1);
   const e = 0.006;
-  const sv0 = 1 - (AT.ex + 4) / 1024, sv1 = 1 - (AT.ex + 44) / 1024;
+  const sv0 = V(AT.ex + 4), sv1 = V(AT.ex + 44);
   colStrip(g, [-wAt(q0[1]) * 0.98, q0[1] + e, q0[0] + e], [wAt(q0[1]) * 0.98, q0[1] + e, q0[0] + e], [-wAt(q1[1]) * 0.98, q1[1] + e, q1[0] + e], [wAt(q1[1]) * 0.98, q1[1] + e, q1[0] + e], 6, [1, 1, 1], 0.2, [0, 0, -5],
     (t, ed) => [0.62 * t, ed ? sv0 : sv1]);
+  // the same banner across the top of the rear screen, read from behind (so it starts on the car's left)
+  const lerpR = (t) => [prof[2][0] + (prof[3][0] - prof[2][0]) * t, prof[2][1] + (prof[3][1] - prof[2][1]) * t];
+  const p0 = lerpR(0.04), p1 = lerpR(0.22);
+  colStrip(g, [wAt(p0[1]) * 0.96, p0[1] + e, p0[0] - e], [-wAt(p0[1]) * 0.96, p0[1] + e, p0[0] - e], [wAt(p1[1]) * 0.96, p1[1] + e, p1[0] - e], [-wAt(p1[1]) * 0.96, p1[1] + e, p1[0] - e], 6, [1, 1, 1], 0.2, [0, 0, 5],
+    (t, ed) => [0.62 * t, ed ? sv1 : sv0]);
 }
 
 // fender: a body-colour blister that swells out of the side panel around each arch and ends in a dark lip over the
@@ -360,6 +382,14 @@ function curveSides(g) {
     N[i] = sx / l; N[i + 1] = ny / l; N[i + 2] = nz / l;
   }
 }
+// a thin bar from p to q: w wide along `side`, h thick along `up` (wiper arms)
+function bar(g, p, q, side, up, w, h, col, spec) {
+  const o = (v, a, b) => [v[0] + side[0] * a + up[0] * b, v[1] + side[1] * a + up[1] * b, v[2] + side[2] * a + up[2] * b];
+  const c = [(p[0] + q[0]) / 2 + up[0] * h / 2, (p[1] + q[1]) / 2 + up[1] * h / 2, (p[2] + q[2]) / 2 + up[2] * h / 2];
+  const A = [o(p, -w / 2, 0), o(p, w / 2, 0), o(p, w / 2, h), o(p, -w / 2, h)], B = [o(q, -w / 2, 0), o(q, w / 2, 0), o(q, w / 2, h), o(q, -w / 2, h)];
+  for (let i = 0; i < 4; i++) { const j = (i + 1) % 4; quadUV(g, A[i], A[j], B[j], B[i], col, spec, c); }
+  quadUV(g, A[0], A[1], A[2], A[3], col, spec, c); quadUV(g, B[0], B[1], B[2], B[3], col, spec, c);
+}
 // an ellipsoid (lat/long), optionally cut flat at the back (-z), for mirror housings
 function blob(g, cx, cy, cz, rx, ry, rz, col, spec, cutBack) {
   const NA = 10, NB = 6;
@@ -484,7 +514,7 @@ function carGeo(spec, night) {
   box(g, 0.3, 0.3, S.zr - 0.12, 0.05, 0.04, 0.08, lin('#d7262e'), 0.3); // rear tow hook
   // front rally plate
   quadUV(g, [-0.22, 0.4, S.zf + 0.065], [0.22, 0.4, S.zf + 0.065], [0.22, 0.46, S.zf + 0.065], [-0.22, 0.46, S.zf + 0.065], [1, 1, 1], 0.2, [0, 0.43, S.zf - 1],
-    [[0.66, 1 - (AT.ex + 44) / 1024], [1, 1 - (AT.ex + 44) / 1024], [1, 1 - (AT.ex + 4) / 1024], [0.66, 1 - (AT.ex + 4) / 1024]]);
+    [[0.66, V(AT.ex + 44)], [1, V(AT.ex + 44)], [1, V(AT.ex + 4)], [0.66, V(AT.ex + 4)]]);
   // bonnet vents and pins
   // bonnet louvres: thin slats flush with the bonnet slope (a solid slab filled the bonnet camera's view)
   { const zc = (S.zf + S.zW) / 2 - 0.05, yAt = z => S.hoodF + (S.hoodB - S.hoodF) * (S.zf - 0.45 - z) / (S.zf - 0.45 - S.zW) + 0.012;
@@ -503,7 +533,7 @@ function carGeo(spec, night) {
   box(g, 0, 0.27, S.zr - 0.03, S.W * 0.7, 0.05, 0.12, dark, 0.1);
   tube(g, -hw * 0.55, 0.3, S.zr + 0.05, S.zr - 0.12, 0.052, lin('#9a9da3'), 0.9); // exhaust tip
   quadUV(g, [0.26, 0.5, S.zr - 0.067], [-0.26, 0.5, S.zr - 0.067], [-0.26, 0.62, S.zr - 0.067], [0.26, 0.62, S.zr - 0.067], [1, 1, 1], 0.2, [0, 0.55, S.zr + 1],
-    [[0.66, 1 - (AT.ex + 44) / 1024], [1, 1 - (AT.ex + 44) / 1024], [1, 1 - (AT.ex + 4) / 1024], [0.66, 1 - (AT.ex + 4) / 1024]]);
+    [[0.66, V(AT.ex + 44)], [1, V(AT.ex + 44)], [1, V(AT.ex + 4)], [0.66, V(AT.ex + 4)]]);
   // wings
   const tailY = S.kind === 'sedan' ? S.deck : S.tail;
   if (spec.wing === 'big') {
@@ -530,7 +560,7 @@ function carGeo(spec, night) {
   // antenna
   box(g, 0.25, S.roof + 0.2, S.zRoofR + 0.25, 0.012, 0.4, 0.012, black, 0);
   // mudflaps (textured)
-  const mv0 = 1 - (AT.ex + 50) / 1024, mv1 = 1 - (AT.ex + 98) / 1024;
+  const mv0 = V(AT.ex + 50), mv1 = V(AT.ex + 98);
   for (const z of [prof.fz - S.archR - 0.1, prof.rz - S.archR - 0.08]) for (const sx of [-1, 1]) {
     const x0 = sx * (hw - 0.03), x1 = sx * (hw - 0.33);
     quadUV(g, [x0, 0.05, z], [x1, 0.05, z], [x1, 0.42, z], [x0, 0.42, z], [1, 1, 1], 0.1, [0, 0.2, z + 1], [[0.62, mv1], [0.82, mv1], [0.82, mv0], [0.62, mv0]]);
@@ -561,15 +591,21 @@ function carGeo(spec, night) {
     disc(lf, x - sx * 0.035, y, z + 0.012, 0.056, hl, 1);
     disc(lf, x + sx * 0.1, y, z + 0.012, 0.045, sc(hl, 0.85), 1);
     rect(lf, x + sx * 0.15, y - 0.05, x + sx * 0.195, y + 0.05, z + 0.012, sc(amber, 0.45), 1);
-    // tail: housing, three segments (outer ones brightest), a pale reverse lamp next to the garnish
+    // tail: a glossy housing; outboard a red lamp made of reflector cells (the only part that glows), then an amber
+    // indicator and a clear reverse lamp that only catch the light, all under one clear cover
     const xo = sx * (hw - 0.06), xi = sx * (hw - 0.42);
     { const cx = (xo + xi) / 2; prism(g, rrect(cx - 0.19, cx + 0.19, zr - 0.003, zr + 0.027, 0.01), ty - 0.09, ty + 0.07, [0.012, 0.013, 0.015], 0.9); }
-    rect(lr, xi, ty - 0.08, xo, ty + 0.06, zr - 0.004, sc(red, 0.35), -1);
-    rect(lr, xo - sx * 0.02, ty - 0.06, xo - sx * 0.14, ty + 0.045, zr - 0.006, red, -1);
-    rect(lr, xo - sx * 0.16, ty - 0.06, xo - sx * 0.26, ty + 0.045, zr - 0.006, sc(red, 0.8), -1);
-    rect(lr, xo - sx * 0.28, ty - 0.06, xi + sx * 0.02, ty + 0.045, zr - 0.006, [0.55, 0.55, 0.52], -1);
+    rect(lr, xo - sx * 0.012, ty - 0.075, xo - sx * 0.178, ty + 0.055, zr - 0.004, sc(red, 0.3), -1);
+    for (let c = 0; c < 3; c++) for (let r = 0; r < 2; r++) {
+      const xa = xo - sx * (0.02 + c * 0.053), xb = xa - sx * 0.047, ya = ty - 0.068 + r * 0.059;
+      rect(lr, xa, ya, xb, ya + 0.053, zr - 0.006, sc(red, (c + r) % 2 ? 0.78 : 1), -1);
+      rect(lr, xa - sx * 0.012, ya + 0.012, xb + sx * 0.012, ya + 0.041, zr - 0.007, sc(red, 1.15), -1);
+    }
+    const lensQ = (x0, x1, c) => { for (let k = 0; k < 2; k++) { const xa = x0 + (x1 - x0) * k / 2, xb = x0 + (x1 - x0) * (k + 1) / 2; quadUV(g, [xa, ty - 0.075, zr - 0.005], [xb, ty - 0.075, zr - 0.005], [xb, ty + 0.055, zr - 0.005], [xa, ty + 0.055, zr - 0.005], c, 0.95, [0, ty, zr + 5]); } };
+    lensQ(xo - sx * 0.186, xo - sx * 0.258, lin('#c86a12'));
+    lensQ(xo - sx * 0.266, xi + sx * 0.012, lin('#b9bcc0'));
+    rect(lens, xo - sx * 0.004, ty - 0.082, xi + sx * 0.004, ty + 0.062, zr - 0.013, [0.42, 0.1, 0.09], -1); // cover (dark, so the sky it reflects doesn't wash out the red)
   }
-  { const gw = (S.W - 0.86) / 2; prism(g, rrect(-gw, gw, zr - 0.003, zr + 0.027, 0.01), ty - 0.06, ty + 0.04, [0.02, 0.022, 0.026], 0.85); } // garnish between the tail lamps
   if (night) for (let i = 0; i < 4; i++) {
     const x = (i - 1.5) * S.W * 0.19, y = S.nose + 0.2, z = S.zf - 0.035, r = 0.075;
     lf.quad([x - r, y - r, z], [x + r, y - r, z], [x + r, y + r, z], [x - r, y + r, z], hl, 0, [x, y, z - 5]);
@@ -683,10 +719,10 @@ const FONT = '"Big Shoulders Display", "Barlow Semi Condensed", "Arial Narrow", 
 function liveryCanvas(spec) {
   const S = SHAPES[spec.shape], col = spec.col;
   // painted at 2048² (the layout stays in 1024 units, scaled) so lettering and decals stay crisp up close
-  const cv = document.createElement('canvas'); cv.width = 2048; cv.height = 2048;
+  const cv = document.createElement('canvas'); cv.width = 2048; cv.height = AT.H * 2;
   const g = cv.getContext('2d'); g.scale(2, 2);
   const L = 4.4, z0 = -2.2, yTop = 1.05, yb = 0.12;
-  g.fillStyle = '#ffffff'; g.fillRect(0, 0, 1024, 1024);
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, 1024, AT.H);
   // side regions -------------------------------------------------
   const side = (sx) => {
     const top = sx > 0 ? AT.lY : AT.rY;
@@ -768,6 +804,12 @@ function liveryCanvas(spec) {
         roundel(-1.55, 0.78);
         break;
     }
+    // the tail panel carries the stripes on round the back: stretch the column just ahead of the tail across this
+    // half of it (before the weathering, so the speckle doesn't smear into streaks)
+    g.restore();
+    { const sxp = X(S.zr + 0.04) * 2, y0p = Y(1.05) * 2, y1p = Y(0.2) * 2;
+      g.drawImage(cv, sxp, y0p, 1, y1p - y0p, sx > 0 ? 0 : 512, AT.rr, 512, AT.rH); }
+    g.save(); g.beginPath(); g.rect(0, top, 1024, AT.side); g.clip();
     // panel gaps and handles, then baked light: darker towards the sills, a soft sheen under the shoulder
     const fz = spec.wb / 2 + S.wbOff, rz = -spec.wb / 2 + S.wbOff;
     const seam = (za, ya, zb, yb) => { g.beginPath(); g.moveTo(X(za), Y(ya)); g.lineTo(X(zb), Y(yb)); g.stroke(); };
@@ -810,6 +852,55 @@ function liveryCanvas(spec) {
     g.restore();
   };
   side(1); side(-1);
+  // tail panel ---------------------------------------------------
+  {
+    const RX = x => (S.W / 2 - x) / S.W * 1024, RY = y => AT.rr + (1.05 - y) / 0.85 * AT.rH;
+    const ax = (1024 / S.W) / (AT.rH / 0.85); // the panel is stored squashed across: letters are drawn widened by this
+    const hw = S.W / 2, ty = (S.kind === 'sedan' ? S.deck : S.tail) - 0.2, gw = hw - 0.43;
+    const wr = (() => { let sd = spec.num * 4241 + 7; return () => (sd = (sd * 1664525 + 1013904223) >>> 0) / 4294967296; })();
+    g.save(); g.beginPath(); g.rect(0, AT.rr, 1024, AT.rH); g.clip();
+    const label = (str, x, y, h, c, w, sp) => {
+      g.save(); g.translate(RX(x), RY(y)); g.scale(ax, 1);
+      g.fillStyle = c; g.font = `${w || 800} ${h * AT.rH / 0.85 * 1.32}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      if ('letterSpacing' in g) g.letterSpacing = (sp || 0) + 'px';
+      g.fillText(str, 0, 0); g.restore();
+    };
+    // black garnish between the lamps with the make in silver letters
+    g.fillStyle = '#111315'; g.fillRect(RX(gw), RY(ty + 0.04), RX(-gw) - RX(gw), RY(ty - 0.06) - RY(ty + 0.04));
+    g.fillStyle = 'rgba(255,255,255,0.08)'; g.fillRect(RX(gw), RY(ty + 0.04), RX(-gw) - RX(gw), 2);
+    const make = spec.name.split(' ')[0].toUpperCase();
+    label(make, 0, ty - 0.012, 0.042, 'rgba(0,0,0,0.6)', 700, 3);
+    label(make, 0, ty - 0.008, 0.042, '#c8ccd2', 700, 3);
+    // a pair of small sponsor stickers under the lamps
+    const stick = (x, str, bg, fg) => {
+      const w = 0.2, h = 0.045, y = ty - 0.15;
+      g.fillStyle = bg; g.beginPath(); g.roundRect(RX(x + w / 2), RY(y + h / 2), RX(x - w / 2) - RX(x + w / 2), RY(y - h / 2) - RY(y + h / 2), 3); g.fill();
+      label(str, x, y, 0.026, fg, 800, 1);
+    };
+    const acc = col.stripe === '#f2f2ee' ? col.base : col.stripe;
+    stick(hw - 0.25, 'SIDEWAYS', '#ffffff', acc); stick(-(hw - 0.25), 'TORQUE OIL', '#16181b', '#f2f2ee');
+    // tailgate (or boot lid) shut lines, around the lamps, and a lock
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    const lid = S.kind === 'sedan' ? [[gw + 0.02, S.deck - 0.03], [gw + 0.02, ty - 0.1], [-gw - 0.02, ty - 0.1], [-gw - 0.02, S.deck - 0.03]]
+      : [[hw - 0.1, 1.05], [hw - 0.1, ty + 0.1], [gw + 0.02, ty + 0.1], [gw + 0.02, ty - 0.11], [-gw - 0.02, ty - 0.11], [-gw - 0.02, ty + 0.1], [-(hw - 0.1), ty + 0.1], [-(hw - 0.1), 1.05]];
+    for (const [w, c, o] of [[3, 'rgba(0,0,0,0.38)', 0], [1, 'rgba(255,255,255,0.2)', 1.6]]) {
+      g.lineWidth = w; g.strokeStyle = c; g.beginPath();
+      lid.forEach(([x, y], i) => i ? g.lineTo(RX(x), RY(y) + o) : g.moveTo(RX(x), RY(y) + o)); g.stroke();
+    }
+    g.fillStyle = 'rgba(0,0,0,0.5)'; g.beginPath(); g.roundRect(RX(0.05), RY(ty - 0.125), RX(-0.05) - RX(0.05), 6, 3); g.fill();
+    // the back of a rally car gets filthy: dust thrown up from below, speckle, darker towards the bumper
+    let gr = g.createLinearGradient(0, RY(0.95), 0, RY(0.45));
+    gr.addColorStop(0, 'rgba(96,78,56,0)'); gr.addColorStop(0.55, 'rgba(96,78,56,0.16)'); gr.addColorStop(1, 'rgba(90,72,50,0.42)');
+    g.fillStyle = gr; g.fillRect(0, RY(0.95), 1024, RY(0.2) - RY(0.95));
+    for (let k = 0; k < 420; k++) {
+      const px = wr() * 1024, py = RY(0.45 + Math.pow(wr(), 1.8) * 0.45), rr = 0.5 + wr() * 1.4;
+      g.fillStyle = wr() < 0.7 ? 'rgba(70,55,38,0.45)' : 'rgba(40,36,32,0.5)'; g.beginPath(); g.ellipse(px, py, rr * 1.6, rr, 0, 0, 7); g.fill();
+    }
+    gr = g.createLinearGradient(0, RY(0.75), 0, RY(0.4));
+    gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,0.25)');
+    g.fillStyle = gr; g.fillRect(0, RY(0.75), 1024, RY(0.2) - RY(0.75));
+    g.restore();
+  }
   // top view -----------------------------------------------------
   const TX = z => (z - z0) / L * 1024, TY = x => AT.tY + (0.95 - x) / 1.9 * AT.tH;
   g.fillStyle = col.base; g.fillRect(0, AT.tY, 1024, AT.tH);
@@ -853,7 +944,7 @@ function liveryCanvas(spec) {
   g.fillStyle = '#f4f2ea'; g.font = `800 30px ${FONT}`; g.textAlign = 'left'; g.textBaseline = 'middle';
   g.fillText(CREW[spec.id] || 'SIDEWAYS RALLY TEAM', 64, AT.ex + 76);
   // white texel
-  g.fillStyle = '#ffffff'; g.fillRect(1004, 1004, 20, 20);
+  g.fillStyle = '#ffffff'; g.fillRect(0, AT.H - 16, 1024, 16);
   return cv;
 }
 
