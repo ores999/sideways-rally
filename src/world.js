@@ -42,6 +42,16 @@ const VIS = {
     dust: [0.72, 0.5, 0.34], mark: [0.04, 0.04, 0.05, 0.55], far: '#b8826a', skirt: '#b57a4c',
     grade: { lift: [0.018, 0.006, 0.0], gain: [1.035, 1.0, 0.94], sat: 1.08, con: 0.14, vig: 0.24, bloom: 0.06, thr: 1.2 },
   },
+  // downtown, still in grey boxes: a clear, slightly hazy afternoon over grey streets and pale concrete sidewalks
+  city: {
+    zen: '#3f74b8', fogCol: '#bcc6cf', glow: '#fff0d8', sunDisc: '#fff4e0', cloudCol: '#f2f4f7', clouds: 0.45,
+    sunEl: 38, sunAz: 210, sunCol: '#fff2dc', sunI: 2.8, sky: '#95b4d6', skyI: 0.8, gnd: '#6a6862', gndI: 0.5, exp: 0.98,
+    fog: [80, 520], road: ['#4b4b4f', '#3b3b3f', '#6f6b67'], icy: 0, lines: true, tt: [1.0, 1.0, 1.0], rays: 0.3,
+    ground: ['#4a4a4d', '#454549', '#525256', '#3e3e42'], verge: '#86827b', rock: '#77756f', walk: '#948f86', kerb: '#a8a399',
+    bldg: ['#968f85', '#86827b', '#9f978a', '#7a7874', '#8e877d'],
+    dust: [0.6, 0.6, 0.6], mark: [0.04, 0.04, 0.05, 0.55], far: '#7f8b98', skirt: '#4c4d50',
+    grade: { lift: [0.006, 0.008, 0.014], gain: [1.02, 1.0, 0.97], sat: 0.98, con: 0.12, vig: 0.24, bloom: 0.06, thr: 1.15 },
+  },
 };
 
 // ---------- conditions ----------
@@ -62,7 +72,8 @@ function rainVis(B, st) {
     sunI: 0.55, sunCol: '#d9dff0', sky: '#7f8db8', skyI: 1.0, gndI: 0.65, fog: [18, 170], rays: 0, blizzard: true,
     grade: { lift: [0.01, 0.01, 0.025], gain: [0.99, 0.99, 1.02], sat: 0.85, con: 0.08, vig: 0.32, bloom: 0.08, thr: 1.2 },
   };
-  const g = B.grass ? { grass: B.grass.map(c => darken(c, 0.82)) } : B.sand ? { sand: B.sand.map(c => darken(c, 0.72)) } : {};
+  const g = B.grass ? { grass: B.grass.map(c => darken(c, 0.82)) } : B.sand ? { sand: B.sand.map(c => darken(c, 0.72)) }
+    : B.ground ? { ground: B.ground.map(c => darken(c, 0.7)), walk: darken(B.walk, 0.72), kerb: darken(B.kerb, 0.75) } : {};
   return Object.assign(g, {
     zen: '#56616e', fogCol: '#8c959e', glow: '#c2c8ce', sunDisc: '#dfe3e8', cloudCol: '#a2aab3', clouds: 1.0, overcast: 0.8,
     sunI: B.sunI * 0.3, sunCol: '#e6eaee', sky: '#97a3b0', skyI: 1.08, gndI: 0.42, exp: 1.06, fog: [30, 250], rays: 0, wet: 1, rain: true,
@@ -80,7 +91,7 @@ function visOf(st) {
 }
 
 // what the horizon looks like in reflections: the tree line, snowy hills or the buttes, hazed towards the fog
-const SKYLINE = { pine: '#3c4a37', forest: '#2c3829', frost: '#56607a', mesa: '#9a6449' };
+const SKYLINE = { pine: '#3c4a37', forest: '#2c3829', frost: '#56607a', mesa: '#9a6449', city: '#62666d' };
 function skylineOf(V, st) {
   const base = lin(SKYLINE[st.id] || '#404840'), fog = lin(V.fogCol);
   const c = mixc(base, fog, st.cond === 'rain' ? 0.55 : 0.25);
@@ -181,7 +192,7 @@ function terrainMesh(W) {
   const nx = TR.nx, nzc = TR.nz, cell = TR.cell, H = TR.H;
   const n = nx * nzc;
   const pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), col = new Float32Array(n * 4);
-  const pal = st.kind === 'pine' ? V.grass.map(lin) : st.kind === 'frost' ? V.snow.map(lin) : V.sand.map(lin);
+  const pal = (st.kind === 'pine' ? V.grass : st.kind === 'frost' ? V.snow : st.kind === 'city' ? V.ground : V.sand).map(lin);
   const verge = lin(V.verge), rock = lin(V.rock);
   const strata = V.strata ? V.strata.map(lin) : null;
   const hw = T.hw;
@@ -197,7 +208,10 @@ function terrainMesh(W) {
     const n1 = nz.n2(x / 38, z / 38) * 0.5 + 0.5, n2 = nz.n2(x / 9 + 40, z / 9) * 0.5 + 0.5, n3 = nz.n2(x / 120 - 7, z / 120) * 0.5 + 0.5;
     let c;
     const d = TR.D[k];
-    if (st.kind === 'pine') {
+    if (st.kind === 'city') {
+      // the streets off the route: asphalt in a few shades, darker where it has been patched
+      c = mixc(pal[0], pal[1], n1); c = mixc(c, pal[2], n3 * 0.5); c = mixc(c, pal[3], Math.max(0, n2 - 0.6) * 1.2);
+    } else if (st.kind === 'pine') {
       c = mixc(pal[0], pal[1], n1); c = mixc(c, pal[2], n3 * 0.6); c = mixc(c, pal[3], Math.max(0, n2 - 0.6) * 1.6);
       c = mixc(c, rock, C.sstep(0.18, 0.4, slope));
       c = mixc(c, verge, (1 - C.sstep(hw + 1.3, hw + 3.2, d)) * 0.75);
@@ -292,18 +306,20 @@ function roadMeshes(W) {
   // shoulders: both sides; cols: edge, mid, outer
   const verge = lin(V.verge);
   const sides = [];
+  // in the city the strip is the concrete gutter out to the kerb, flat
+  const city = !!st.city, vw = city ? C.CITY_X.kerb - hw : 1.6;
   for (const side of [-1, 1]) {
     const P2 = [], C2 = [];
     for (let i = 0; i < n; i++) {
       const h = T.H[i], rx = -Math.cos(h) * side, rz = Math.sin(h) * side;
       const ex = T.X[i] + rx * hw, ez = T.Z[i] + rz * hw;
-      const ox = T.X[i] + rx * (hw + 1.6), oz = T.Z[i] + rz * (hw + 1.6);
-      const oy = C.terrainH(TR, ox, oz) + 0.03;
+      const ox = T.X[i] + rx * (hw + vw), oz = T.Z[i] + rz * (hw + vw);
+      const oy = city ? T.Y[i] - 0.012 : C.terrainH(TR, ox, oz) + 0.03;
       const mx = (ex + ox) / 2, mz = (ez + oz) / 2, my = (T.Y[i] + oy) / 2 + 0.02;
       P2.push([ex, T.Y[i] - 0.005, ez], [mx, my, mz], [ox, oy, oz]);
       // the outer edge takes the colour of the ground it lands on, so the strip no longer ends in a ruled line
       const tc = W.TC; let oc = verge;
-      if (tc) { const ci = Math.max(0, Math.min(tc.nx - 1, Math.round((ox - tc.x0) / tc.cell))), cj = Math.max(0, Math.min(tc.nz - 1, Math.round((oz - tc.z0) / tc.cell))), k = (cj * tc.nx + ci) * 4; oc = [tc.col[k], tc.col[k + 1], tc.col[k + 2]]; }
+      if (tc && !city) { const ci = Math.max(0, Math.min(tc.nx - 1, Math.round((ox - tc.x0) / tc.cell))), cj = Math.max(0, Math.min(tc.nz - 1, Math.round((oz - tc.z0) / tc.cell))), k = (cj * tc.nx + ci) * 4; oc = [tc.col[k], tc.col[k + 1], tc.col[k + 2]]; }
       const mc = [(verge[0] + oc[0]) / 2, (verge[1] + oc[1]) / 2, (verge[2] + oc[2]) / 2];
       C2.push([...verge, 0], [...mc, 0], [...oc, 0]);
     }
@@ -839,6 +855,10 @@ function groundDetailCanvas(st) {
       for (let i = 0; i < 12000; i++) dot(R() * W, R() * W, rnd(0.5, 1.1), R() < 0.5 ? '255,235,200' : '90,70,50', rnd(0.25, 0.5));
       for (let i = 0; i < 45; i++) { const x = R() * W, y = R() * W, r = rnd(2, 5); dot(x + 1, y + 1.4, r, '50,40,32', 0.6); dot(x, y, r, '175,150,125', 0.85); }
       for (let i = 0; i < 40; i++) blot(R() * W, R() * W, rnd(30, 80), R() < 0.5 ? '190,160,130' : '95,75,55', 0.1);
+    } else if (kind === 'city') {
+      // asphalt off the route: broad stains and patches, fine aggregate
+      for (let i = 0; i < 50; i++) blot(R() * W, R() * W, rnd(30, 90), R() < 0.5 ? '150,150,150' : '90,90,92', rnd(0.08, 0.18));
+      for (let i = 0; i < 9000; i++) dot(R() * W, R() * W, rnd(0.5, 1.1), R() < 0.5 ? '200,200,200' : '60,60,62', rnd(0.12, 0.3));
     } else {
       // snow: drifts, a fine crust, faint wind ripples and the odd glint
       for (let i = 0; i < 60; i++) blot(R() * W, R() * W, rnd(30, 90), R() < 0.5 ? '230,236,255' : '90,105,150', rnd(0.12, 0.25));
@@ -957,6 +977,7 @@ function tuftGeo() {
 }
 function placeTufts(W) {
   const { T, TR, st } = W, R = C.rng(st.seed + 555), hw = T.hw, out = [], tmp = {};
+  if (st.city) return new Float32Array(0);
   const V = visOf(st);
   const per = V.tuftPer || (st.kind === 'pine' ? 5 : st.kind === 'frost' ? 2 : 3);
   const dMin = st.bank ? hw + 4.7 : hw + 1.1;
@@ -1092,6 +1113,87 @@ function farGeo(W) {
   return smoothGeo(g, 72);
 }
 
+// ---------- city (grey boxes for now) ----------
+// Every block of the grid: a raised slab of sidewalk with quarter-circle kerb corners, and a continuous row of
+// buildings standing on its building line: a corner building on each corner with its ochava, deep lots in between,
+// the odd tower. One mesh with a chunk per block, so a view only draws the blocks it can see.
+function cityMesh(W) {
+  const P = W.O.city, V = visOf(W.st), B = P.B, X = C.CITY_X, k = X.kerb, F = B / 2 - k - X.walk, oc = X.ochava;
+  const walkC = lin(V.walk), kerbC = lin(V.kerb), bc = V.bldg.map(lin), S = B / 2 - k, r = P.kr, ys = X.slab;
+  const p = [], nn = [], cc = [], uu = [], chunks = [];
+  const [bi0, bi1, bj0, bj1] = P.blocks;
+  // quarter turns of the canonical side (facade along v = +F, facing +v)
+  const rot = (q, u, v) => q === 0 ? [u, v] : q === 1 ? [-v, u] : q === 2 ? [-u, -v] : [v, -u];
+  for (let bj = bj0; bj <= bj1; bj++) for (let bi = bi0; bi <= bi1; bi++) {
+    const g = new Geo(), R = C.rng(W.st.seed * 31 + (bi + 500) * 7919 + (bj + 500) * 104729);
+    const cu = (bi + 0.5) * B, cv = (bj + 0.5) * B;
+    const w = (u, v, y) => { const q = C.cityW(P, cu + u, cv + v); return [q[0], y, q[1]]; };
+    // sidewalk slab: outline, kerb face, top
+    const ring = [];
+    [[1, 1, 0], [-1, 1, 1], [-1, -1, 2], [1, -1, 3]].forEach(([su, sv, q]) => {
+      for (let a = 0; a <= 6; a++) { const th = (q + a / 6) * Math.PI / 2; ring.push([su * (S - r) + Math.cos(th) * r, sv * (S - r) + Math.sin(th) * r]); }
+    });
+    const mid = w(0, 0, ys);
+    for (let q = 0; q < ring.length; q++) {
+      const a = ring[q], b = ring[(q + 1) % ring.length];
+      g.tri(mid, w(a[0], a[1], ys), w(b[0], b[1], ys), walkC, 0.03, [mid[0], ys - 10, mid[2]]);
+      g.quad(w(a[0], a[1], -0.1), w(b[0], b[1], -0.1), w(b[0], b[1], ys), w(a[0], a[1], ys), kerbC, 0.05, [mid[0], 0, mid[2]]);
+    }
+    // buildings: a footprint (block coordinates, convex) pushed up to height h
+    const tall = R() < 0.25 ? 1.6 : 1;
+    const floors = () => { const x = R(); return Math.round((x < 0.55 ? 2 + R() * 3 : x < 0.88 ? 5 + R() * 5 : 10 + R() * 9) * tall); };
+    const bldg = (fp, h, faces) => {
+      const col = scalec(bc[(R() * bc.length) | 0], 0.85 + R() * 0.25);
+      let mu = 0, mv = 0; for (const [u, v] of fp) { mu += u; mv += v; } mu /= fp.length; mv /= fp.length;
+      const ref = w(mu, mv, h / 2), top = fp.map(([u, v]) => w(u, v, h)), bot = fp.map(([u, v]) => w(u, v, -0.3));
+      for (let q = 0; q < fp.length; q++) if (!faces || faces[q]) { const q2 = (q + 1) % fp.length; g.quad(bot[q], bot[q2], top[q2], top[q], col, 0.04, ref); }
+      const rc = w(mu, mv, h);
+      for (let q = 0; q < fp.length; q++) g.tri(rc, top[q], top[(q + 1) % fp.length], scalec(col, 0.8), 0.03, [rc[0], h - 10, rc[2]]);
+    };
+    const cw = [0, 1, 2, 3].map(() => 11 + R() * 5), ch = cw.map(() => 4 + floors() * 3);
+    for (let q = 0; q < 4; q++) {
+      // the corner building at this side's right-hand end, cut back at 45°
+      const c = cw[q], hc = ch[q];
+      bldg([[F - c, F - c], [F, F - c], [F, F - oc], [F - oc, F], [F - c, F]].map(([u, v]) => rot(q, u, v)), hc);
+      // the lots along the side, each wall drawn only where it can be seen
+      const u0 = -F + cw[(q + 1) % 4], u1 = F - c, lots = [];
+      for (let u = u0; u < u1 - 0.5;) { let wd = 7 + R() * 10; if (u1 - (u + wd) < 6) wd = u1 - u; lots.push([u, u + wd]); u += wd; }
+      const hs = lots.map(() => 4 + floors() * 3), ds = lots.map(() => 14 + R() * 12);
+      lots.forEach(([a, b], i) => {
+        const h = hs[i], dp = ds[i];
+        const hl = i ? hs[i - 1] : ch[(q + 1) % 4], hr = i < lots.length - 1 ? hs[i + 1] : hc;
+        // footprint: front-right, front-left, back-left, back-right (facade, left side, back, right side)
+        bldg([[b, F], [a, F], [a, F - dp], [b, F - dp]].map(([u, v]) => rot(q, u, v)), h, [true, h > hl, h > 12, h > hr]);
+      });
+    }
+    const v0 = p.length / 3;
+    p.push(...g.p); nn.push(...g.n); cc.push(...g.c); uu.push(...g.u);
+    const box = [1e9, 1e9, 1e9, -1e9, -1e9, -1e9];
+    for (let i = 0; i < g.p.length; i += 3) for (let a = 0; a < 3; a++) { box[a] = Math.min(box[a], g.p[i + a]); box[a + 3] = Math.max(box[a + 3], g.p[i + a]); }
+    chunks.push({ first: v0, count: g.p.length / 3, box });
+  }
+  const idx = new Uint32Array(p.length / 3); for (let i = 0; i < idx.length; i++) idx[i] = i;
+  return { p: new Float32Array(p), n: new Float32Array(nn), c: new Float32Array(cc), u: new Float32Array(uu), idx, chunks };
+}
+// water-filled barriers across the closed streets: two-metre sections, red and white
+function barrierGeo(list) {
+  const g = new Geo(), red = lin('#c8302c'), white = lin('#e8e6e0');
+  for (const [x0, z0, x1, z1] of list) {
+    const len = Math.hypot(x1 - x0, z1 - z0), tx = (x1 - x0) / len, tz = (z1 - z0) / len, nx = -tz, nz = tx, n = Math.round(len / 2.05);
+    for (let i = 0; i < n; i++) {
+      const a = (i + 0.04) * len / n, b = (i + 0.96) * len / n, col = i % 2 ? white : red;
+      const P = (s, l, y) => [x0 + tx * s + nx * l, y, z0 + tz * s + nz * l];
+      const y0 = -0.06, y1 = 0.95, lo = 0.3, hi = 0.14, ref = P((a + b) / 2, 0, 0.4);
+      g.quad(P(a, -lo, y0), P(b, -lo, y0), P(b, -hi, y1), P(a, -hi, y1), col, 0.12, ref);
+      g.quad(P(a, lo, y0), P(b, lo, y0), P(b, hi, y1), P(a, hi, y1), col, 0.12, ref);
+      g.quad(P(a, -hi, y1), P(b, -hi, y1), P(b, hi, y1), P(a, hi, y1), col, 0.12, ref);
+      g.quad(P(a, -lo, y0), P(a, -hi, y1), P(a, hi, y1), P(a, lo, y0), col, 0.12, ref);
+      g.quad(P(b, -lo, y0), P(b, -hi, y1), P(b, hi, y1), P(b, lo, y0), col, 0.12, ref);
+    }
+  }
+  return g;
+}
+
 // ---------- build stage scene ----------
 const LOD_NEAR = 130, LOD_MID = 280;
 function buildScene(R, W) {
@@ -1149,6 +1251,10 @@ function buildScene(R, W) {
     add(R.mesh(cactusGeo(), instData(tall, o => { const c = cc[(o.c * 3) | 0]; return [o.x, o.y, o.z, o.rot, o.s, o.sy, 0, 0, c[0], c[1], c[2]]; }), cull), { mode: 8 }, true);
     const sc = lin('#7d7a4a');
     add(R.mesh(shrubGeo(), instData(low, o => { const k = 0.7 + o.c * 0.6; return [o.x, o.y, o.z, o.rot, o.s * 1.2, o.sy * 0.8, 0, 0, sc[0] * k, sc[1] * k, sc[2] * k]; }), cull), { mode: 8 }, true);
+  }
+  if (O.city) {
+    S.city = add(R.mesh(cityMesh(W), null, { cullDist: S.E.fog[1] + 60 }), { mode: 0 }, true);
+    if (O.barriers.length) add(R.mesh(barrierGeo(O.barriers)), { mode: 0 }, true);
   }
   if (O.hay.length) add(R.mesh(hayGeo(), instData(O.hay, o => [o.x, o.y, o.z, o.rot, 1, 1, 0, 0, 1, 1, 1])), { mode: 8 }, true);
   // ground cover
