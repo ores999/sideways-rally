@@ -22,7 +22,7 @@ const store = {
   set(k, v) { try { localStorage.setItem('sideways.' + k, JSON.stringify(v)); return true; } catch (e) { return false; } },
   del(k) { try { localStorage.removeItem('sideways.' + k); } catch (e) { /* storage unavailable */ } },
 };
-const settings = Object.assign({ voice: false, sound: true, ghost: false, shadows: true, post: !matchMedia('(pointer: coarse)').matches, cam: 0, stage: 0, car: 0, gearbox: 'auto', rev: false, cond: 'day', name: '' }, store.get('settings', {}));
+const settings = Object.assign({ voice: false, sound: true, ghost: false, leadGhost: false, shadows: true, post: !matchMedia('(pointer: coarse)').matches, cam: 0, stage: 0, car: 0, gearbox: 'auto', rev: false, cond: 'day', name: '' }, store.get('settings', {}));
 if (settings.stage !== 'daily') settings.stage = clamp(settings.stage | 0, 0, C.STAGES.length - 1);
 settings.car = clamp(settings.car | 0, 0, C.CARS.length - 1);
 if (!C.CONDS.includes(settings.cond)) settings.cond = 'day';
@@ -121,7 +121,7 @@ function drawThumb(cv, T, st) {
   g.fillStyle = '#efece4'; g.fillRect(px(T.n - 1) - 4, pz(T.n - 1) - 4, 8, 8);
 }
 const MEDALS = ['', 'Bronze', 'Silver', 'Gold'];
-const SHORT = { foca: 'Focus', impressa: 'Impreza', lancha: 'Lancer Evo', delta: 'Delta', pejo: '205 T16', kwattro: 'Quattro S1', selica: 'Celica' };
+const SHORT = { foca: 'Focus', impressa: 'Impreza', lancha: 'Lancer Evo', delta: 'Delta', pejo: '205 T16', kwattro: 'Quattro S1', selica: 'Celica', saveiro: 'Saveiro' };
 const shortCar = id => SHORT[id] || (carById(id) || { name: id }).name;
 function stageRow(key, selected, onClick, extraTitle) {
   const st = C.stageDef(key), T = trackFor(key);
@@ -175,13 +175,36 @@ function renderCarList() {
   C.CARS.forEach((c, i) => {
     const b = el('button', 'row car-row'); b.setAttribute('aria-pressed', String(i === settings.car));
     const sw = el('span', 'swatch'); sw.style.background = `linear-gradient(135deg, ${c.col.base} 0 52%, ${c.col.stripe} 52% 70%, ${c.col.stripe2} 70%)`;
-    const t = el('span', 't'); t.append(el('b', null, c.name), el('small', null, `${c.era} · ${c.engine.layout} turbo`));
+    const t = el('span', 't'); t.append(el('b', null, c.name));
+    if (c.bonus) {
+      const ok = bonusOK(curKeyMenu()), lead = leaderOf(curKeyMenu()), road = C.stageDef(mapKey(curKeyMenu())).name;
+      b.classList.add('bonus'); if (!ok) b.classList.add('locked');
+      t.append(el('small', ok ? null : 'lock', ok ? `You're No. 1 on ${road}: the keys are yours · its times don't count`
+        : lead ? `🔒 Only the No. 1 on ${road} drives it (${lead.n} right now)` : `🔒 Set the fastest time on ${road} to unlock it`));
+      for (const [x, y, d] of [[2, 10, 0], [97, 18, 0.6], [52, 86, 1.1], [92, 84, 0.3], [30, 4, 1.4]]) { const sp = el('span', 'spark', '✦'); sp.style.left = x + '%'; sp.style.top = y + '%'; sp.style.animationDelay = d + 's'; b.append(sp); }
+    } else t.append(el('small', null, `${c.era} · ${c.engine.layout} turbo`));
     const hp = el('span', 'hp'); hp.append(`${Math.round(c.peak.hp)} hp`); hp.append(el('small', null, `0–100 ${c.spec.t100.toFixed(1)} s`));
     b.append(sw, t, hp);
-    b.addEventListener('click', () => selectCar(i));
+    b.addEventListener('click', () => selectCar(i, b));
     box.append(b);
   });
   renderCarCard(); renderTune();
+}
+// ---- the bonus car: whoever holds No. 1 on a road (any car, any conditions) may take the Saveiro there ----
+const isBonus = c => !!(c && c.bonus);
+function leaderOf(key) {
+  const m = mapKey(key), oc = online.on ? online.cache.get(m) : null; let best = null;
+  for (const e of [...boardAll().filter(x => mapKey(x.k) === m), ...(oc ? oc.rows : [])]) if (!isBonus(carById(e.c)) && (!best || e.t < best.t)) best = e;
+  return best;
+}
+const bonusOK = key => { const b = leaderOf(key); return !!(b && settings.name && b.n.toLowerCase() === settings.name.toLowerCase()); };
+const plainCar = () => { const i = settings.lastCar | 0; return C.CARS[i] && !isBonus(C.CARS[i]) ? i : 0; };
+// hand the keys back when the road, the name or the board says the Saveiro isn't yours here (or a rally starts)
+function keepCarAllowed(key) {
+  if (!isBonus(C.CARS[settings.car]) || bonusOK(key || curKeyMenu())) return false;
+  settings.car = plainCar(); saveSettings();
+  toast(`The Saveiro stays with the No. 1 of each road: back in the ${C.CARS[settings.car].name}.`);
+  return true;
 }
 function specRows(c) {
   const E = c.engine, pk = c.peak;
@@ -307,11 +330,12 @@ function updateToggles() {
   $('gearManual').setAttribute('aria-pressed', String(settings.gearbox === 'manual'));
   if (A.master) A.master.gain.value = settings.sound ? 0.55 : 0;
 }
-const TOGGLES = [['optVoice', 'voice'], ['optSound', 'sound'], ['optGhost', 'ghost'], ['optShadows', 'shadows'], ['optPost', 'post'], ['pVoice', 'voice'], ['pSound', 'sound'], ['pGhost', 'ghost']];
+const TOGGLES = [['optVoice', 'voice'], ['optSound', 'sound'], ['optGhost', 'ghost'], ['optLead', 'leadGhost'], ['optShadows', 'shadows'], ['optPost', 'post'], ['pVoice', 'voice'], ['pSound', 'sound'], ['pGhost', 'ghost'], ['pLead', 'leadGhost']];
 for (const [id, key] of TOGGLES) {
   $(id).addEventListener('click', () => {
     settings[key] = !settings[key]; saveSettings(); updateToggles();
     if (key === 'voice' && !settings.voice && 'speechSynthesis' in window) speechSynthesis.cancel();
+    if (key === 'leadGhost' && settings.leadGhost && W) onlineGhost(mapKey(W.st.key));
   });
 }
 $('gearAuto').addEventListener('click', () => { settings.gearbox = 'auto'; saveSettings(); updateToggles(); });
@@ -321,6 +345,7 @@ function selectStage(i) {
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
   settings.stage = i; if (i === 'daily') settings.dailyKey = settings.dailyKey || C.dailyKey();
   timesStage = null;
+  if (keepCarAllowed()) renderCarList();
   saveSettings(); renderStageList();
   if (curKey() !== loadedKey) loadStage(curKey());
 }
@@ -329,18 +354,22 @@ for (const b of $('optCond').children) b.addEventListener('click', () => { setti
 // per-car customisation (sound only): what the turbo does on a lift, and the exhaust
 function getTune(id) {
   const V = VOICES[id] || VOICES.foca, t = (settings.tune || {})[id] || {};
-  return { dump: t.dump || (V.flutter > 0.5 ? 'flutter' : 'bov'), exhaust: t.exhaust || 'stock' };
+  return { dump: t.dump || (V.flutter > 0.5 ? 'flutter' : 'bov'), exhaust: t.exhaust || 'stock', music: t.music || 'on' };
 }
 function renderTune() {
-  const t = getTune(P.id);
-  $('tuneCar').textContent = P.name;
+  const c = C.CARS[settings.car], t = getTune(c.id); // the selected car (P only follows once its model is built)
+  $('tuneCar').textContent = c.name;
   for (const b of $('tuneDump').children) b.setAttribute('aria-pressed', String(b.dataset.v === t.dump));
   for (const b of $('tuneExh').children) b.setAttribute('aria-pressed', String(b.dataset.v === t.exhaust));
+  $('tuneMusicRow').hidden = !isBonus(c);
+  for (const b of $('tuneMusic').children) b.setAttribute('aria-pressed', String(b.dataset.v === t.music));
 }
 function setTune(key, v) {
   settings.tune = settings.tune || {};
-  settings.tune[P.id] = Object.assign({}, settings.tune[P.id] || {}, { [key]: v });
+  const id = C.CARS[settings.car].id;
+  settings.tune[id] = Object.assign({}, settings.tune[id] || {}, { [key]: v });
   saveSettings(); renderTune();
+  if (key === 'music') { initAudio(); return; } // the speakers just start or stop
   // let them hear it: blip the throttle and lift (the click is the user gesture audio needs; initAudio
   // rebuilds the engine voice when the exhaust changed)
   initAudio(); if (!A.ctx) return;
@@ -349,9 +378,23 @@ function setTune(key, v) {
 const REV_T = 2.4;
 for (const b of $('tuneDump').children) b.addEventListener('click', () => setTune('dump', b.dataset.v));
 for (const b of $('tuneExh').children) b.addEventListener('click', () => setTune('exhaust', b.dataset.v));
-function selectCar(i) {
+for (const b of $('tuneMusic').children) b.addEventListener('click', () => setTune('music', b.dataset.v));
+function selectCar(i, btn) {
   if (mode === 'loading') return;
+  const c = C.CARS[i];
+  if (isBonus(c) && !bonusOK(curKeyMenu())) {
+    if (btn) { btn.classList.remove('shake'); void btn.offsetWidth; btn.classList.add('shake'); }
+    const lead = leaderOf(curKeyMenu());
+    toast(lead ? `Only ${lead.n} (No. 1 on ${C.stageDef(mapKey(curKeyMenu())).name}) gets the Saveiro here. Beat ${fmt(lead.t)} first.` : 'Set the fastest time on this road first: the Saveiro goes to the No. 1.');
+    return;
+  }
+  if (!isBonus(c)) settings.lastCar = i;
+  const fresh = isBonus(c) && settings.car !== i;
   settings.car = i; saveSettings(); renderCarList();
+  if (fresh) {
+    initAudio(); if (A.ctx && sfx.horn) { sfx.horn(-0.3); setTimeout(() => sfx.horn(0.3), 260); }
+    const row = $('carList').children[i]; if (row) row.classList.add('yay');
+  }
   if (rally && rally.playing) { rally.playing = false; saveRally(); if (curKey() !== loadedKey) { loadStage(curKey()); return; } }
   setupCar(); renderStageInfo();
 }
@@ -360,6 +403,7 @@ function menuGo() {
   const tab = document.querySelector('.tab[aria-selected="true"]');
   if (tab && tab.id === 'tabRally') { startOrContinueRally(); return; }
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
+  if (keepCarAllowed()) { renderCarList(); if (curKey() === loadedKey) setupCar(); }
   if (curKey() !== loadedKey) { loadStage(curKey(), () => startRace()); return; }
   startRace();
 }
@@ -387,7 +431,7 @@ function loadStage(key, after) {
     if (after) after();
   }, 50);
 }
-function disposeCar(m) { if (!m) return; for (const k of ['body', 'glass', 'lens', 'lightF', 'lightR', 'flame', 'wheel', 'wheelBlur', 'caliper']) R.disposeMesh(m[k]); if (m.tex) gl.deleteTexture(m.tex); if (m.tyreTex) gl.deleteTexture(m.tyreTex); }
+function disposeCar(m) { if (!m) return; for (const k of ['body', 'glass', 'lens', 'lightF', 'lightR', 'flame', 'wheel', 'wheelBlur', 'caliper', 'spk']) R.disposeMesh(m[k]); if (m.tex) gl.deleteTexture(m.tex); if (m.tyreTex) gl.deleteTexture(m.tyreTex); }
 function setupCar() {
   P = C.CARS[settings.car];
   disposeCar(carModel);
@@ -403,6 +447,7 @@ function setupCar() {
   pb = loadPB(W.st.key, P.id);
   if (pb) pb.sArr = refCurve(pb.ghost);
   loadChallenge();
+  loadLead(); if (settings.leadGhost) onlineGhost(mapKey(W.st.key));
   aiDone = C.prepAI(W, P, 0.86);
   car = C.makeCar(W, P, W.T.spawnS);
   snapVis();
@@ -568,6 +613,7 @@ function newRally(it) {
   saveRally();
 }
 function startOrContinueRally() {
+  if (isBonus(C.CARS[settings.car])) { settings.car = plainCar(); saveSettings(); toast('Rallies are run in the rally cars: the Saveiro waits outside.'); }
   if (!rally || rally.done) newRally(RALLIES.find(r => r.id === settings.rallyId) || RALLIES[0]);
   rally.playing = true; saveRally();
   settings.car = C.CARS.findIndex(c => c.id === rally.car); saveSettings(); renderCarList();
@@ -712,24 +758,78 @@ async function onlineFetch(key) {
     return c ? c.rows : [];
   } finally { online.busy.delete(key); }
 }
-// your bests that haven't gone up yet (all of them the first time, so times set before the board existed count too)
+// your bests that haven't gone up yet (all of them the first time, so times set before the board existed count too).
+// Each goes up with its run (the packed ghost, deflated: a few KB) when this browser still has it, so the No. 1 on a
+// road can be raced as a ghost; bests that went up before ghosts existed go up once more with theirs. A server
+// without the ghost column (online/supabase.sql not updated yet) answers 400: then times go up without ghosts.
 let syncing = false;
+async function ghostEncode(q) { const raw = b64d(q); let body = null; try { body = await zip(raw, false); } catch (e) { body = null; } return (body ? 'z' : 'r') + b64e(body || raw); }
+async function ghostDecode(str) {
+  try { let u8 = b64d(str.slice(1)); if (str[0] === 'z') { u8 = await zip(u8, true); if (!u8) return null; } else if (str[0] !== 'r') return null; return unpackGhost(u8).g; } catch (e) { return null; }
+}
+function ownGhost(e) { const r = store.get(pbKey(e.k, e.c), null); return r && r.q && Math.abs(r.t - e.t) < 0.005 ? r.q : null; }
 async function onlineSync() {
   if (!online.on || !settings.name || syncing) return;
-  const sent = new Set(store.get('sent', [])), me = settings.name.toLowerCase(), id = e => e.n.toLowerCase() + '|' + e.k + '|' + e.c + '|' + e.t.toFixed(3);
-  const todo = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && !sent.has(id(e))).slice(0, 200);
+  const sent = new Set(store.get('sent', [])), sentG = new Set(store.get('sentG', [])), me = settings.name.toLowerCase(), id = e => e.n.toLowerCase() + '|' + e.k + '|' + e.c + '|' + e.t.toFixed(3);
+  const withG = !online.noGhost;
+  const all = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && !isBonus(carById(e.c)) && (!sent.has(id(e)) || (withG && !sentG.has(id(e)) && ownGhost(e))));
+  const todo = all.slice(0, withG ? 25 : 200);
   if (!todo.length) return;
   syncing = true;
+  let retry = false;
   try {
-    const r = await fetch(ONLINE.url.replace(/\/$/, '') + '/rest/v1/times', { method: 'POST', headers: onlineHeaders(true),
-      body: JSON.stringify(todo.map(e => ({ name: e.n, stage: e.k, car: e.c, time: +e.t.toFixed(3), splits: (e.s || []).slice(0, 4).map(x => +(+x).toFixed(3)) }))) });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    for (const e of todo) sent.add(id(e));
-    store.set('sent', [...sent].slice(-3000));
-    for (const e of todo) online.cache.delete(mapKey(e.k));
+    const rows = [];
+    for (const e of todo) {
+      const row = { name: e.n, stage: e.k, car: e.c, time: +e.t.toFixed(3), splits: (e.s || []).slice(0, 4).map(x => +(+x).toFixed(3)) };
+      if (withG) { const q = ownGhost(e); row.ghost = q ? await ghostEncode(q) : null; if (row.ghost && row.ghost.length > 39000) row.ghost = null; }
+      rows.push(row);
+    }
+    const r = await fetch(ONLINE.url.replace(/\/$/, '') + '/rest/v1/times', { method: 'POST', headers: onlineHeaders(true), body: JSON.stringify(rows) });
+    if (!r.ok) { if (withG && r.status === 400) { online.noGhost = true; retry = true; } throw new Error('HTTP ' + r.status); }
+    for (const [i, e] of todo.entries()) { sent.add(id(e)); if (rows[i].ghost) sentG.add(id(e)); else if (withG) sentG.add(id(e)); }
+    store.set('sent', [...sent].slice(-3000)); store.set('sentG', [...sentG].slice(-3000));
+    for (const e of todo) { online.cache.delete(mapKey(e.k)); online.gAt.delete(mapKey(e.k)); }
     online.status = 'ok'; renderTimes();
+    if (settings.leadGhost && W) onlineGhost(mapKey(W.st.key)); // your new run may be the No. 1 now
+    retry = all.length > todo.length;
   } catch (e) { online.status = 'error'; }
-  finally { syncing = false; }
+  finally { syncing = false; if (retry) setTimeout(onlineSync, 1500); }
+}
+// ---- the No. 1's ghost: the fastest recorded run on this road (yours, a friend's challenge, or the online board's),
+// drawn in gold with a name tag when the "No. 1 ghost" option is on ----
+online.ghosts = new Map(); online.gAt = new Map();
+let lead = null;
+async function onlineGhost(m) {
+  if (!online.on || online.noGhost) return;
+  const at = online.gAt.get(m); if (at && performance.now() - at < 60000) return;
+  online.gAt.set(m, performance.now());
+  try {
+    const r = await fetch(ONLINE.url.replace(/\/$/, '') + '/rest/v1/times?select=name,stage,car,time,ghost&stage=in.(' + mapVariants(m).map(encodeURIComponent).join(',') + ')&ghost=not.is.null&order=time.asc&limit=1', { headers: onlineHeaders(false) });
+    if (!r.ok) { if (r.status === 400) online.noGhost = true; return; }
+    const row = (await r.json())[0];
+    if (!row || typeof row.ghost !== 'string' || !carById(row.car) || isBonus(carById(row.car)) || !(row.time > 20)) return;
+    const g = await ghostDecode(row.ghost); if (!g) return;
+    online.ghosts.set(m, { n: cleanName(row.name), t: +row.time, c: row.car, k: row.stage, g });
+    if (W && mapKey(W.st.key) === m) loadLead();
+  } catch (e) { /* offline: the local candidates still count */ }
+}
+function loadLead() {
+  lead = null;
+  if (!W) return;
+  const m = mapKey(W.st.key), cands = [];
+  for (const k of mapVariants(m)) {
+    for (const c of C.CARS) if (!c.bonus) { const r = store.get(pbKey(k, c.id), null); if (r && r.q) cands.push({ n: driverName(), t: r.t, c: c.id, k, q: r.q }); }
+    const ch = store.get('chal.' + k, null); if (ch && ch.q) cands.push({ n: ch.n, t: ch.t, c: ch.c, k, q: ch.q });
+  }
+  const og = online.ghosts.get(m); if (og) cands.push(og);
+  cands.sort((a, b) => a.t - b.t);
+  for (const c of cands) {
+    try {
+      const g = c.g || unpackGhost(b64d(c.q)).g;
+      if (Math.abs(g.length / 4 * 0.05 - c.t) > 3) continue; // a recording that doesn't match its time
+      lead = { n: c.n, t: c.t, c: c.c, ghost: g, sArr: refCurve(g) }; break;
+    } catch (e) { /* unreadable: try the next one */ }
+  }
 }
 let timesStage = null, timesCar = 'all';
 function renderTimes() {
@@ -743,7 +843,7 @@ function renderTimes() {
     const keys = [...new Set([key, mapKey(curKeyMenu()), ...b.map(e => mapKey(e.k))])].filter(k => C.stageDef(k));
     keys.sort((a, c) => (a === key ? -1 : c === key ? 1 : 0) || C.stageTitle(C.stageDef(a)).localeCompare(C.stageTitle(C.stageDef(c))));
     for (const k of keys) { const o = el('option', null, C.stageTitle(C.stageDef(k)) + (/^daily-/.test(k) ? ' · ' + k.slice(12, 14) + '/' + k.slice(10, 12) : '')); o.value = k; o.selected = k === key; ss.append(o); }
-    for (const [v, t] of [['all', 'All cars'], ...C.CARS.map(c => [c.id, shortCar(c.id)])]) { const o = el('option', null, t); o.value = v; o.selected = v === timesCar; cs.append(o); }
+    for (const [v, t] of [['all', 'All cars'], ...C.CARS.filter(c => !c.bonus).map(c => [c.id, shortCar(c.id)])]) { const o = el('option', null, t); o.value = v; o.selected = v === timesCar; cs.append(o); }
     ss.addEventListener('change', () => { timesStage = ss.value; renderTimes(); });
     ss.title = 'Day, night and rain runs of a stage share its table';
     cs.addEventListener('change', () => { timesCar = cs.value; renderTimes(); });
@@ -756,7 +856,7 @@ function renderTimes() {
       if (!have || e.t < have.t - 1e-4) merged.set(id, e);
     }
     let rows = [...merged.values()].filter(e => timesCar === 'all' || e.c === timesCar).sort((a, c) => a.t - c.t).slice(0, 40);
-    if (rival && mapKey(loadedKey) === key && (timesCar === 'all' || timesCar === P.id)) rows = [...rows, { n: W.st.rival + ' (AI)', k: loadedKey, c: P.id, t: rival.time, ai: 1 }].sort((a, c) => a.t - c.t);
+    if (rival && !isBonus(P) && mapKey(loadedKey) === key && (timesCar === 'all' || timesCar === P.id)) rows = [...rows, { n: W.st.rival + ' (AI)', k: loadedKey, c: P.id, t: rival.time, ai: 1 }].sort((a, c) => a.t - c.t);
     const note = el('p', 'board-note', online.on ? (online.status === 'error' ? 'Offline: showing this browser\'s times' : oc ? 'Online leaderboard' : 'Loading the online leaderboard…') : 'Times on this browser and from friends\' links');
     box.append(note);
     if (!rows.length) { box.append(el('p', 'empty', 'No times on this stage yet. Set one, or open a friend\'s link.')); continue; }
@@ -778,7 +878,10 @@ function renderTimes() {
   if (online.on) {
     const c = online.cache.get(key);
     // one request at a time per stage: drawing again while it is out must not start (or wait on) another
-    if ((!c || performance.now() - c.at >= 30000) && !online.busy.has(key)) onlineFetch(key).then(() => { if ((timesStage || curKeyMenu()) === key) renderTimes(); });
+    if ((!c || performance.now() - c.at >= 30000) && !online.busy.has(key)) onlineFetch(key).then(() => {
+      if ((timesStage || curKeyMenu()) === key) renderTimes();
+      if (mapKey(curKeyMenu()) === key && mode === 'menu') { if (keepCarAllowed() && curKey() === loadedKey) setupCar(); renderCarList(); }
+    });
   }
 }
 async function shareTimes() {
@@ -814,7 +917,8 @@ function confirmName() {
   $('optName').value = name;
   if (!settings.boardSeeded) { seedBoard(name); settings.boardSeeded = 1; saveSettings(); } else renameOnBoard(old, name);
   $('welcome').hidden = true;
-  updateDriver(); renderTimes(); onlineSync();
+  if (keepCarAllowed() && W) setupCar();
+  updateDriver(); renderTimes(); renderCarList(); onlineSync();
 }
 function updateDriver() { $('driverName').textContent = settings.name || '—'; }
 $('wGo').addEventListener('click', confirmName);
@@ -869,19 +973,23 @@ function finish() {
   const old = store.get(pbKey(key, P.id), null), oldBest = stageBest(key);
   const isPB = !old || finishT < old.t;
   const ghost = new Float32Array(ghostRec);
-  lastRun = { key, car: P.id, t: finishT, splits: splitsHit.slice(), ghost };
-  if (isPB) {
+  const bonus = isBonus(P);
+  lastRun = bonus ? null : { key, car: P.id, t: finishT, splits: splitsHit.slice(), ghost };
+  if (bonus) { /* the Saveiro's times never count: no best, no medal, nothing on the board */ }
+  else if (isPB) {
     store.set(pbKey(key, P.id), { t: finishT, car: P.id, splits: splitsHit.slice(), q: b64e(packGhost(ghost)), at: Date.now() });
     pb = { t: finishT, car: P.id, splits: splitsHit.slice(), ghost }; pb.sArr = refCurve(ghost);
   }
-  if (medal > store.get('medal.' + key, 0)) store.set('medal.' + key, medal);
-  if (settings.name && boardAdd([{ n: settings.name, k: key, c: P.id, t: finishT, s: splitsHit.slice(), d: Date.now() }])) onlineSync();
+  if (!bonus && medal > store.get('medal.' + key, 0)) store.set('medal.' + key, medal);
+  if (!bonus && settings.name && boardAdd([{ n: settings.name, k: key, c: P.id, t: finishT, s: splitsHit.slice(), d: Date.now() }])) onlineSync();
   rallyLeg = rallyOn() ? rallyFinishLeg(finishT) : null;
   center(`<div class="mid yel">Finish</div><div class="sub">${fmt(finishT)}</div>`, 2.4);
   sfx.beep(880, 0.12); setTimeout(() => sfx.beep(1320, 0.25), 140);
   const beat = chal && finishT < chal.t;
   say(rallyLeg ? (rallyLeg.pos === 1 ? 'Stop. Fastest time. Mega.' : 'Stop. Good stage.') : beat ? `Stop. We beat ${chal.n}.` : medal === 3 ? 'Stage win. Mega.' : medal ? 'Stop. Good stage.' : 'Stop. We go again.');
-  buildResults(old, isPB, medal, oldBest);
+  buildResults(old, !bonus && isPB, medal, oldBest);
+  if (bonus) { $('rPB').hidden = false; $('rPB').textContent = 'Saveiro run · doesn\'t count'; $('rShare').hidden = true; }
+  else loadLead();
 }
 function buildResults(old, isPB, medal, oldBest) {
   const inRally = !!rallyLeg;
@@ -1054,6 +1162,7 @@ const VOICES = {
   pejo:     { orders: [[2, 'sawtooth', 0.55], [4, 'square', 0.16], [1, 'square', 0.12], [6, 'sawtooth', 0.06]], drive: 11, lp: [520, 3000], q: 4.5, am: 0.08, amRate: 2, turbo: 0.03, whine: 0, flutter: 1, antilag: 0.25, induct: 0.09 },
   selica:   { orders: [[2, 'sawtooth', 0.52], [4, 'square', 0.12], [1, 'sawtooth', 0.2], [6, 'sawtooth', 0.05]], drive: 7, lp: [500, 2800], q: 3.4, am: 0.07, amRate: 2, turbo: 0.014, whine: 0.012, flutter: 0, antilag: 0.85, induct: 0.06 },
   kwattro:  { orders: [[2.5, 'sawtooth', 0.5], [5, 'square', 0.1], [1.25, 'sawtooth', 0.3], [0.5, 'sine', 0.24]], drive: 8, lp: [420, 2500], q: 3, am: 0.38, amRate: 0.5, turbo: 0.032, whine: 0, flutter: 0.3, antilag: 1.0, induct: 0.08 },
+  saveiro:  { orders: [[2, 'sawtooth', 0.55], [4, 'square', 0.12], [1, 'sawtooth', 0.24], [6, 'sawtooth', 0.05]], drive: 8, lp: [470, 2700], q: 3.4, am: 0.07, amRate: 2, turbo: 0.03, whine: 0.016, flutter: 0, antilag: 1.0, induct: 0.07 },
 };
 // Combustion model per car (AudioWorklet path). Pulses are shaped in crank angle, so the timbre follows the revs,
 // while the exhaust pipes add fixed resonances on top, which is what makes it read as an engine and not a synth.
@@ -1067,6 +1176,8 @@ const ENGINES = {
   pejo:     { cyl: 4, off: [0, 0.02, 0.01, 0], amp: [1, 0.94, 1.05, 0.96], rasp: 0.65, sharp: 0.5, decay: 0.045, pipes: [[1.5, 0.5], [0.4, 0.36]], intake: 0.42, mech: 0.12, drive: 2.2, muf: [3600, 6450], body: [210, 2], gain: 0.51 },
   selica:   { cyl: 4, off: [0, 0.02, -0.01, 0.015], amp: [1, 0.97, 1.03, 0.97], rasp: 0.48, sharp: 0.45, decay: 0.06, pipes: [[2.3, 0.5], [0.5, 0.33]], intake: 0.34, mech: 0.09, drive: 1.9, muf: [3000, 5300], body: [175, 3], gain: 0.47 },
   kwattro:  { cyl: 5, off: [0, 0.04, -0.03, 0.05, 0], amp: [1, 0.93, 1.06, 0.9, 1.02], rasp: 0.46, sharp: 0.4, decay: 0.08, pipes: [[2.5, 0.5], [0.65, 0.3]], intake: 0.3, mech: 0.07, drive: 1.7, muf: [2400, 4350], body: [130, 4], gain: 0.61 },
+  // the Saveiro: a 1.6 four with a straight-through pipe, rough and loud
+  saveiro:  { cyl: 4, off: [0, 0.03, -0.02, 0.02], amp: [1, 0.94, 1.05, 0.97], rasp: 0.62, sharp: 0.5, decay: 0.055, pipes: [[1.9, 0.52], [0.5, 0.34]], intake: 0.38, mech: 0.11, drive: 2.1, muf: [3100, 5600], body: [170, 3], gain: 0.5 },
 };
 const AUDIO_WORKLET = `
 const TAU = 6.283185307179586;
@@ -1515,6 +1626,54 @@ function buildReverb() {
   }
   A.conv.buffer = buf; A.revWet = Pv.wet;
 }
+// ---- the Saveiro's sound system: a synthesised cumbia from the bed (kick and bass on 1 and 3, güiro scrapes, offbeat
+// keyboard chords, a conga) that goes through the car's own bus, so it follows the truck like its engine does; the
+// speaker cones pump on the kick (spkPump) ----
+const BEAT = { bpm: 96, roots: [55, 49, 43.65, 41.2], chords: [[220, 261.6, 329.6], [196, 246.9, 293.7], [174.6, 220, 261.6], [164.8, 207.7, 246.9]] };
+function updateBeat(c, t) {
+  const on = isBonus(P) && getTune(P.id).music !== 'off' && mode !== 'loading' && mode !== 'boot';
+  if (!on) { A.beatNext = 0; if (A.beatBus) A.beatBus.gain.setTargetAtTime(0, t, 0.05); return; }
+  if (!A.beatBus) {
+    A.beatBus = A.gain(0); A.beatIn = A.filt('highpass', 45, 0.7); A.beatLp = A.filt('lowpass', 6500, 0.6);
+    A.beatIn.connect(A.beatLp); A.beatLp.connect(A.beatBus); A.beatBus.connect(A.car);
+  }
+  A.beatBus.gain.setTargetAtTime(mode === 'menu' ? 0.26 : 0.32, t, 0.1);
+  const sd = 60 / BEAT.bpm / 4;
+  if (!A.beatNext || A.beatNext < t - 0.2) { A.beatNext = t + 0.05; A.beatStep = 0; }
+  while (A.beatNext < t + 0.12) { beatStep(c, A.beatNext, A.beatStep, sd); A.beatNext += sd; A.beatStep = (A.beatStep + 1) % 64; }
+}
+function beatStep(c, w, st, sd) {
+  const s = st % 16, bar = (st / 16) | 0, out = A.beatIn, root = BEAT.roots[bar];
+  if (s === 0 || s === 8) { // kick
+    const o = c.createOscillator(), g = c.createGain();
+    o.frequency.setValueAtTime(110, w); o.frequency.exponentialRampToValueAtTime(42, w + 0.12);
+    g.gain.setValueAtTime(0.0001, w); g.gain.linearRampToValueAtTime(0.5, w + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, w + 0.3);
+    o.connect(g); g.connect(out); o.start(w); o.stop(w + 0.32);
+    A.kicks = (A.kicks || []).filter(k => k > c.currentTime - 1); A.kicks.push(w);
+  }
+  if (s === 0 || s === 8 || s === 14) beatTone(c, w, s === 8 ? root * 1.5 : s === 14 ? root * 2 : root, s === 14 ? sd * 1.6 : sd * 5, 0.36, 300, true);
+  if (s % 4 === 0) sfx.burst(w, 0.11, 'bandpass', 4200, 1.6, 0.05, 0.03, out);                 // güiro: a long scrape on the beat,
+  else if (s % 4 >= 2) sfx.burst(w, 0.035, 'bandpass', 4800, 1.8, 0.04, 0.004, out);          // two short ones after it
+  if (s % 4 === 2) for (const f of BEAT.chords[bar]) beatTone(c, w, f, sd * 1.4, 0.035, 1800, false);
+  if (s === 7 || s === 15) sfx.toneAt(w, 196, 0.14, 'sine', 0.12, 170, out);                  // conga
+  if (s === 6) sfx.toneAt(w, 262, 0.1, 'sine', 0.09, 230, out);
+}
+function beatTone(c, w, f, d, vol, cut, bass) {
+  const o = c.createOscillator(), lp = c.createBiquadFilter(), g = c.createGain();
+  o.type = bass ? 'sine' : 'square'; o.frequency.value = f; lp.type = 'lowpass'; lp.frequency.value = cut;
+  o.connect(lp);
+  let o2 = null; if (bass) { o2 = c.createOscillator(); o2.type = 'square'; o2.frequency.value = f; const g2 = c.createGain(); g2.gain.value = 0.25; o2.connect(g2); g2.connect(lp); o2.start(w); o2.stop(w + d + 0.3); }
+  g.gain.setValueAtTime(0.0001, w); g.gain.linearRampToValueAtTime(vol, w + (bass ? 0.01 : 0.006));
+  if (bass) g.gain.setTargetAtTime(0.0001, w + d * 0.6, d * 0.25); else g.gain.exponentialRampToValueAtTime(0.0001, w + d);
+  lp.connect(g); g.connect(A.beatIn); o.start(w); o.stop(w + d + 0.3);
+}
+// how far the speaker cones stand out right now (m): a kick throws them out, they settle back
+function spkPump() {
+  if (!A.ctx || !A.kicks || !A.beatNext) return 0;
+  const t = A.ctx.currentTime; let p = 0;
+  for (const k of A.kicks) if (k <= t) p = Math.max(p, Math.exp(-(t - k) * 13));
+  return p * 0.014;
+}
 function updateAudio(dt) {
   if (!A.ctx || !A.voice) return;
   const c = A.ctx, t = c.currentTime, Vc = A.voice, V = Vc.V, E = P.engine;
@@ -1531,6 +1690,7 @@ function updateAudio(dt) {
   const tune = getTune(P.id), sport = tune.exhaust === 'sport';
   const lim = car.limiter > 0 ? 0.35 : 1;
   A.pz.gain.setTargetAtTime(mode === 'paused' ? 0 : 1, t, mode === 'paused' ? 0.03 : 0.08);
+  updateBeat(c, t);
   // ---- where the car is for the listener (the camera) ----
   buildReverb();
   const onboard = settings.cam === 2 && racing;
@@ -2370,6 +2530,9 @@ function updateHUD(dt) {
     if (pb) { const bs = pb.sArr[clamp(Math.floor(raceT / 0.05) - 1, 0, pb.sArr.length - 1)]; $('hPB').style.left = clamp((bs - T.startS) / span, 0, 1) * 100 + '%'; }
     if (chal) { const cs = chal.sArr[clamp(Math.floor(raceT / 0.05) - 1, 0, chal.sArr.length - 1)]; $('hChal').style.left = clamp((cs - T.startS) / span, 0, 1) * 100 + '%'; }
   } else { $('hRival').hidden = true; $('hPB').hidden = true; $('hChal').hidden = true; }
+  const showLead = settings.leadGhost && lead && (mode === 'race' || mode === 'done');
+  $('hLead').hidden = !showLead;
+  if (showLead) { const ls = lead.sArr[clamp(Math.floor(raceT / 0.05) - 1, 0, lead.sArr.length - 1)]; $('hLead').style.left = clamp((ls - T.startS) / span, 0, 1) * 100 + '%'; }
   deltaT -= dt;
   if (deltaT <= 0) {
     deltaT = 0.1;
@@ -2519,7 +2682,7 @@ function tick(dt, doRender) {
   if (doRender) render();
 }
 
-const ghostP = {};
+const ghostP = {}, spkT = M4.create(), spkM = M4.create();
 function render() {
   resize();
   const E = S.E;
@@ -2572,12 +2735,13 @@ function render() {
   // car
   const dcol = DIRT[W.st.kind].col, baseY = vis.y + susp.heave;
   R.drawLit(carModel.body, { model: carMat, mode: 5, tex: carModel.tex, dirt, carY: baseY, dirtCol: dcol });
+  if (carModel.spk) { M4.trs(spkT, 0, 0, -spkPump(), 0, 0, 0, 1); M4.mul(spkM, carMat, spkT); R.drawLit(carModel.spk, { model: spkM, dirt: dirt * 0.4, carY: baseY, dirtCol: dcol }); }
   for (let i = 0; i < 4; i++) R.drawLit(carModel.wheel, { model: wheelMatrix(i), mode: 11, tex: carModel.tyreTex, dirt: dirt * 0.9, carY: baseY, dirtCol: dcol });
   for (let i = 0; i < 4; i++) R.drawLit(carModel.caliper, { model: wheelMatrix(i, true), dirt: dirt * 0.6, carY: baseY, dirtCol: dcol });
   if (!(settings.cam === 2 && (mode === 'race' || mode === 'countdown'))) R.drawLit(carModel.lightF, { model: carMat, mode: 4, tint: lightsOn ? (E.night ? [2.6, 2.6, 2.6] : [1.9, 1.9, 1.9]) : [0.3, 0.3, 0.3] });
   if (flameT > 0) R.drawLit(carModel.flame, { model: carMat, mode: 4, tint: [2.6 + Math.random(), 1.6 + Math.random() * 0.6, 0.9] });
   const braking = (mode === 'race' && input.brk > 0.1) || mode === 'done' || (mode === 'race' && input.hb);
-  R.drawLit(carModel.lightR, { model: carMat, mode: 4, tint: braking ? [3.2, 3.2, 3.2] : [0.6, 0.6, 0.6] });
+  R.drawLit(carModel.lightR, { model: carMat, mode: 4, tint: braking ? [3.2, 3.2, 3.2] : lightsOn ? [0.85, 0.85, 0.85] : [0.55, 0.55, 0.55] });
   R.drawSky(E); // after opaque geometry: covered pixels fail the depth test and skip the sky shader
   // transparent pass
   gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
@@ -2602,20 +2766,29 @@ function render() {
   R.drawTrail(skid, E, mixLight(E), Math.min(skTotal, SK) * SKV);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   gl.disable(gl.POLYGON_OFFSET_FILL);
-  if (settings.ghost && (mode === 'race' || mode === 'done')) {
+  let leadPos = null;
+  if ((settings.ghost || (settings.leadGhost && lead)) && (mode === 'race' || mode === 'done')) {
     R.setLitFrame(E);
-    const drawGhost = (g, tint) => {
+    const drawGhost = (g, tint, amax) => {
       ghostPose(g, raceT, ghostP);
       const d = Math.hypot(ghostP.x - cam.pos[0], ghostP.z - cam.pos[2]);
-      const a = clamp((d - 3) / 6, 0, 1) * 0.32;
+      const a = clamp((d - 3) / 6, 0, 1) * (amax || 0.32);
       if (a <= 0.01) return;
       const gm = M4.trs(M4.create(), ghostP.x, ghostP.y, ghostP.z, ghostP.h, 0, 0, 1);
       R.drawLit(carModel.body, { model: gm, alpha: a, tint, mode: 5, tex: carModel.tex });
     };
-    drawGhost(rival.ghost, [0.75, 0.9, 1.3]);
-    if (pb) drawGhost(pb.ghost, [1.4, 1.2, 0.5]);
-    if (chal) drawGhost(chal.ghost, [1.5, 0.55, 0.65]);
+    if (settings.ghost) {
+      drawGhost(rival.ghost, [0.75, 0.9, 1.3]);
+      if (pb) drawGhost(pb.ghost, [1.4, 1.2, 0.5]);
+      if (chal) drawGhost(chal.ghost, [1.5, 0.55, 0.65]);
+    }
+    // the No. 1 in gold (not twice if it is the same run as your best or the challenge already on screen)
+    if (settings.leadGhost && lead && !(settings.ghost && ((pb && Math.abs(pb.t - lead.t) < 0.005) || (chal && Math.abs(chal.t - lead.t) < 0.005)))) {
+      drawGhost(lead.ghost, [2.1, 1.45, 0.12], 0.55); // stronger than the others: gold on gravel is otherwise hard to see
+      leadPos = { x: ghostP.x, y: ghostP.y, z: ghostP.z };
+    }
   }
+  placeLeadTag(leadPos);
   R.drawPoints(dust.pts, E, mixLight(E), 1);
   R.drawPoints(chips.pts, E, mixLight(E), 0);
   if (E.snowfall) { gl.blendFunc(gl.SRC_ALPHA, gl.ONE); R.drawPoints(snowPts, E, [0.9, 0.9, 1.0], 0.3); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); }
@@ -2635,12 +2808,26 @@ function render() {
   }
   R.endScene(E.grade, time, cam.blur, rays);
 }
+// the No. 1 ghost's name tag, over the ghost on screen (hidden when it is behind the camera, very close or far off)
+function placeLeadTag(p) {
+  const tag = $('leadTag');
+  if (!p) { if (!tag.hidden) tag.hidden = true; return; }
+  const d = Math.hypot(p.x - cam.pos[0], p.z - cam.pos[2]), vp = R.env.vp, y = p.y + 1.9;
+  const w = vp[3] * p.x + vp[7] * y + vp[11] * p.z + vp[15];
+  if (w <= 0.1 || d < 5 || d > 160) { tag.hidden = true; return; }
+  const nx = (vp[0] * p.x + vp[4] * y + vp[8] * p.z + vp[12]) / w, ny = (vp[1] * p.x + vp[5] * y + vp[9] * p.z + vp[13]) / w;
+  if (Math.abs(nx) > 1.1 || Math.abs(ny) > 1.1) { tag.hidden = true; return; }
+  const txt = `No. 1 · ${lead.n} · ${fmt(lead.t)}`; if (tag.textContent !== txt) tag.textContent = txt;
+  tag.hidden = false; tag.style.transform = `translate(${((nx * 0.5 + 0.5) * innerWidth).toFixed(1)}px, ${((0.5 - ny * 0.5) * innerHeight).toFixed(1)}px) translate(-50%, -100%)`;
+  tag.style.opacity = String(clamp((d - 5) / 6, 0, 1) * clamp((160 - d) / 40, 0, 1));
+}
 function mixLight(E) {
   const s = E.sunCol, a = E.sky, g = E.gnd, k = Math.max(0.2, E.sunDir[1]);
   return [a[0] * 0.8 + g[0] * 0.3 + s[0] * k * 0.7, a[1] * 0.8 + g[1] * 0.3 + s[1] * k * 0.7, a[2] * 0.8 + g[2] * 0.3 + s[2] * k * 0.7];
 }
 
 // ---------- boot ----------
+keepCarAllowed(curKey());
 renderStageInfo(); renderCarList(); updateToggles();
 setScreen('menu');
 const fontsReady = document.fonts && document.fonts.load ? Promise.race([
@@ -2649,7 +2836,7 @@ const fontsReady = document.fonts && document.fonts.load ? Promise.race([
 ]).catch(() => {}) : Promise.resolve();
 fontsReady.then(() => loadStage(curKey(), () => checkChallengeLink()));
 $('optName').value = settings.name || '';
-$('optName').addEventListener('change', () => { const old = settings.name, v = $('optName').value.replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 20); if (!v) { $('optName').value = old || ''; return; } settings.name = v; saveSettings(); if (settings.boardSeeded) renameOnBoard(old, v); else { seedBoard(v); settings.boardSeeded = 1; saveSettings(); } updateDriver(); renderTimes(); });
+$('optName').addEventListener('change', () => { const old = settings.name, v = $('optName').value.replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 20); if (!v) { $('optName').value = old || ''; return; } settings.name = v; saveSettings(); if (settings.boardSeeded) renameOnBoard(old, v); else { seedBoard(v); settings.boardSeeded = 1; saveSettings(); } if (keepCarAllowed() && W) setupCar(); updateDriver(); renderTimes(); renderCarList(); });
 updateDriver();
 if (!settings.name) showWelcome(false);
 else if (!settings.boardSeeded) { seedBoard(settings.name); settings.boardSeeded = 1; saveSettings(); }

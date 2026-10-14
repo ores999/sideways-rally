@@ -66,6 +66,29 @@ kbd { font-family: var(--f-mono); font-size: 11px; font-weight: 500; padding: 1p
 .car-row .hp { font-family: var(--f-mono); font-size: 13px; color: var(--paper-2); text-align: right; line-height: 1.25; }
 .car-row .hp small { display: block; font-family: var(--f-ui); }
 .swatch { width: 28px; height: 28px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(255,255,255,.22); }
+/* the bonus car (Saveiro): a gold border that runs round the card, a shine that sweeps across, sparkles, a bounce
+   and an air horn when you take it, a shake when it isn't yours to take */
+@property --sv { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+.car-row.bonus { position: relative; overflow: hidden; border: 2px solid transparent; padding: 8px 11px;
+  background: linear-gradient(#171b22, #171b22) padding-box, conic-gradient(from var(--sv), #7d5f17, #ffe08a, #d4a62a, #fff6cf, #b8892a, #ffe08a, #7d5f17) border-box;
+  animation: svSpin 3s linear infinite; }
+.car-row.bonus[aria-pressed="true"] { background: linear-gradient(90deg, rgba(255, 214, 110, 0.1), rgba(255, 214, 110, 0)) padding-box, linear-gradient(#171b22, #171b22) padding-box, conic-gradient(from var(--sv), #7d5f17, #ffe08a, #d4a62a, #fff6cf, #b8892a, #ffe08a, #7d5f17) border-box;
+  box-shadow: 0 0 22px rgba(255, 205, 90, .3), inset 3px 0 0 #ffd36a; }
+.car-row.bonus > * { position: relative; z-index: 1; }
+.car-row.bonus b { background: linear-gradient(90deg, #f3cd5f, #fff3c4 45%, #d4a62a); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.car-row.bonus::after { content: ''; position: absolute; inset: 0; pointer-events: none; transform: translateX(-130%);
+  background: linear-gradient(105deg, transparent 44%, rgba(255, 236, 180, .16) 50%, transparent 56%); animation: svShine 2.8s ease-in-out infinite; z-index: 0; }
+.car-row.bonus .spark { position: absolute; color: #ffe39a; font-size: 11px; line-height: 1; pointer-events: none; animation: svTw 1.7s ease-in-out infinite; }
+.car-row.bonus .lock { color: var(--mute); }
+.car-row.bonus.locked { filter: saturate(.4) brightness(.82); }
+.car-row.bonus.locked::after { animation-duration: 6s; }
+.car-row.bonus.yay { animation: svBounce .65s cubic-bezier(.3, 1.6, .5, 1), svSpin 3s linear infinite; }
+.car-row.bonus.shake { animation: svShake .42s ease-in-out, svSpin 3s linear infinite; }
+@keyframes svSpin { to { --sv: 360deg; } }
+@keyframes svShine { 0%, 55% { transform: translateX(-130%); } 100% { transform: translateX(130%); } }
+@keyframes svTw { 0%, 100% { opacity: 0; transform: scale(.3) rotate(0deg); } 50% { opacity: 1; transform: scale(1) rotate(90deg); } }
+@keyframes svBounce { 0% { scale: 1; rotate: 0deg; } 30% { scale: 1.07; rotate: -2.5deg; } 60% { scale: .98; rotate: 1.5deg; } 100% { scale: 1; rotate: 0deg; } }
+@keyframes svShake { 20%, 60% { translate: -7px 0; } 40%, 80% { translate: 7px 0; } }
 .group-label { margin: 10px 2px 2px; }
 .group-label:first-child { margin-top: 0; }
 .opt { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--raise); text-align: left; }
@@ -168,6 +191,9 @@ dl.spec dd em { font-style: normal; color: var(--mute); }
 .prog em { position: absolute; top: -4px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; border: 2px solid #b8d3ff; box-sizing: border-box; }
 .prog em.pb { border-color: var(--gold); }
 .prog em.ch { border-color: #ff6b8a; }
+.prog em.ld { border-color: #ffd36a; background: #ffd36a; box-shadow: 0 0 8px rgba(255, 211, 106, .7); }
+#leadTag { position: fixed; left: 0; top: 0; z-index: 4; pointer-events: none; white-space: nowrap; font: 700 12px/1 var(--f-ui); letter-spacing: .04em; color: #1b1608;
+  background: linear-gradient(90deg, #f3cd5f, #fff0b8, #e0b23e); padding: 4px 8px; border-radius: 999px; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
 .timer { text-align: center; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 16px 7px; min-width: 190px; backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass); box-shadow: var(--sheen), 0 8px 24px rgba(0,0,0,.25); }
 .timer .t { font-family: var(--f-mono); font-weight: 700; font-size: 34px; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
 .timer .d { font-family: var(--f-mono); font-weight: 500; font-size: 15px; font-variant-numeric: tabular-nums; min-height: 18px; color: var(--mute); }
@@ -310,18 +336,18 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
   .hint { bottom: calc(100px + env(safe-area-inset-bottom, 0px)); font-size: 13px; }
   .center { top: 40%; }
 }
-@media (prefers-reduced-motion: reduce) { .pop, #loading p::after, .note, .medal, .card { animation: none; } .go, .row, .tab, .switch, .switch::after { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .pop, #loading p::after, .note, .medal, .card, .car-row.bonus, .car-row.bonus::after, .car-row.bonus .spark { animation: none; } .go, .row, .tab, .switch, .switch::after { transition: none; } }
 </style>
 
 <div id="app">
-  <canvas id="view" aria-label="Rally stage view"></canvas>
+  <canvas id="view" aria-label="Rally stage view"></canvas><div id="leadTag" hidden></div>
   <div id="hitFlash" aria-hidden="true"></div>
 
   <div id="hud" hidden>
     <div class="hud-top">
       <div class="stagebar">
         <div class="nm"><span id="hStage">Pine Ridge</span><em id="hSurf">Gravel</em></div>
-        <div class="prog" id="hProgBar"><i id="hProg"></i><b id="hS1"></b><b id="hS2"></b><em id="hRival" title="Rival"></em><em id="hPB" class="pb" title="Your best" hidden></em><em id="hChal" class="ch" title="Challenge" hidden></em></div>
+        <div class="prog" id="hProgBar"><i id="hProg"></i><b id="hS1"></b><b id="hS2"></b><em id="hRival" title="Rival"></em><em id="hPB" class="pb" title="Your best" hidden></em><em id="hChal" class="ch" title="Challenge" hidden></em><em id="hLead" class="ld" title="No. 1" hidden></em></div>
       </div>
       <div class="timer"><div class="t" id="hTime">0:00.00</div><div class="d" id="hDelta"></div></div>
       <canvas id="minimap" width="300" height="300"></canvas>
@@ -373,6 +399,8 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
             <div class="seg" id="tuneDump"><button data-v="bov" aria-pressed="true">Blow-off valve</button><button data-v="flutter" aria-pressed="false">Flutter</button></div></div>
           <div class="tune-row"><b>Exhaust</b><small>Sport is louder and raspier, and crackles when you come off the throttle</small>
             <div class="seg" id="tuneExh"><button data-v="stock" aria-pressed="true">Stock</button><button data-v="sport" aria-pressed="false">Sport</button></div></div>
+          <div class="tune-row" id="tuneMusicRow" hidden><b>Speakers</b><small>The sound system in the bed. It plays cumbia, obviously</small>
+            <div class="seg" id="tuneMusic"><button data-v="on" aria-pressed="true">On</button><button data-v="off" aria-pressed="false">Off</button></div></div>
           <small class="tune-note">Tap an option to hear it. Sound only: the car drives the same.</small>
         </div>
         <div id="specInline"></div>
@@ -386,6 +414,7 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
         <button class="opt" id="optVoice" aria-pressed="true"><b>Co-driver voice</b><span class="switch"></span><small>Pace notes read out loud ahead of each corner</small></button>
         <button class="opt" id="optSound" aria-pressed="true"><b>Sound</b><span class="switch"></span><small>Engine, turbo, gravel and crowd. <kbd>M</kbd> mutes in a run</small></button>
         <button class="opt" id="optGhost" aria-pressed="true"><b>Ghost cars</b><span class="switch"></span><small>Race the rival and your personal best</small></button>
+        <button class="opt" id="optLead" aria-pressed="false"><b>No. 1 ghost</b><span class="switch"></span><small>Race the fastest recorded run on the road, in gold, the way its driver drove it</small></button>
         <p class="label group-label">Graphics</p>
         <button class="opt" id="optShadows" aria-pressed="true"><b>Shadows and sharp rendering</b><span class="switch"></span><small>Turn off if the game stutters</small></button>
         <button class="opt" id="optPost" aria-pressed="true"><b>Glow and colour grading</b><span class="switch"></span><small>Bloom, film-style colour and smooth edges. Turn off on slow devices</small></button>
@@ -426,6 +455,7 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
         <button class="opt" id="pVoice" aria-pressed="true"><b>Co-driver voice</b><span class="switch"></span></button>
         <button class="opt" id="pSound" aria-pressed="true"><b>Sound</b><span class="switch"></span></button>
         <button class="opt" id="pGhost" aria-pressed="true"><b>Ghost cars</b><span class="switch"></span></button>
+        <button class="opt" id="pLead" aria-pressed="false"><b>No. 1 ghost</b><span class="switch"></span></button>
         <button class="opt" id="pLights" aria-pressed="false"><b>Headlights</b><span class="switch"></span><small><kbd>L</kbd> switches them in a run</small></button>
       </div>
       <div class="actions">

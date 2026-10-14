@@ -27,3 +27,7 @@ create or replace view public.best_times with (security_invoker = true) as
 
 grant select, insert on public.times to anon, authenticated;
 grant select on public.best_times to anon, authenticated;
+
+-- 2026-10 · the No. 1's ghost. Run this once more (it only adds a column): each time can carry its run as a packed,
+-- deflated, base64url ghost (3–6 KB), so the fastest driver on a road can be raced the way they drove it.
+alter table public.times add column if not exists ghost text check (ghost is null or char_length(ghost) < 40000);
