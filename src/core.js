@@ -113,7 +113,7 @@ const CARS = [
     // exaggerated on purpose: grip and brakes far past any rally car, so it turns like nothing and stops on a coin
     mass: 1080, wd: 0.56, wb: 2.75, cgH: 0.38, inertia: 0.75, CdA: 0.86, ClA: 2.4, brake: 2.6, lock: 0.72, tyre: 1.75, agility: 1.6, frontGrip: 1.12,
     feel: { lag: 0.05, kick: 1.0, ayc: 0.6, push: 0, twitch: 0.85 },
-    character: 'A pickup with 560 hp, a sound system in the bed, grip from another planet and brakes that stop it on a coin. Only the fastest driver on a road gets the keys, and nothing it does goes on the board.',
+    character: 'A pickup with 560 hp, a sound system in the bed, grip from another planet and brakes that stop it on a coin. Only the fastest driver on a road gets the keys, and its times go on the board without ever counting.',
     col: { base: '#f4f4f1', roof: '#f4f4f1', lower: '#1b1c1f', stripe: '#d4a62a', stripe2: '#1b1c1f', rim: '#d9ad3a', text: '#1b1c1f', gold: '#d4a62a' } },
 ];
 
