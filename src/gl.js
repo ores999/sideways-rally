@@ -208,7 +208,7 @@ void main(){
   } else p.x += u_sway * sin(u_time*1.4 + a_i0.x*0.11 + a_i0.z*0.07) * max(a_pos.y-1.5,0.0)*0.025;
   if (u_sway > 0.0 && u_sway < 1.5 && u_hitK > 0.001) {
     float hk = u_hitK * (1.0 - smoothstep(0.6, 3.2, distance(a_i0.xz, u_hitPos.xz)));
-    float hh = max(a_pos.y - 0.6, 0.0);
+    float hh = max(a_pos.y - 0.6, 0.0) * u_sway; // tall trees (lower sway) shake less per metre of height
     p.x += hk * sin(u_time * 10.5) * hh * 0.045;
     p.z += hk * cos(u_time * 8.3) * hh * 0.03;
   }
