@@ -61,9 +61,11 @@ Build: `python3 build.py`. To play, open `dist/test.html` in Chrome.
   - `sim.js` on the other four stages is identical to main.
   - Crash test (scratch): never inside a building, no tunnelling. A head-on hit into a barrier stops the car; a 15° graze keeps 66 of 80 km/h.
 - **Before publishing a new stage**: `ONLINE_STAGES` (game.js) lists the stage keys the server's check takes. Times on other stages stay local, because one refused row fails the whole batch and a 400 reads as "no ghost column". Migrate the `stage` check in `online/supabase.sql` first, then add the id to the regex. The daily rotation (`day % 4`) must keep past dates unchanged if the city joins it.
-- **Live server, checked 2026-10-15** (SQL Editor, `pg_constraint`):
+- **Live server, 2026-10-15** (SQL Editor, `pg_constraint` / `information_schema`): it now matches `supabase.sql`.
   - The `stage` check was migrated that day and takes `city`; `city` is in `ONLINE_STAGES`.
-  - Two earlier migrations in `supabase.sql` had never been run there: there is no `ghost` column (every session's first sync gets a 400 and turns ghosts off), and the `car` check doesn't list `saveiro` (Saveiro times are refused, `online.noBonus`).
+  - The `ghost` column and the `saveiro` car check had never been run there (every session's first sync got a 400 and turned ghosts off; Saveiro times were refused). They were run the same day; 105 rows kept, and the REST API reads `ghost`.
+  - Bests that went up without a ghost aren't in `store 'sentG'`, and refused Saveiro times aren't in `sent`, so both go up on each browser's next sync.
+  - Check the live schema before relying on a server feature: `supabase.sql` is only what should have been run.
 - **Defaults**: ghost cars and the co-driver voice start off (`settings.v2` turned them off once for everyone).
 - **Headlights**: `lightsOn` (on by default when the stage is night/dusk), toggled with L, gamepad d-pad up (button 12), `#touchLights`, or the pause menu `#pLights`. By day they only glow (spot at 0.25).
 - Debug: everything above runs through `window.__rally` like before; `flow2.py`-style tests (challenge round trip, a full rally) live only in the session scratchpad, `test/flow.py` covers the basic flow (`PW_CHANNEL=chrome` to use the installed Chrome).
