@@ -2,7 +2,7 @@ import pathlib
 root = pathlib.Path(__file__).parent
 src = root / 'src'
 page = (src / 'page.html').read_text()
-scripts = ''.join(f"<script>\n{(src / n).read_text()}\n</script>\n" for n in ['core.js', 'gl.js', 'carmodel.js', 'world.js', 'game.js'])
+scripts = ''.join(f"<script>\n{(src / n).read_text()}\n</script>\n" for n in ['core.js', 'gl.js', 'carmodel.js', 'world.js', 'net.js', 'game.js'])
 out = page + scripts
 (root / 'dist').mkdir(exist_ok=True)
 (root / 'dist' / 'sideways-rally.html').write_text(out)
