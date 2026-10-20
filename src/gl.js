@@ -236,6 +236,7 @@ void main(){
 const LIT_FS = `#version 300 es
 precision highp float;
 precision highp sampler2DShadow;
+precision mediump sampler2DArray;
 in vec3 v_wp; in vec3 v_n; in vec4 v_col; in vec2 v_uv; in vec4 v_sp; in vec3 v_ic; in vec3 v_lp; in vec4 v_sp2; in float v_cs; in float v_ld;
 uniform vec4 u_lodB; // dissolve band below this level (x,y) and above it (z,w), in metres of ground distance
 uniform vec3 u_sunDir, u_sunCol, u_sky, u_gnd, u_fogCol, u_cam;
@@ -253,6 +254,7 @@ uniform vec3 u_zen, u_hor; uniform vec3 u_fol;
 uniform vec3 u_verge, u_tt;
 uniform vec3 u_glw; uniform float u_cld, u_time, u_gbump; uniform vec4 u_fogLo;
 uniform float u_wet; uniform vec3 u_skyline;
+uniform sampler2DArray u_arr; uniform vec4 u_fac[16]; uniform float u_night;
 out vec4 o;
 ${COMMON}
 ${OUTC}
@@ -315,6 +317,7 @@ void main(){
   float aOut = u_alpha;
   float bh = 0.0, bk = 0.0;   // micro relief (height, metres of amplitude) for bump shading
   float sparkle = 0.0, foliage = 0.0, flk = 0.0;
+  vec3 emis = vec3(0.0);
   if (u_mode == 1) {
     float u = v_uv.x, v = v_uv.y, au = abs(u);
     vec2 m = vec2(u * 4.3, v);                       // metres across / along the road
@@ -455,6 +458,36 @@ void main(){
         base = mix(base, vec3(0.78, 0.82, 0.9), sn * 0.88);
       }
     }
+  } else if (u_mode == 12) {
+    // the city (world.js cityMesh): v_uv.x = style * 64 + tiles along the wall, v_uv.y = the building's number of floors
+    // over the ground floor + a seed. Style 0
+    // is plain vertex colour (roofs, parapets, kerbs), 1 the sidewalk paving, 2 and up a facade, whose u_fac entry is
+    // (first upper-floor layer, how many, first ground-floor layer, how many) in u_arr. A wall is read a floor at a
+    // time (the ground floor is 4 m, the others 3 m) and each tile of two bays picks its own variant of that floor.
+    // The layer's alpha is the material: 1 wall (takes the building's colour), 0.75 trim, 0.5 glass, 0.25 tinted glass.
+    float sid = floor(v_uv.x / 64.0 + 0.001);
+    if (sid > 1.5) {
+      vec4 S = u_fac[int(sid)];
+      float tu = v_uv.x - sid * 64.0, top = floor(v_uv.y), sd = fract(v_uv.y) * 113.0;
+      float lv = v_wp.y < 4.0 ? v_wp.y * 0.25 : 1.0 + (v_wp.y - 4.0) / 3.0, fl = floor(lv);
+      float hv = hash12(vec2(floor(tu), fl) + sd);
+      // over the top floor: the parapet, in the style's party wall
+      vec4 t = texture(u_arr, vec3(tu, lv, fl > top ? u_fac[int(sid) | 1].x : fl < 1.0 ? S.z + floor(hv * S.w) : S.x + floor(hv * S.y)));
+      float glass = 1.0 - smoothstep(0.55, 0.7, t.a), tg = 1.0 - smoothstep(0.3, 0.45, t.a);
+      float hw = hash12(vec2(floor(tu * 2.0), fl) + sd * 1.7); // one bay on one floor: its own glass and its own lights
+      base = t.rgb * mix(vec3(1.0), v_col.rgb, smoothstep(0.82, 0.95, t.a) + tg) * mix(1.0, 0.8 + 0.4 * hw, glass);
+      base *= 1.0 - 0.22 * u_wet * (1.0 - glass);
+      spec = glass * (0.5 + 0.3 * tg);
+      // at night some windows are lit: mostly warm lamps, a few cold (a tube, a television); shops and signs brighter
+      float hk = fract(hw * 7.13);
+      vec3 lamp = mix(vec3(1.0, 0.6, 0.28), vec3(0.62, 0.74, 1.0), step(0.84, hk));
+      emis = (lamp * 0.55 + t.rgb * 0.18) * (0.45 + 0.6 * hk) * (fl < 1.0 ? 1.6 : 0.6 + 0.6 * fract(lv)) * glass * u_night * step(hw, fl < 1.0 ? 0.7 : 0.3) * step(fl, top);
+    } else if (sid > 0.5) {
+      vec4 t = texture(u_arr, vec3(v_uv, u_fac[1].x));
+      base *= t.rgb * 2.0;
+      spec += u_wet * 0.12 * t.a; // the joints stay matt
+    }
+    base *= 0.9 + 0.2 * vnoise(v_wp.xz * 0.11 + v_wp.y * 0.17);
   } else if (u_mode == 11) {
     base *= texture(u_tex, v_uv).rgb; // vertex colour × texture, nothing more (tyre lettering)
   } else if (u_mode == 2) {
@@ -602,6 +635,7 @@ void main(){
       col += (u_sunCol * sh + vec3(u_hlOn * 1.2)) * tw * sparkle * 1.2 * max(dot(n, L), 0.0) * (1.0 - smoothstep(4.0, 30.0, dist));
     }
   }
+  col += emis;
   // fog with sun in-scatter: distant ground glows warm towards the sun, same term as the sky's horizon
   vec3 vd = (v_wp - u_cam) / max(dist, 1e-3);
   vec3 fc = u_fogCol + u_glw * pow(max(dot(vd, u_sunDir), 0.0), 5.0);
@@ -957,6 +991,11 @@ function createRenderer(canvas) {
   const white = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, white);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
+  // and a one-layer white array, so u_arr (unit 2) always has something to read
+  const whiteArr = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D_ARRAY, whiteArr);
+  gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.RGBA8, 1, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
+  gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
 
   const skyVao = gl.createVertexArray();
   gl.bindVertexArray(skyVao);
@@ -1319,6 +1358,23 @@ function createRenderer(canvas) {
     return t;
   }
 
+  // a stack of same-size layers { data, w, h, n } (rows bottom-up), repeating and mipmapped, read as u_arr
+  function textureArray(L) {
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, t);
+    gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.SRGB8_ALPHA8, L.w, L.h, L.n, 0, gl.RGBA, gl.UNSIGNED_BYTE, L.data);
+    gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    const ext = gl.getExtension('EXT_texture_filter_anisotropic');
+    if (ext) gl.texParameterf(gl.TEXTURE_2D_ARRAY, ext.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(ext.MAX_TEXTURE_MAX_ANISOTROPY_EXT) || 4));
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
+    texs.push(t);
+    return t;
+  }
+
   // dynamic point buffer
   function points(max) {
     const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
@@ -1407,6 +1463,8 @@ function createRenderer(canvas) {
     gl.uniform3fv(u.u_skyline, E.skyline || E.gnd);
     gl.uniform3fv(u.u_hitPos, E.hitPos || [0, -999, 0]); gl.uniform1f(u.u_hitK, E.hitK || 0);
     gl.uniform1f(u.u_dirt, 0);
+    gl.uniform1f(u.u_night, E.night ? 1 : 0);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D_ARRAY, whiteArr); gl.uniform1i(u.u_arr, 2);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, shTex); gl.uniform1i(u.u_shadow, 1);
     gl.activeTexture(gl.TEXTURE0); gl.uniform1i(u.u_tex, 0);
   }
@@ -1424,6 +1482,8 @@ function createRenderer(canvas) {
     if (o.fogLo) gl.uniform4fv(u.u_fogLo, o.fogLo);
     if (o.a2c) gl.enable(gl.SAMPLE_ALPHA_TO_COVERAGE);
     gl.bindTexture(gl.TEXTURE_2D, o.tex || white);
+    if (o.arr) { gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D_ARRAY, o.arr); gl.activeTexture(gl.TEXTURE0); }
+    if (o.fac) gl.uniform4fv(u['u_fac[0]'], o.fac);
     gl.bindVertexArray(m.vao);
     if (!m.inst) { gl.vertexAttrib4f(4, 0, 0, 0, 0); gl.vertexAttrib4f(5, 1, 1, 0, 0); gl.vertexAttrib3f(6, 1, 1, 1); }
     if (m.chunks) drawRuns(m);
@@ -1506,7 +1566,7 @@ function createRenderer(canvas) {
     gl.uniform1f(u.u_hdr, env.hdr || 0);
     gl.bindVertexArray(Tr.vao); gl.drawArrays(gl.TRIANGLES, 0, count);
   }
-  return { gl, env, mesh, disposeMesh, setInstances, texture, points, trail, lines, drawLines, disposeAll, setLitFrame, drawLit, drawDepth, beginShadow, endShadow, drawSky, drawPoints, drawTrail, SHADOW,
+  return { gl, env, mesh, disposeMesh, setInstances, texture, textureArray, points, trail, lines, drawLines, disposeAll, setLitFrame, drawLit, drawDepth, beginShadow, endShadow, drawSky, drawPoints, drawTrail, SHADOW,
     beginScene, endScene, post };
 }
 
