@@ -104,7 +104,7 @@ function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.
 const nf = n => Math.round(n).toLocaleString('en-US');
 function drawThumb(cv, T, st) {
   const g = cv.getContext('2d'), w = cv.width, h = cv.height;
-  const acc = { pine: '#8cc06f', frost: '#8fb6ff', mesa: '#ff9152', forest: '#6fbf73', city: '#a9bdd8' }[st.id] || '#ffd23a';
+  const acc = { pine: '#8cc06f', frost: '#8fb6ff', mesa: '#ff9152', forest: '#6fbf73', monaco: '#e6c27a' }[st.id] || '#ffd23a';
   g.fillStyle = '#10141a'; g.fillRect(0, 0, w, h);
   g.strokeStyle = 'rgba(255,255,255,0.05)'; g.lineWidth = 1;
   for (let x = 0; x < w; x += 16) { g.beginPath(); g.moveTo(x + 0.5, 0); g.lineTo(x + 0.5, h); g.stroke(); }
