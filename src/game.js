@@ -158,6 +158,18 @@ function renderStageList() {
 }
 function renderStageInfo() { renderStageList(); renderRallyPane(); renderTimes(); }
 function updateSummary() {
+  $('startBtn').classList.toggle('wait', false);
+  if (inRoom()) {
+    const room = net.room, host = room && net.peers.get(room.h), n = peerList().length;
+    $('selSummary').textContent = `Room ${net.code} · ${room ? C.stageDef(room.k).name : '…'} · ${C.CARS[settings.car].name}`;
+    let label = `Start race · ${n} driver${n > 1 ? 's' : ''} `, wait = true;
+    if (!room || net.status !== 'online') label = 'Connecting… ';
+    else if (room.ph !== 'lobby') label = 'Race in progress ';
+    else if (!isHost()) label = `Waiting for ${host ? host.n : 'the host'} `;
+    else wait = false;
+    $('startBtn').firstChild.textContent = label; $('startBtn').classList.toggle('wait', wait);
+    return;
+  }
   const tab = document.querySelector('.tab[aria-selected="true"]');
   if (tab && tab.id === 'tabRally') {
     const r = rally && !rally.done ? rally : null, it = RALLIES.find(x => x.id === (r ? r.id : settings.rallyId)) || RALLIES[0];
@@ -177,9 +189,9 @@ function renderCarList() {
     const sw = el('span', 'swatch'); sw.style.background = `linear-gradient(135deg, ${c.col.base} 0 52%, ${c.col.stripe} 52% 70%, ${c.col.stripe2} 70%)`;
     const t = el('span', 't'); t.append(el('b', null, c.name));
     if (c.bonus) {
-      const ok = bonusOK(curKeyMenu()), lead = leaderOf(curKeyMenu()), road = C.stageDef(mapKey(curKeyMenu())).name;
+      const ok = !inRoom() && bonusOK(curKeyMenu()), lead = leaderOf(curKeyMenu()), road = C.stageDef(mapKey(curKeyMenu())).name;
       b.classList.add('bonus'); if (!ok) b.classList.add('locked');
-      t.append(el('small', ok ? null : 'lock', ok ? `You're No. 1 on ${road}: the keys are yours · its times don't count`
+      t.append(el('small', ok ? null : 'lock', inRoom() ? '🔒 Not in online races: those are run in the rally cars' : ok ? `You're No. 1 on ${road}: the keys are yours · its times don't count`
         : lead ? `🔒 Only the No. 1 on ${road} drives it (${lead.n} right now)` : `🔒 Set the fastest time on ${road} to unlock it`));
       for (const [x, y, d] of [[2, 10, 0], [97, 18, 0.6], [52, 86, 1.1], [92, 84, 0.3], [30, 4, 1.4]]) { const sp = el('span', 'spark', '✦'); sp.style.left = x + '%'; sp.style.top = y + '%'; sp.style.animationDelay = d + 's'; b.append(sp); }
     } else t.append(el('small', null, `${c.era} · ${c.engine.layout} turbo`));
@@ -201,7 +213,7 @@ const bonusOK = key => { const b = leaderOf(key); return !!(b && settings.name &
 const plainCar = () => { const i = settings.lastCar | 0; return C.CARS[i] && !isBonus(C.CARS[i]) ? i : 0; };
 // hand the keys back when the road, the name or the board says the Saveiro isn't yours here (or a rally starts)
 function keepCarAllowed(key) {
-  if (!isBonus(C.CARS[settings.car]) || bonusOK(key || curKeyMenu())) return false;
+  if (!isBonus(C.CARS[settings.car]) || (!inRoom() && bonusOK(key || curKeyMenu()))) return false;
   settings.car = plainCar(); saveSettings();
   toast(`The Saveiro stays with the No. 1 of each road: back in the ${C.CARS[settings.car].name}.`);
   return true;
@@ -320,6 +332,7 @@ for (const t of document.querySelectorAll('.tab')) {
   t.addEventListener('click', () => {
     for (const o of document.querySelectorAll('.tab')) { o.setAttribute('aria-selected', String(o === t)); $(o.dataset.pane).hidden = o !== t; }
     if (t.id === 'tabRally') renderRallyPane();
+    if (t.id === 'tabOnline') renderOnline();
     $('gSheet').hidden = t.id !== 'tabCar'; $('gTimes').hidden = t.id === 'tabCar';
     updateSummary();
   });
@@ -342,12 +355,15 @@ $('gearAuto').addEventListener('click', () => { settings.gearbox = 'auto'; saveS
 $('gearManual').addEventListener('click', () => { settings.gearbox = 'manual'; saveSettings(); updateToggles(); });
 function selectStage(i) {
   if (mode === 'loading') return;
+  if (inRoom() && !isHost()) { toast('In a room the host picks the stage.'); return; }
+  if (inRoom() && net.room.ph !== 'lobby') { toast('Wait for this race to finish.'); return; }
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
   settings.stage = i; if (i === 'daily') settings.dailyKey = settings.dailyKey || C.dailyKey();
   timesStage = null;
   if (keepCarAllowed()) renderCarList();
   saveSettings(); renderStageList();
   if (curKey() !== loadedKey) loadStage(curKey());
+  if (inRoom()) netStageSync();
 }
 for (const b of $('optDir').children) b.addEventListener('click', () => { settings.rev = b.dataset.v === 'rev'; selectStage(settings.stage); });
 for (const b of $('optCond').children) b.addEventListener('click', () => { settings.cond = b.dataset.v; selectStage(settings.stage); });
@@ -382,6 +398,11 @@ for (const b of $('tuneMusic').children) b.addEventListener('click', () => setTu
 function selectCar(i, btn) {
   if (mode === 'loading') return;
   const c = C.CARS[i];
+  if (isBonus(c) && inRoom()) {
+    if (btn) { btn.classList.remove('shake'); void btn.offsetWidth; btn.classList.add('shake'); }
+    toast('Online races are run in the rally cars: the Saveiro waits outside.');
+    return;
+  }
   if (isBonus(c) && !bonusOK(curKeyMenu())) {
     if (btn) { btn.classList.remove('shake'); void btn.offsetWidth; btn.classList.add('shake'); }
     const lead = leaderOf(curKeyMenu());
@@ -391,6 +412,7 @@ function selectCar(i, btn) {
   if (!isBonus(c)) settings.lastCar = i;
   const fresh = isBonus(c) && settings.car !== i;
   settings.car = i; saveSettings(); renderCarList();
+  if (inRoom()) netTrack();
   if (fresh) {
     initAudio(); if (A.ctx && sfx.horn) { sfx.horn(-0.3); setTimeout(() => sfx.horn(0.3), 260); }
     const row = $('carList').children[i]; if (row) row.classList.add('yay');
@@ -400,6 +422,7 @@ function selectCar(i, btn) {
 }
 $('startBtn').addEventListener('click', () => menuGo());
 function menuGo() {
+  if (inRoom()) { netStart(); return; }
   const tab = document.querySelector('.tab[aria-selected="true"]');
   if (tab && tab.id === 'tabRally') { startOrContinueRally(); return; }
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
@@ -418,6 +441,7 @@ function loadStage(key, after) {
   showLoading('Building ' + C.stageTitle(st));
   setTimeout(() => {
     R.disposeAll(); carModel = null; csMesh = null; csTex = null;
+    net.models.clear(); if (net.race) for (const o of net.race.others.values()) o.model = null;
     W = C.buildWorld(st);
     S = WORLD.buildScene(R, W);
     loadedKey = st.key;
@@ -520,6 +544,12 @@ async function readChallenge(text) {
 }
 let pendingChal = null;
 async function checkChallengeLink() {
+  const mr = /[#&]r=([A-Za-z0-9]{4})(?![A-Za-z0-9])/.exec(location.hash || '');
+  if (mr) {
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* file: */ }
+    $('tabOnline').click(); netJoin(mr[1]);
+    return;
+  }
   const mb = /[#&]b=([A-Za-z0-9_-]+)/.exec(location.hash || '');
   if (mb) {
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* file: */ }
@@ -560,6 +590,7 @@ function renderChallengeBanner() {
   card.append(t, a); box.append(card);
 }
 function acceptChallenge(c) {
+  if (inRoom()) { toast('Leave the room first: this one is a race against a ghost.'); return; }
   pendingChal = null;
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
   const st = C.stageDef(c.k);
@@ -572,6 +603,7 @@ function acceptChallenge(c) {
 let shareLink = '';
 async function openShare() {
   if (!lastRun) return;
+  $('shareTitle').textContent = 'Challenge a friend';
   $('shareText').textContent = `Whoever opens this link races your ghost on ${C.stageTitle(C.stageDef(lastRun.key))} in the ${carById(lastRun.car).name}: ${fmt(lastRun.t)} to beat.`;
   $('shareLink').value = 'Packing your run…'; $('share').hidden = false;
   $('shareNative').hidden = !navigator.share;
@@ -587,7 +619,7 @@ $('shareCopy').addEventListener('click', async () => {
 });
 $('shareNative').addEventListener('click', async () => {
   if (!shareLink || !navigator.share) return;
-  const text = shareLink.includes('#b=') ? `My Sideways Rally times` : `Beat my ${fmt(lastRun.t)} on ${C.stageTitle(C.stageDef(lastRun.key))}`;
+  const text = shareLink.includes('#r=') ? `Race me live in Sideways Rally: room ${net.code}` : shareLink.includes('#b=') ? `My Sideways Rally times` : `Beat my ${fmt(lastRun.t)} on ${C.stageTitle(C.stageDef(lastRun.key))}`;
   try { await navigator.share({ title: 'Sideways Rally', text, url: shareLink }); } catch (e) { /* cancelled */ }
 });
 let toastT = 0;
@@ -613,6 +645,7 @@ function newRally(it) {
   saveRally();
 }
 function startOrContinueRally() {
+  if (inRoom()) { toast('Leave the room to run a rally.'); return; }
   if (isBonus(C.CARS[settings.car])) { settings.car = plainCar(); saveSettings(); toast('Rallies are run in the rally cars: the Saveiro waits outside.'); }
   if (!rally || rally.done) newRally(RALLIES.find(r => r.id === settings.rallyId) || RALLIES[0]);
   rally.playing = true; saveRally();
@@ -915,6 +948,7 @@ async function shareTimes() {
   let body = null; try { body = await zip(raw, false); } catch (e) { body = null; }
   const data = body || raw, out = new Uint8Array(1 + data.length); out[0] = body ? 0x81 : 0x01; out.set(data, 1);
   shareLink = location.href.split('#')[0] + '#b=' + b64e(out);
+  $('shareTitle').textContent = 'Share my times';
   $('shareText').textContent = `Whoever opens this link gets your ${mine.length} best time${mine.length > 1 ? 's' : ''} on their leaderboard.`;
   $('shareLink').value = shareLink; $('shareNative').hidden = !navigator.share; $('share').hidden = false;
 }
@@ -943,11 +977,665 @@ function confirmName() {
   $('welcome').hidden = true;
   if (keepCarAllowed() && W) setupCar();
   updateDriver(); renderTimes(); renderCarList(); onlineSync();
+  if (inRoom()) netTrack();
+  if (net.pending) { const pj = net.pending; net.pending = ''; $('tabOnline').click(); if (pj[0] === '+') netJoin(pj.slice(1), true); else netJoin(pj); }
 }
 function updateDriver() { $('driverName').textContent = settings.name || '—'; }
 $('wGo').addEventListener('click', confirmName);
 $('wName').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); confirmName(); } });
 $('driverChip').addEventListener('click', () => showWelcome(true));
+
+// ---------- online rooms: live races with friends ----------
+// A room is a Supabase Realtime channel (net.js) named after a 4-letter code. Its creator is the host: they pick the
+// stage in their Stage tab (everyone else's Stage tab follows it) and start the races. Everyone drives the same stage at
+// the same moment, each in their own car (the Saveiro stays out), and the others are drawn from what they send: their
+// pose 10 times a second, batched into 2-6 messages a second depending on how many are in the room (Supabase's free
+// plan allows 100 messages a second for the project, and counts each receiver). Cars pass through each other: the clock
+// decides, and the finishing order gives points (10 8 6 5 4 3) that the room keeps.
+// The host holds the room's state (stage, phase, race, points) and sends all of it whenever it changes and every few
+// seconds; everyone keeps the latest copy, so if the host goes the next driver in (by join time) carries on with it.
+// Clocks: each browser pings the host and keeps the offset from the quickest round trip, so the start lights go green
+// at the same moment everywhere. Each driver's time is their own, from their own green light. The others are drawn on
+// "wall race time" (wt: seconds since that shared green), which is also what their samples are stamped with.
+const NET_V = 1, ROOM_MAX = 6, PTS = [10, 8, 6, 5, 4, 3], CLOSE_MS = 60000, LOAD_MS = 12000;
+const CODE_ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const PCOL = ['#ffd23a', '#5ec8ff', '#ff6b8a', '#8be36f', '#c58bff', '#ff9c48'];
+const nowMs = () => performance.timeOrigin + performance.now();
+const sess = {
+  get(k) { try { return sessionStorage.getItem('sideways.' + k); } catch (e) { return null; } },
+  set(k, v) { try { if (v == null) sessionStorage.removeItem('sideways.' + k); else sessionStorage.setItem('sideways.' + k, v); } catch (e) { /* storage unavailable */ } },
+};
+// one id per tab: a reload keeps it (and the room), so you come back as the same driver with your points
+const netId = sess.get('netId') || (() => { const v = Math.random().toString(36).slice(2, 10).padEnd(8, '0'); sess.set('netId', v); return v; })();
+const net = { ch: null, code: '', status: 'off', peers: new Map(), bye: new Map(), room: null, off: 0, rtt: 1e9, race: null, ld: new Map(), loadT: 0, noState: 0,
+  hostGone: 0, sentRoom: 0, models: new Map(), pending: '', prog: new Map(), j: 0, pause: false, waitN: '', hudT: 0, preT: 0, tk: 0, warned: false, rx: {}, drops: 0 };
+const inRoom = () => !!net.ch;
+const isHost = () => !!(net.room && net.room.h === netId);
+const netRun = () => !!(net.race && net.race.inRun);
+const r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100, r3 = v => Math.round(v * 1000) / 1000;
+const myMeta = () => ({ i: netId, n: cleanName(driverName()), c: C.CARS[settings.car].id, v: NET_V, j: net.j });
+function cleanPeer(m) {
+  if (!m || typeof m.i !== 'string' || !/^[a-z0-9]{4,12}$/.test(m.i)) return null;
+  const c = carById(m.c);
+  return { i: m.i, n: cleanName(m.n), c: c && !isBonus(c) ? c.id : 'foca', v: m.v | 0, j: +m.j || 0 };
+}
+// the room in join order: it gives the colours and the next host
+function peerList() { return [...net.peers.values()].sort((a, b) => a.j - b.j || (a.i < b.i ? -1 : 1)); }
+function netLoaded(id) { let s = net.ld.get(id); if (!s) { s = new Set(); net.ld.set(id, s); if (net.ld.size > 6) net.ld.delete(net.ld.keys().next().value); } return s; }
+const freshRoom = () => ({ v: NET_V, h: netId, seq: 0, k: curKeyMenu(), ph: 'lobby', race: null, pts: {}, last: null, n: 0 });
+
+function netCreate() { let c = ''; for (let k = 0; k < 4; k++) c += CODE_ABC[(Math.random() * CODE_ABC.length) | 0]; netJoin(c, true); }
+function netJoin(code, create) {
+  code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code.length !== 4 || [...code].some(ch => !CODE_ABC.includes(ch))) { toast('A room code is 4 letters and numbers, like K7QX.'); return; }
+  if (!online.on) { toast('Online rooms need the online server, and this copy of the game has none set up.'); return; }
+  if (!settings.name) { net.pending = (create ? '+' : '') + code; showWelcome(false); return; }
+  if (net.ch) { if (net.code === code) return; netLeave(true); }
+  if (rally && rally.playing) { rally.playing = false; saveRally(); }
+  if (isBonus(C.CARS[settings.car])) {
+    settings.car = plainCar(); saveSettings(); renderCarList(); if (W && mode === 'menu') setupCar();
+    toast(`Online races are run in the rally cars: you're in the ${C.CARS[settings.car].name}.`);
+  }
+  // your place in the room's order survives a reload
+  const kept = /^([A-Z0-9]{4}):(\d+)$/.exec(sess.get('roomJ') || '');
+  net.j = kept && kept[1] === code ? +kept[2] : Date.now();
+  sess.set('room', code); sess.set('roomJ', code + ':' + net.j);
+  Object.assign(net, { code, status: 'connecting', peers: new Map(), bye: new Map(), room: create ? freshRoom() : null, race: null, off: 0, rtt: create ? 0 : 1e9, noState: nowMs(), hostGone: 0, prog: new Map(), warned: false });
+  net.peers.set(netId, myMeta());
+  net.ch = NET.room({ url: ONLINE.url, key: ONLINE.key, topic: 'sr-room-' + code, me: netId, meta: myMeta(), onMsg: netMsg, onPresence: netPresence,
+    onStatus: s => { if (s === 'reconnecting') net.drops++; net.status = s; if (s === 'online') netHello(); renderOnline(); updateSummary(); } });
+  renderOnline(); updateSummary(); renderCarList();
+}
+function netLeave(quiet) {
+  if (!net.ch) return;
+  if (net.race && net.race.inRun && !net.race.fin[netId]) netRetire();
+  net.ch.send('bye', { f: netId });
+  net.ch.leave(); net.ch = null;
+  netClearRun();
+  Object.assign(net, { code: '', status: 'off', room: null, race: null, peers: new Map(), pause: false });
+  sess.set('room', null);
+  if (mode === 'race' || mode === 'countdown' || mode === 'done') toMenu();
+  renderOnline(); updateSummary(); renderCarList();
+  if (!quiet) toast('You left the room.');
+}
+// say who you are (presence takes a second or three to reach the others, a broadcast doesn't)
+function netHello() {
+  if (!net.ch) return;
+  net.peers.set(netId, myMeta());
+  net.ch.send('hello', { f: netId, m: myMeta() });
+  if (isHost()) sendRoom(); else if (!net.room) net.noState = nowMs();
+  // back after a drop: tell the host again how our race went, in case it missed it
+  if (net.race && net.race.fin[netId]) net.ch.send('fin', Object.assign({ f: netId, r: net.race.id }, net.race.fin[netId]));
+}
+function netTrack() { if (!net.ch) return; const m = myMeta(); net.peers.set(netId, m); net.ch.track(m); net.ch.send('hello', { f: netId, m }); renderOnline(); }
+function netPresence(list) {
+  const t = nowMs(), seen = new Set();
+  for (const m of list) {
+    const p = cleanPeer(m); if (!p || p.i === netId) continue;
+    if (net.bye.has(p.i) && t - net.bye.get(p.i) < 8000) continue; // said goodbye; presence hasn't caught up yet
+    seen.add(p.i); net.peers.set(p.i, Object.assign(net.peers.get(p.i) || {}, p, { pres: t }));
+  }
+  for (const [id, p] of net.peers) if (id !== netId && !seen.has(id) && t - (p.hi || 0) > 6000) net.peers.delete(id);
+  netPeersChanged();
+}
+function netPeersChanged() {
+  const order = peerList(), at = order.findIndex(p => p.i === netId);
+  if (at >= ROOM_MAX && !(net.race && net.race.grid.some(g => g.i === netId))) { const c = net.code; netLeave(true); toast(`Room ${c} is full: ${ROOM_MAX} drivers is the most.`); return; }
+  renderOnline(); updateSummary();
+}
+function netMsg(ev, p) {
+  net.rx[ev] = (net.rx[ev] || 0) + 1;
+  if (!p || typeof p.f !== 'string' || p.f === netId) return;
+  const t = nowMs();
+  if (ev === 'hello') {
+    const pe = cleanPeer(p.m); if (!pe || pe.i !== p.f) return;
+    net.bye.delete(pe.i);
+    net.peers.set(pe.i, Object.assign(net.peers.get(pe.i) || {}, pe, { hi: t }));
+    netPeersChanged();
+    if (isHost()) sendRoom();
+    // the host is back after a reload with nothing: the first of the others hands the room back
+    else if (net.room && net.room.h === pe.i) { const next = peerList().find(x => x.i !== pe.i); if (next && next.i === netId) net.ch.send('room', Object.assign({}, net.room, { f: netId })); }
+  } else if (ev === 'bye') { net.peers.delete(p.f); net.bye.set(p.f, t); netPeersChanged(); }
+  else if (ev === 'room') netRoomMsg(p);
+  else if (ev === 'ping') { if (isHost()) net.ch.send('pong', { f: netId, to: p.f, c: p.c, h: nowMs() }); }
+  else if (ev === 'pong') {
+    if (p.to !== netId || !net.room || p.f !== net.room.h || !isFinite(p.c) || !isFinite(p.h)) return;
+    const rtt = t - p.c;
+    if (rtt > 0 && rtt < 4000 && rtt < net.rtt) { net.rtt = rtt; net.off = p.h + rtt / 2 - t; netGreen(); }
+  }
+  else if (ev === 'ld') { if (typeof p.r === 'string') { netLoaded(p.r).add(p.f); renderOnline(); } }
+  else if (ev === 'st') netState(p);
+  else if (ev === 'fin') netFin(p.f, p);
+}
+function netRoomMsg(p) {
+  if (p.v !== NET_V) {
+    if ((p.v | 0) > NET_V && !net.warned) { net.warned = true; toast('Your friends have a newer version of the game: reload the page to race with them.'); }
+    return;
+  }
+  // only the host speaks for the room (or someone handing it back to a host who reloaded)
+  if (p.f !== p.h && !(p.h === netId && !net.room)) return;
+  if (!validRoom(p)) return;
+  const cur = net.room;
+  if (cur && cur.h === p.h && p.h !== netId && (p.seq | 0) < cur.seq) return; // an older copy
+  if (isHost() && p.h !== netId) {
+    // two hosts (a code picked twice, or a takeover crossing the old host's return): whoever joined first keeps it
+    const them = net.peers.get(p.h);
+    if (!(them && (them.j < net.j || (them.j === net.j && them.i < netId)))) { sendRoom(); return; }
+  }
+  applyRoom({ v: NET_V, h: p.h, seq: p.seq | 0, k: p.k, ph: p.ph, race: p.race || null, pts: p.pts, last: p.last || null, n: p.n | 0 });
+}
+function validRoom(p) {
+  if (typeof p.h !== 'string' || !C.stageDef(p.k) || !['lobby', 'load', 'race'].includes(p.ph)) return false;
+  const r = p.race;
+  if (r) {
+    if (typeof r.id !== 'string' || !C.stageDef(r.k) || !Array.isArray(r.grid) || r.grid.length > ROOM_MAX || !r.fin || typeof r.fin !== 'object') return false;
+    r.grid = r.grid.map(cleanPeer).filter(Boolean);
+    for (const id in r.fin) { const f = r.fin[id]; if (!f || (f.t != null && !(f.t > 0 && f.t < 3600))) delete r.fin[id]; }
+    r.at = +r.at || 0; r.close = +r.close || 0; r.done = !!r.done;
+  }
+  if (!p.pts || typeof p.pts !== 'object') p.pts = {};
+  for (const id in p.pts) { const e = p.pts[id]; if (!e || typeof e !== 'object') { delete p.pts[id]; continue; } e.n = cleanName(e.n); e.p = e.p | 0; e.w = e.w | 0; }
+  if (p.last && (!Array.isArray(p.last.rows) || !C.stageDef(p.last.k))) p.last = null;
+  if (p.last) p.last.rows = p.last.rows.slice(0, ROOM_MAX).map(x => ({ i: String(x.i), n: cleanName(x.n), c: carById(x.c) ? x.c : 'foca', t: x.t > 0 && x.t < 3600 ? +x.t : null, g: x.g | 0 }));
+  return true;
+}
+function applyRoom(r) {
+  const prev = net.room;
+  net.room = r; net.noState = 0;
+  if (!prev || prev.h !== r.h) { if (r.h === netId) { net.off = 0; net.rtt = 0; } else { net.rtt = 1e9; netSync(5); } }
+  if (r.h !== netId) netFollowStage(r.k);
+  const race = r.race;
+  if (race && !race.done && r.ph !== 'lobby' && race.grid.some(g => g.i === netId) && !(netId in race.fin) && (!net.race || net.race.id !== race.id)) netLoadRace(race);
+  const nr = net.race;
+  if (nr && race && nr.id === race.id) {
+    nr.at = race.at; netGreen();
+    for (const id in race.fin) netGotFin(id, race.fin[id]);
+    nr.close = race.close ? race.close - net.off : 0;
+    nr.done = race.done;
+  }
+  renderOnline(); updateSummary();
+  if (nr && !$('results').hidden) renderNetResults();
+}
+// the host's changes: to everyone, and to itself (a broadcast doesn't come back to the sender)
+function hostCommit() { sendRoom(); applyRoom(net.room); }
+function sendRoom() { if (!net.ch || !isHost()) return; net.room.seq++; net.sentRoom = nowMs(); net.ch.send('room', Object.assign({}, net.room, { f: netId })); }
+function netSync(n) {
+  for (let k = 0; k < n; k++) setTimeout(() => { if (net.ch && net.room && !isHost()) net.ch.send('ping', { f: netId, c: nowMs() }); }, 60 + k * 170);
+}
+// local time of the green light; it settles while the clock offset improves and stays put from the start
+function netGreen() { const r = net.race; if (r && r.at && !r.green) r.greenL = r.at - net.off; }
+// a guest's Stage tab shows the room's stage (and builds it in the background once the host stops clicking around)
+function netFollowStage(k) {
+  if (curKeyMenu() === k) return;
+  const st = C.stageDef(k); if (!st) return;
+  if (st.daily) { settings.stage = 'daily'; settings.dailyKey = k; }
+  else { const i = C.STAGES.findIndex(b => b.id === st.id); if (i < 0) return; settings.stage = i; settings.rev = st.rev; settings.cond = st.cond; }
+  saveSettings(); timesStage = null; renderStageList(); renderTimes();
+  clearTimeout(net.preT);
+  net.preT = setTimeout(() => { if (inRoom() && mode === 'menu' && curKeyMenu() === k && loadedKey !== k && !(net.room && net.room.ph !== 'lobby')) loadStage(k); }, 1500);
+}
+function netStageSync() { if (isHost() && net.room.ph === 'lobby' && net.room.k !== curKeyMenu()) { net.room.k = curKeyMenu(); hostCommit(); } }
+// the host's start button: everyone in the room lines up
+function netStart() {
+  const room = net.room;
+  if (!room || !isHost() || net.status !== 'online' || room.ph !== 'lobby' || mode !== 'menu') return;
+  const k = curKeyMenu(); if (!C.stageDef(k)) return;
+  net.peers.set(netId, myMeta());
+  const grid = peerList().filter(p => p.v === NET_V).slice(0, ROOM_MAX).map(p => ({ i: p.i, n: p.n, c: p.c }));
+  room.k = k; room.ph = 'load'; room.race = { id: Math.random().toString(36).slice(2, 9), k, grid, fin: {}, at: 0, close: 0, done: false };
+  net.loadT = nowMs();
+  hostCommit();
+}
+function netTakeOver() {
+  const room = net.room;
+  if (room.race) { if (room.race.at) room.race.at = Math.round(room.race.at - net.off); if (room.race.close) room.race.close = Math.round(room.race.close - net.off); }
+  room.h = netId; net.off = 0; net.rtt = 0; net.hostGone = 0; net.loadT = nowMs();
+  hostCommit(); toast('The host has gone: you run the room now.');
+}
+// runs four times a second while in a room: the host moves the race along, everyone watches for a missing host
+function netTick() {
+  if (!net.ch) return;
+  net.tk++;
+  if (netRun() && !$('results').hidden && net.tk % 2 === 0) renderNetResults();
+  if (mode === 'menu' && net.room && net.room.race && !net.room.race.done && !$('paneOnline').hidden && net.tk % 4 === 0) renderOnline();
+  if (net.status !== 'online') return;
+  const t = nowMs(), room = net.room;
+  if (!room) {
+    // nobody speaks for this room (a link to a room whose host has gone): the first driver in starts it afresh
+    if (net.noState && t - net.noState > 3000 && peerList()[0].i === netId) { net.room = freshRoom(); net.off = 0; net.rtt = 0; hostCommit(); }
+    return;
+  }
+  if (room.h !== netId) {
+    if (net.peers.has(room.h)) { net.hostGone = 0; return; }
+    if (!net.hostGone) net.hostGone = t;
+    if (t - net.hostGone > 3000 && peerList()[0].i === netId) netTakeOver();
+    return;
+  }
+  const r = room.race;
+  if (room.ph === 'load' && r) {
+    const ld = netLoaded(r.id);
+    // everyone on the line (or the slow ones get left to catch up): lights in 1.5 s, green 3.6 s after that
+    if (r.grid.every(g => ld.has(g.i) || !net.peers.has(g.i)) || t - net.loadT > LOAD_MS) { r.at = Math.round(t + 1500 + 3600); room.ph = 'race'; hostCommit(); }
+  } else if (room.ph === 'race') netCheckClose();
+  if (t - net.sentRoom > (room.ph === 'lobby' ? 10000 : 4000)) sendRoom();
+}
+function netCheckClose() {
+  const room = net.room, r = room && room.race;
+  if (!isHost() || !r || r.done || room.ph !== 'race') return;
+  if (r.grid.every(g => g.i in r.fin || !net.peers.has(g.i)) || (r.close && nowMs() > r.close)) netFinalize();
+}
+function netFinalize() {
+  const room = net.room, r = room.race;
+  r.done = true; room.ph = 'lobby'; room.n = (room.n | 0) + 1;
+  const fin = r.grid.filter(g => r.fin[g.i] && r.fin[g.i].t != null).sort((a, b) => r.fin[a.i].t - r.fin[b.i].t), rows = [];
+  fin.forEach((g, k) => {
+    const e = room.pts[g.i] || (room.pts[g.i] = { n: g.n, p: 0, w: 0 });
+    e.n = g.n; e.p += PTS[k] || 0; if (!k) e.w++;
+    rows.push({ i: g.i, n: g.n, c: r.fin[g.i].c || g.c, t: r.fin[g.i].t, g: PTS[k] || 0 });
+  });
+  for (const g of r.grid) if (!fin.includes(g)) { if (!room.pts[g.i]) room.pts[g.i] = { n: g.n, p: 0, w: 0 }; rows.push({ i: g.i, n: g.n, c: g.c, t: null, g: 0 }); }
+  room.last = { id: r.id, k: r.k, rows };
+  hostCommit();
+}
+
+// ---- racing: line up, send your pose, draw the others ----
+function netLoadRace(race) {
+  if (mode === 'loading') {
+    setTimeout(() => { const rr = net.room && net.room.race; if (rr && rr.id === race.id && !rr.done && (!net.race || net.race.id !== rr.id)) netLoadRace(rr); }, 300);
+    return;
+  }
+  if (rally && rally.playing) { rally.playing = false; saveRally(); }
+  if (isBonus(C.CARS[settings.car])) { settings.car = plainCar(); saveSettings(); renderCarList(); }
+  netClearRun();
+  const nr = net.race = { id: race.id, k: race.k, at: race.at || 0, greenL: 0, green: false, grid: race.grid.map(g => Object.assign({}, g)), others: new Map(), fin: Object.assign({}, race.fin),
+    hist: [], buf: [], lastS: -1e9, lastSend: -1e9, inRun: true, done: false, close: 0, col: PCOL[0] };
+  nr.grid.forEach((g, k) => {
+    g.col = PCOL[k % PCOL.length];
+    if (g.i === netId) nr.col = g.col;
+    else nr.others.set(g.i, { i: g.i, n: g.n, c: g.c, col: g.col, hist: [], cur: 0, err: [0, 0, 0, 0], spin: 0, pose: {}, mat: M4.create(), model: null, vis: false, alpha: 1, dc: 1e9, s: null, tag: null, bar: null });
+  });
+  net.rtt = 1e9; netSync(5);
+  $('share').hidden = true; $('welcome').hidden = true;
+  setScreen('none');
+  const go = () => {
+    if (net.race !== nr) return;
+    netModels(); startRace(); netGrid();
+    if (net.ch) net.ch.send('ld', { f: netId, r: nr.id });
+    netLoaded(nr.id).add(netId);
+  };
+  if (race.k !== loadedKey) { loadStage(race.k, go); return; }
+  showLoading('Lining up');
+  setTimeout(() => { if (P.id !== C.CARS[settings.car].id) setupCar(); hideLoading(); go(); }, 40);
+}
+function netModels() {
+  const nr = net.race; if (!nr || !S) return;
+  for (const o of nr.others.values()) {
+    const key = o.c + (S.E.night ? ':n' : '');
+    if (!net.models.has(key)) net.models.set(key, WORLD.buildCar(R, carById(o.c), !!S.E.night));
+    o.model = net.models.get(key);
+  }
+}
+// side by side on the start line, up to three abreast (the fourth and on share a lane: they pass through anyway)
+function netGrid() {
+  const nr = net.race, n = nr.grid.length, k = Math.max(0, nr.grid.findIndex(g => g.i === netId)), lanes = Math.min(n, 3);
+  if (lanes < 2) return;
+  const lat = ((k % lanes) - (lanes - 1) / 2) * Math.min(2.4, (2 * W.T.hw - 2.4) / (lanes - 1));
+  car.x += car.rd.rx * lat; car.z += car.rd.rz * lat;
+  C.locate(W.T, car); car.y = C.groundAt(W, car, car.x, car.z); car.gyPrev = car.y;
+  snapVis();
+}
+function netClearRun() {
+  $('netTags').textContent = ''; $('hNet').hidden = true;
+  for (const e of $('hProgBar').querySelectorAll('em.np')) e.remove();
+  if (net.race) for (const o of net.race.others.values()) { o.tag = null; o.bar = null; }
+  net.pause = false;
+}
+function netRetire() {
+  const nr = net.race; if (!nr || nr.fin[netId]) return;
+  nr.fin[netId] = { t: null };
+  if (net.ch) net.ch.send('fin', { f: netId, r: nr.id, t: null });
+  if (isHost()) netFin(netId, { r: nr.id, t: null });
+}
+function netFinished() {
+  const nr = net.race, f = { t: r3(finishT), c: P.id, s: splitsHit.map(r3) };
+  nr.fin[netId] = f;
+  if (net.ch) net.ch.send('fin', Object.assign({ f: netId, r: nr.id }, f));
+  if (isHost()) netFin(netId, Object.assign({ r: nr.id }, f));
+}
+// a result for this race, from the driver or from the host's copy (whichever comes first): friends' times go on
+// your board, like a challenge link's
+function netGotFin(id, f) {
+  const nr = net.race; if (!nr || id in nr.fin) return;
+  nr.fin[id] = f;
+  const g = nr.grid.find(x => x.i === id);
+  if (id !== netId && f.t != null && g && Array.isArray(f.s) && f.s.length === 2 && f.s.every(x => x > 0 && x < f.t)) { boardAdd([{ n: g.n, k: nr.k, c: f.c, t: f.t, s: f.s, d: Date.now(), f: 1 }]); renderTimes(); }
+}
+function netFin(id, p) {
+  if (p.t != null && !(p.t > 0 && p.t < 3600)) return;
+  const f = p.t == null ? { t: null } : { t: +p.t, c: carById(p.c) ? p.c : 'foca', s: Array.isArray(p.s) ? p.s.slice(0, 2).map(Number) : [] };
+  if (net.race && p.r === net.race.id) netGotFin(id, f);
+  const rr = net.room && net.room.race;
+  if (isHost() && rr && p.r === rr.id && !rr.done && !(id in rr.fin)) {
+    rr.fin[id] = f;
+    if (f.t != null && !rr.close) rr.close = Math.round(nowMs() + CLOSE_MS);
+    hostCommit(); netCheckClose();
+  }
+  renderOnline(); if (netRun() && !$('results').hidden) renderNetResults();
+}
+// Supabase counts a broadcast once sent and once per receiver: n drivers sending f a second cost n·n·f
+function netRate() { const n = Math.max(1, net.race.grid.filter(g => g.i === netId || net.peers.has(g.i)).length); return clamp(70 / (n * n), 2, 6); }
+const netWT = () => (nowMs() - net.race.greenL) / 1000;
+// a sample every 0.1 s of race time: [wt, x, y, z, heading, vx, vz, s, pitch, roll, front wheel angle, brake | lights]
+function netSample() {
+  const nr = net.race; if (!nr.greenL || !net.ch) return;
+  const wt = netWT();
+  if (mode === 'done' && doneT > 6) { if (nr.buf.length) netSend(wt); return; } // parked after the finish: nothing more to say
+  if ((mode !== 'countdown' && mode !== 'race' && mode !== 'done') || wt < -4 || wt - nr.lastS < 0.1) return;
+  nr.lastS = wt;
+  const brk = (mode === 'race' && (input.brk > 0.1 || input.hb || net.pause)) || mode === 'done';
+  nr.buf.push([r3(wt), r2(vis.x), r2(vis.y + susp.heave + 0.02), r2(vis.z), r3(vis.h), r1(car.vx), r1(car.vz), r1(car.s), r3(susp.pitch), r3(susp.roll), r2(vis.steer), (brk ? 1 : 0) | (lightsOn ? 2 : 0)]);
+  nr.hist.push([wt, car.s]);
+  if (wt - nr.lastSend >= 1 / (mode === 'countdown' ? 1 : netRate()) - 0.02) netSend(wt);
+}
+function netSend(wt) { const nr = net.race; net.ch.send('st', { f: netId, r: nr.id, p: nr.buf }); nr.buf = []; nr.lastSend = wt; }
+const npA = {}, npB = {};
+function netState(p) {
+  if (!Array.isArray(p.p) || !p.p.length) return;
+  const last = p.p[p.p.length - 1];
+  if (Array.isArray(last) && isFinite(last[7])) net.prog.set(p.f, { r: p.r, s: +last[7] });
+  const nr = net.race; if (!nr || p.r !== nr.id) return;
+  const o = nr.others.get(p.f); if (!o) return;
+  const wt = nr.greenL ? netWT() : 0, had = o.hist.length > 0;
+  if (had) { netPose(o, wt, npA); npA.x += o.err[0]; npA.y += o.err[1]; npA.z += o.err[2]; npA.h += o.err[3]; }
+  for (const s of p.p.slice(0, 60)) {
+    if (!Array.isArray(s) || s.length < 12) continue;
+    let ok = true; for (let k = 0; k < 12; k++) if (typeof s[k] !== 'number' || !isFinite(s[k])) { ok = false; break; }
+    if (!ok || (o.hist.length && s[0] <= o.hist[o.hist.length - 1][0])) continue;
+    o.hist.push(s);
+  }
+  if (o.hist.length > 12000) { o.hist.splice(0, o.hist.length - 9000); o.cur = 0; }
+  // new samples move the estimate: keep drawing where it was and ease the difference away (no visible jump)
+  if (had) {
+    netPose(o, wt, npB);
+    const ex = npA.x - npB.x, ey = npA.y - npB.y, ez = npA.z - npB.z;
+    if (ex * ex + ey * ey + ez * ez < 36) { o.err[0] = ex; o.err[1] = ey; o.err[2] = ez; o.err[3] = wrapA(npA.h - npB.h); } else o.err.fill(0);
+  }
+}
+// where a driver is at wall race time wt: cubic between samples (they carry velocity), and past the newest one
+// carried on along an arc at its speed and yaw rate for up to half a second, which covers the network's delay
+function netPose(o, wt, out) {
+  const H = o.hist, n = H.length;
+  let i = Math.min(o.cur, n - 1);
+  while (i > 0 && H[i][0] > wt) i--;
+  while (i < n - 1 && H[i + 1][0] <= wt) i++;
+  o.cur = i;
+  const a = H[i];
+  if (i < n - 1 && wt >= a[0]) {
+    const b = H[i + 1], T = Math.max(1e-3, b[0] - a[0]), u = (wt - a[0]) / T, u2 = u * u, u3 = u2 * u;
+    const h00 = 2 * u3 - 3 * u2 + 1, h10 = u3 - 2 * u2 + u, h01 = -2 * u3 + 3 * u2, h11 = u3 - u2, tv = T > 0.6 ? 0 : T;
+    out.x = h00 * a[1] + h10 * tv * a[5] + h01 * b[1] + h11 * tv * b[5];
+    out.z = h00 * a[3] + h10 * tv * a[6] + h01 * b[3] + h11 * tv * b[6];
+    out.y = lerp(a[2], b[2], u); out.h = a[4] + wrapA(b[4] - a[4]) * u; out.s = lerp(a[7], b[7], u);
+    out.pitch = lerp(a[8], b[8], u); out.roll = lerp(a[9], b[9], u); out.steer = lerp(a[10], b[10], u);
+    out.vx = lerp(a[5], b[5], u); out.vz = lerp(a[6], b[6], u); out.fl = b[11];
+  } else {
+    const q = i > 0 ? H[i - 1] : a, dq = Math.max(0.02, a[0] - q[0]), dt = clamp(wt - a[0], 0, 0.5);
+    const w = i > 0 ? clamp(wrapA(a[4] - q[4]) / dq, -2.5, 2.5) : 0, vy = i > 0 ? clamp((a[2] - q[2]) / dq, -12, 12) : 0;
+    const th = w * dt, cs = Math.cos(th / 2), sn = Math.sin(th / 2); // the chord of the arc points half way round it
+    out.x = a[1] + (a[5] * cs + a[6] * sn) * dt; out.z = a[3] + (a[6] * cs - a[5] * sn) * dt;
+    out.y = a[2] + vy * dt; out.h = a[4] + th; out.s = a[7] + Math.hypot(a[5], a[6]) * dt;
+    out.pitch = a[8]; out.roll = a[9]; out.steer = a[10]; out.vx = a[5]; out.vz = a[6]; out.fl = a[11];
+  }
+  return out;
+}
+function netUpdate(dt) {
+  const nr = net.race; if (!nr || !nr.inRun || !nr.greenL || !W) return;
+  const wt = netWT(), k = Math.exp(-dt * 5);
+  for (const o of nr.others.values()) {
+    o.vis = false;
+    if (!o.hist.length) continue;
+    const p = netPose(o, wt, o.pose);
+    for (let q = 0; q < 4; q++) o.err[q] *= k;
+    p.x += o.err[0]; p.y += o.err[1]; p.z += o.err[2]; p.h += o.err[3];
+    o.s = p.s;
+    const f = nr.fin[o.i];
+    o.out = !!(f && f.t == null) || (!net.peers.has(o.i) && wt - o.hist[o.hist.length - 1][0] > 2);
+    if (o.out || !o.model) continue;
+    const dc = Math.hypot(p.x - cam.pos[0], p.y - cam.pos[1], p.z - cam.pos[2]), dm = Math.hypot(p.x - vis.x, p.z - vis.z);
+    // see-through when it sits on the camera or on top of your car (the cars pass through each other)
+    o.alpha = clamp((dc - 3.5) / 6, 0, 1) * (dm < 5.5 ? 0.35 + 0.65 * clamp((dm - 2.5) / 3, 0, 1) : 1);
+    o.dc = dc;
+    const wr = (p.vx * Math.sin(p.h) + p.vz * Math.cos(p.h)) / 0.335, wa = Math.abs(wr);
+    o.spin += Math.sign(wr) * (wa < 15 ? wa : 15 + (wa - 15) * 0.25) * dt;
+    M4.trs(o.mat, p.x, p.y, p.z, p.h, p.pitch, p.roll, 1);
+    o.vis = o.alpha > 0.01 && dc < 900;
+  }
+}
+const netWm = M4.create(), netWt = M4.create(), netSh = M4.create(), netGc = { x: 0, z: 0, s: 0, lat: 0, rd: {} };
+function netWheel(o, i, noSpin) {
+  const sh = o.model.shape, x = (i % 2 ? -1 : 1) * (sh.W / 2 - 0.13), z = i < 2 ? o.model.fz : o.model.rz;
+  M4.trs(netWt, x, 0.335, z, i < 2 ? o.pose.steer : 0, noSpin ? 0 : o.spin, 0, 1);
+  return M4.mul(netWm, o.mat, netWt);
+}
+function netGround(o) {
+  const T = W.T, p = o.pose, i = C.nearest(T, p.x, p.z, 14);
+  if (i < 0) return C.terrainH(W.TR, p.x, p.z);
+  C.project(T, i, p.x, p.z, netGc.rd); netGc.x = p.x; netGc.z = p.z; netGc.s = netGc.rd.s; netGc.lat = netGc.rd.lat;
+  return C.groundAt(W, netGc, p.x, p.z);
+}
+function netDepth() {
+  if (!netRun()) return;
+  for (const o of net.race.others.values()) if (o.vis && o.alpha > 0.5 && Math.hypot(o.pose.x - vis.x, o.pose.z - vis.z) < 90) R.drawDepth(o.model.body, o.mat);
+}
+function netDrawOpaque(E) {
+  if (!netRun()) return;
+  const dcol = DIRT[W.st.kind].col;
+  for (const o of net.race.others.values()) {
+    if (!o.vis || o.alpha < 0.99) continue;
+    const m = o.model, y = o.pose.y, lit = o.pose.fl & 2, brk = o.pose.fl & 1;
+    R.drawLit(m.body, { model: o.mat, mode: 5, tex: m.tex, dirt: dirt * 0.8, carY: y, dirtCol: dcol });
+    if (o.dc < 180) {
+      for (let i = 0; i < 4; i++) R.drawLit(m.wheel, { model: netWheel(o, i), mode: 11, tex: m.tyreTex, dirt: dirt * 0.7, carY: y, dirtCol: dcol });
+      for (let i = 0; i < 4; i++) R.drawLit(m.caliper, { model: netWheel(o, i, true), dirt: dirt * 0.5, carY: y, dirtCol: dcol });
+    }
+    R.drawLit(m.lightF, { model: o.mat, mode: 4, tint: lit ? (E.night ? [2.6, 2.6, 2.6] : [1.9, 1.9, 1.9]) : [0.3, 0.3, 0.3] });
+    R.drawLit(m.lightR, { model: o.mat, mode: 4, tint: brk ? [3.2, 3.2, 3.2] : lit ? [0.85, 0.85, 0.85] : [0.55, 0.55, 0.55] });
+  }
+}
+// in the transparent pass with the polygon offset of the contact shadows already set
+function netContact(E) {
+  if (!netRun() || !csMesh) return;
+  for (const o of net.race.others.values()) {
+    if (!o.vis || o.dc > 120) continue;
+    const gy = netGround(o), hgt = Math.max(0, o.pose.y - 0.02 - gy);
+    const ca = clamp(1 - hgt / 2.2, 0, 1) * (E.night ? 0.42 : E.overcast ? 0.7 : 0.55) * o.alpha;
+    if (ca <= 0.01) continue;
+    M4.trs(netSh, o.pose.x, gy + 0.03, o.pose.z, o.pose.h, o.pose.pitch, o.pose.roll, 1 + Math.min(hgt, 2) * 0.12);
+    R.drawLit(csMesh, { model: netSh, mode: 6, tex: csTex, alpha: ca });
+  }
+}
+function netDrawTransparent(E) {
+  if (!netRun()) return;
+  let lit = false;
+  for (const o of net.race.others.values()) {
+    if (!o.vis) continue;
+    if (!lit) { R.setLitFrame(E); lit = true; }
+    const m = o.model;
+    if (o.alpha >= 0.99) { if (m.glass && o.dc < 180) R.drawLit(m.glass, { model: o.mat, alpha: 0.8 }); if (m.lens && o.dc < 120) R.drawLit(m.lens, { model: o.mat, alpha: 0.18 }); }
+    else R.drawLit(m.body, { model: o.mat, alpha: o.alpha, mode: 5, tex: m.tex });
+  }
+}
+// name tags over the others' cars (like the No. 1 ghost's)
+function placeNetTags() {
+  const box = $('netTags');
+  if (!netRun() || !(mode === 'race' || mode === 'countdown' || mode === 'done') || $('hud').hidden) { if (box.childElementCount) { box.textContent = ''; if (net.race) for (const o of net.race.others.values()) o.tag = null; } return; }
+  const vp = R.env.vp, w0 = innerWidth, h0 = innerHeight;
+  for (const o of net.race.others.values()) {
+    if (!o.tag) { o.tag = el('span', null, o.n); o.tag.style.background = o.col; box.append(o.tag); }
+    const p = o.pose, d = o.dc;
+    let show = o.vis && d > 4 && d < 260;
+    if (show) {
+      const y = p.y + 1.75, w = vp[3] * p.x + vp[7] * y + vp[11] * p.z + vp[15];
+      const nx = (vp[0] * p.x + vp[4] * y + vp[8] * p.z + vp[12]) / w, ny = (vp[1] * p.x + vp[5] * y + vp[9] * p.z + vp[13]) / w;
+      if (w <= 0.1 || Math.abs(nx) > 1.1 || Math.abs(ny) > 1.1) show = false;
+      else {
+        o.tag.style.transform = `translate(${((nx * 0.5 + 0.5) * w0).toFixed(1)}px, ${((0.5 - ny * 0.5) * h0).toFixed(1)}px) translate(-50%, -100%)`;
+        o.tag.style.opacity = (clamp((d - 4) / 5, 0, 1) * clamp((260 - d) / 60, 0, 1) * Math.max(o.alpha, 0.5)).toFixed(2);
+      }
+    }
+    if (o.tag.hidden === show) o.tag.hidden = !show;
+  }
+}
+// when a driver passed distance s (wall race time), from their samples (column k holds s)
+function timeAtS(H, k, s) {
+  const n = H.length; if (!n || H[n - 1][k] < s) return null;
+  if (H[0][k] >= s) return H[0][0];
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (H[m][k] < s) lo = m; else hi = m; }
+  const a = H[lo], b = H[hi];
+  return a[0] + (b[0] - a[0]) * clamp((s - a[k]) / Math.max(1e-3, b[k] - a[k]), 0, 1);
+}
+// the race order: finished by time, then the rest by how far along they are; gaps are to the leader at the same spot
+function netRows() {
+  const nr = net.race, T = W.T, span = T.finishS - T.startS, wt = nr.greenL ? netWT() : 0;
+  const gc = id => (nr.grid.find(g => g.i === id) || { c: 'foca' }).c;
+  const rows = [{ i: netId, n: driverName(), c: P.id, col: nr.col, s: car.s, v: Math.hypot(car.vx, car.vz), fin: nr.fin[netId], hist: nr.hist, hs: 1, me: true }];
+  for (const o of nr.others.values()) rows.push({ i: o.i, n: o.n, c: gc(o.i), col: o.col, s: o.s == null ? T.startS : o.s, v: o.pose.vx == null ? 0 : Math.hypot(o.pose.vx, o.pose.vz), fin: nr.fin[o.i], hist: o.hist, hs: 7, gone: !net.peers.has(o.i) });
+  const rank = x => (x.fin && x.fin.t != null ? 0 : x.fin || x.gone ? 2 : 1);
+  rows.sort((a, b) => rank(a) - rank(b) || (rank(a) === 0 ? a.fin.t - b.fin.t : b.s - a.s));
+  const lead = rows[0];
+  for (const x of rows) {
+    x.out = rank(x) === 2; x.prog = clamp((x.s - T.startS) / span, 0, 1);
+    if (x.fin && x.fin.c) x.c = x.fin.c;
+    if (x.out) x.txt = x.fin ? 'Retired' : 'Left';
+    else if (x === lead) x.txt = x.fin ? fmt(x.fin.t) : Math.round(x.prog * 100) + '%';
+    else if (x.fin) x.txt = fmtD(x.fin.t - lead.fin.t);
+    else if (mode === 'countdown') x.txt = '—';
+    else {
+      // when the leader passed this spot; right behind them (closer than their newest sample) it's distance over speed
+      const tl = timeAtS(lead.hist, lead.hs, x.s);
+      x.txt = fmtD(tl == null ? Math.max(0, lead.s - x.s) / Math.max(5, x.v) : Math.max(0, wt - tl));
+    }
+  }
+  return rows;
+}
+function netHUD(dt) {
+  const box = $('hNet');
+  if (!netRun()) { if (!box.hidden) box.hidden = true; return; }
+  const nr = net.race, T = W.T, span = T.finishS - T.startS;
+  for (const o of nr.others.values()) {
+    if (!o.bar) { o.bar = el('em', 'np'); o.bar.style.background = o.col; $('hProgBar').append(o.bar); }
+    o.bar.hidden = o.s == null || !!o.out;
+    if (o.s != null) o.bar.style.left = clamp((o.s - T.startS) / span, 0, 1) * 100 + '%';
+  }
+  net.hudT -= dt; if (net.hudT > 0) return; net.hudT = 0.25;
+  box.hidden = false; box.textContent = '';
+  netRows().forEach((x, k) => {
+    const r = el('div', 'r' + (x.me ? ' me' : '') + (x.out ? ' out' : '')), i = el('i');
+    i.style.background = x.col;
+    r.append(el('span', 'p', x.out ? '–' : String(k + 1)), i, el('b', null, x.me ? 'You' : x.n), el('span', null, x.txt));
+    box.append(r);
+  });
+  if (nr.done) box.append(el('div', 'foot', 'Race over'));
+  else if (nr.close) { const s = Math.max(0, Math.ceil((nr.close - nowMs()) / 1000)); box.append(el('div', 'foot', `Closes in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`)); }
+}
+function renderNetResults() {
+  const nr = net.race; if (!nr || !W) return;
+  const last = net.room && net.room.last && net.room.last.id === nr.id ? net.room.last : null;
+  $('rNetHead').textContent = `Room ${net.code} · ${last ? 'final' : 'live'}`;
+  const tb = $('rNetTable'); tb.textContent = '';
+  const head = el('tr'); ['', '', 'Driver', 'Time', last ? 'Pts' : ''].forEach(h => head.append(el('th', null, h))); tb.append(head);
+  tb.className = 'tt netres';
+  const rows = netRows();
+  rows.forEach((x, k) => {
+    const tr = el('tr', x.me ? 'you' : ''), d = el('td', 'dot'), i = el('i');
+    i.style.background = x.col; d.append(i);
+    const g = last ? last.rows.find(y => y.i === x.i) : null;
+    const tm = x.fin && x.fin.t != null ? (k ? fmt(x.fin.t) + ' ' + x.txt : fmt(x.fin.t)) : x.out ? x.txt : `On stage · ${Math.round(x.prog * 100)}%`;
+    tr.append(el('td', null, x.out ? '–' : String(k + 1)), d, el('td', null, `${x.me ? 'You' : x.n} · ${shortCar(x.c)}`), el('td', null, tm), el('td', null, g ? (g.g ? '+' + g.g : '0') : ''));
+    tb.append(tr);
+  });
+  const waiting = rows.filter(x => !x.fin && !x.out);
+  let note = '';
+  if (last) note = 'Race over. The host starts the next one from the lobby.';
+  else if (waiting.length) {
+    const s = nr.close ? Math.max(0, Math.ceil((nr.close - nowMs()) / 1000)) : 0;
+    note = `Waiting for ${waiting.map(x => x.me ? 'you' : x.n).join(', ')}` + (s ? ` · closes in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : '');
+  }
+  $('rNetNote').textContent = note;
+}
+function netInvite() {
+  shareLink = location.href.split('#')[0] + '#r=' + net.code;
+  $('shareTitle').textContent = 'Invite friends';
+  $('shareText').textContent = `Send this link: it opens the game and joins room ${net.code}. Or just tell them the code.`;
+  $('shareLink').value = shareLink; $('shareNative').hidden = !navigator.share; $('share').hidden = false;
+}
+// the Online tab: create or join, or the room you're in
+function renderOnline() {
+  $('tabOnline').classList.toggle('live', inRoom());
+  $('netOut').hidden = inRoom(); $('netIn').hidden = !inRoom();
+  if (!inRoom()) return;
+  const box = $('netIn'), room = net.room, order = peerList(), mb = box.closest('.menu-body'), sc = mb ? mb.scrollTop : 0;
+  box.textContent = '';
+  const card = el('div', 'room-card'), t = el('div', 't'), hostP = room && net.peers.get(room.h);
+  const status = net.status === 'reconnecting' ? 'Connection lost · reconnecting…' : net.status !== 'online' ? 'Connecting…' : !room ? 'Joining…' : isHost() ? 'You run this room' : `Host · ${hostP ? hostP.n : '…'}`;
+  t.append(el('span', 'label', 'Room'), el('b', 'code', net.code), el('small', net.status === 'online' ? null : 'warn', status));
+  const inv = el('button', 'btn', 'Invite'); inv.addEventListener('click', netInvite);
+  card.append(t, inv); box.append(card);
+  if (room) {
+    const st = C.stageDef(room.k), T = trackFor(room.k), sb = el('div', 'room-stage');
+    sb.append(el('b', null, st.name), el('small', null, [st.daily ? 'Daily' : st.rev ? 'Reverse' : 'Forward', C.condName(st), st.surface, (T.L / 1000).toFixed(1) + ' km'].join(' · ')),
+      el('small', null, isHost() ? 'Pick another in the Stage tab' : 'The host picks it'));
+    box.append(el('p', 'label group-label', 'Stage'), sb);
+  }
+  box.append(el('p', 'label group-label', `Drivers · ${order.length} of ${ROOM_MAX}`));
+  const list = el('div', 'room-list'), race = room && room.race && !room.race.done ? room.race : null;
+  const rT = race ? trackFor(race.k) : null;
+  order.forEach((p, k) => {
+    const row = el('div', 'room-row' + (p.i === netId ? ' me' : '')), dot = el('i'), tt = el('span', 't'), nm = el('b', null, p.n);
+    dot.style.background = PCOL[k % PCOL.length];
+    if (room && p.i === room.h) nm.append(el('span', 'tag host', 'host'));
+    if (p.i === netId) nm.append(el('span', 'tag', 'you'));
+    if (p.v !== NET_V) nm.append(el('span', 'tag old', 'reload'));
+    let sub = (carById(p.c) || C.CARS[0]).name;
+    if (race) {
+      const f = race.fin[p.i], pr = net.prog.get(p.i), inGrid = race.grid.some(g => g.i === p.i);
+      if (!inGrid) sub += ' · waits for the next race';
+      else if (f) sub += f.t == null ? ' · retired' : ' · finished ' + fmt(f.t);
+      else if (room.ph === 'load') sub += netLoaded(race.id).has(p.i) ? ' · on the line' : ' · loading';
+      else if (pr && pr.r === race.id) sub += ` · on stage ${Math.round(clamp((pr.s - rT.startS) / (rT.finishS - rT.startS), 0, 1) * 100)}%`;
+      else sub += ' · on stage';
+    }
+    tt.append(nm, el('small', null, sub));
+    const pe = room && room.pts[p.i], pts = el('span', 'pts', String(pe ? pe.p : 0));
+    pts.append(el('small', null, pe && pe.w ? `${pe.w} win${pe.w > 1 ? 's' : ''}` : 'pts'));
+    row.append(dot, tt, pts); list.append(row);
+  });
+  box.append(list);
+  if (race && !race.grid.some(g => g.i === netId)) box.append(el('p', 'room-note', `A race is on at ${C.stageDef(race.k).name}. You line up for the next one.`));
+  else if (race && netId in race.fin) box.append(el('p', 'room-note', 'The others are still out there. The room shows the result when they finish.'));
+  if (room && room.last) {
+    box.append(el('p', 'label group-label', `Last race · ${C.stageTitle(C.stageDef(room.last.k))}`));
+    const tb = el('table', 'tt netres'), win = room.last.rows[0];
+    room.last.rows.forEach((x, k) => {
+      const tr = el('tr', x.i === netId ? 'you' : '');
+      tr.append(el('td', null, x.t == null ? '–' : String(k + 1)), el('td', 'dot'), el('td', null, `${x.n} · ${shortCar(x.c)}`), el('td', null, x.t == null ? 'DNF' : k && win.t != null ? fmtD(x.t - win.t) : fmt(x.t)), el('td', null, x.g ? '+' + x.g : ''));
+      tb.append(tr);
+    });
+    box.append(tb);
+  }
+  if (order.length < 2 && room && isHost()) box.append(el('p', 'room-note', 'Send your friends the code or the invite link. You can start a race on your own too.'));
+  const lv = el('button', 'btn', 'Leave room'); lv.addEventListener('click', () => netLeave()); box.append(lv);
+  if (mb) mb.scrollTop = sc;
+}
+$('netCreate').addEventListener('click', netCreate);
+$('netJoinBtn').addEventListener('click', () => netJoin($('netCode').value));
+$('netCode').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); netJoin($('netCode').value); } });
+$('netCode').addEventListener('input', () => { const v = $('netCode').value.toUpperCase().replace(/[^A-Z0-9]/g, ''); if (v !== $('netCode').value) $('netCode').value = v; });
+setInterval(netTick, 250);
+// a race started from someone else's click: audio may still be waiting for a gesture of yours
+for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, () => { if (A.ctx && A.ctx.state === 'suspended' && !document.hidden && mode !== 'paused') A.ctx.resume(); }, { passive: true });
+window.addEventListener('pagehide', () => { if (net.ch) net.ch.send('bye', { f: netId }); });
 
 // ---------- race flow ----------
 const isTouch = matchMedia('(pointer: coarse)').matches;
@@ -975,7 +1663,8 @@ function startRace() {
   C.resetCar(W, car, W.T.spawnS); snapVis(); resetEffects();
   raceT = 0; cdT = 0; cdShown = -1; finishT = 0; doneT = 0; splitsHit = []; ghostRec = []; ghostTimer = 0;
   noteIdx = 0; called = []; offT = 0; stuckT = 0; wrongT = 0; resultsShown = false; acc = 0;
-  $('hStage').textContent = (rallyOn() ? `SS${rally.idx + 1} · ` : '') + W.st.name + (W.st.rev ? ' ⇄' : '');
+  $('hStage').textContent = (rallyOn() ? `SS${rally.idx + 1} · ` : netRun() ? 'Online · ' : '') + W.st.name + (W.st.rev ? ' ⇄' : '');
+  net.pause = false; $('pTitle').textContent = 'Paused'; $('pNote').hidden = true;
   $('hSurf').textContent = W.st.surface + (W.st.cond !== 'day' ? ' · ' + C.condName(W.st) : '');
   const span = W.T.finishS - W.T.startS;
   $('hS1').style.left = ((W.T.splits[0] - W.T.startS) / span * 100) + '%';
@@ -1007,6 +1696,7 @@ function finish() {
   if (!bonus && medal > store.get('medal.' + key, 0)) store.set('medal.' + key, medal);
   if (settings.name && boardAdd([{ n: settings.name, k: key, c: P.id, t: finishT, s: splitsHit.slice(), d: Date.now() }])) onlineSync();
   rallyLeg = rallyOn() ? rallyFinishLeg(finishT) : null;
+  if (netRun()) netFinished();
   center(`<div class="mid yel">Finish</div><div class="sub">${fmt(finishT)}</div>`, 2.4);
   sfx.beep(880, 0.12); setTimeout(() => sfx.beep(1320, 0.25), 140);
   const beat = chal && finishT < chal.t;
@@ -1045,16 +1735,19 @@ function buildResults(old, isPB, medal, oldBest) {
   }
   else cl.hidden = true;
   // rally: standings instead of the stage table, no retries
-  $('rTable').hidden = inRally; $('rTargets').hidden = inRally; $('rRally').hidden = !inRally;
-  $('rRetry').hidden = inRally; $('rShare').hidden = false;
+  const inNet = netRun();
+  $('rTable').hidden = inRally || inNet; $('rTargets').hidden = inRally || inNet; $('rRally').hidden = !inRally;
+  $('rRetry').hidden = inRally || inNet; $('rShare').hidden = false; $('rNext').hidden = inNet; $('rNet').hidden = !inNet;
+  $('rMenu').textContent = inNet ? 'Lobby' : 'Menu'; $('rMenu').classList.toggle('primary', inNet);
   if (inRally) buildRallyTable();
+  if (inNet) renderNetResults();
   const nxt = $('rNext'); nxt.classList.toggle('primary', inRally);
   if (inRally) nxt.textContent = rally.done ? 'Done' : `Next: SS${rally.idx + 1}`;
   else nxt.textContent = 'Next: ' + C.stageDef(nextKey()).name;
   nxt.title = inRally && !rally.done ? C.stageTitle(C.stageDef(rally.legs[rally.idx])) : '';
 }
 function nextKey() { const ni = settings.stage === 'daily' ? 0 : (settings.stage + 1) % C.STAGES.length; return keyFor(ni); }
-function retry() { if (rallyLeg) return; setScreen('race'); startRace(); }
+function retry() { if (netRun()) { toMenu(); return; } if (rallyLeg) return; setScreen('race'); startRace(); }
 function nextStage() {
   if (rallyLeg) { rallyNext(); return; }
   settings.stage = settings.stage === 'daily' ? 0 : (settings.stage + 1) % C.STAGES.length; saveSettings();
@@ -1065,6 +1758,7 @@ function toMenu() {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
   rallyLeg = null;
+  if (netRun()) { if (!net.race.fin[netId]) netRetire(); net.race.inRun = false; netClearRun(); if (inRoom()) $('tabOnline').click(); }
   mode = 'menu'; C.resetCar(W, car, W.T.spawnS); snapVis(); resetEffects();
   renderStageInfo(); renderCarList();
   setScreen('menu');
@@ -1072,6 +1766,14 @@ function toMenu() {
   if (curKey() !== loadedKey) loadStage(curKey());
 }
 function togglePause() {
+  if (netRun() && (mode === 'race' || mode === 'countdown' || (mode === 'done' && !resultsShown))) {
+    net.pause = !net.pause;
+    if (!net.pause) { setScreen('race'); return; }
+    setScreen('pause');
+    $('pTitle').textContent = 'Race on'; $('pNote').hidden = false; $('pRestart').hidden = true; $('pMenu').textContent = 'Leave race';
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    return;
+  }
   if (mode === 'paused') { mode = prevMode; setScreen('race'); return; }
   if (mode === 'race' || mode === 'countdown' || (mode === 'done' && !resultsShown)) {
     prevMode = mode; mode = 'paused'; setScreen('pause');
@@ -1081,7 +1783,7 @@ function togglePause() {
   }
 }
 $('pResume').addEventListener('click', togglePause);
-$('pRestart').addEventListener('click', () => { if (!rallyOn()) startRace(); });
+$('pRestart').addEventListener('click', () => { if (!rallyOn() && !netRun()) startRace(); });
 $('pMenu').addEventListener('click', toMenu);
 $('rRetry').addEventListener('click', retry);
 $('rNext').addEventListener('click', nextStage);
@@ -1089,7 +1791,7 @@ $('rMenu').addEventListener('click', toMenu);
 $('touchPause').addEventListener('click', togglePause);
 $('touchLights').addEventListener('click', toggleLights);
 $('pLights').addEventListener('click', toggleLights);
-document.addEventListener('visibilitychange', () => { if (document.hidden && (mode === 'race' || mode === 'countdown')) togglePause(); if (A.ctx) { if (document.hidden) A.ctx.suspend(); else A.ctx.resume(); } });
+document.addEventListener('visibilitychange', () => { if (document.hidden && (mode === 'race' || mode === 'countdown') && !net.pause) togglePause(); if (A.ctx) { if (document.hidden) A.ctx.suspend(); else A.ctx.resume(); } });
 
 function manualReset() {
   if (mode !== 'race') return;
@@ -2515,6 +3217,7 @@ function drawMinimap() {
     if (pb) { ghostPose(pb.ghost, raceT, gp); dot(gp.x, gp.z, '#ffd23a', 7, true); }
     if (chal) { ghostPose(chal.ghost, raceT, gp); dot(gp.x, gp.z, '#ff6b8a', 7, true); }
   }
+  if (netRun()) for (const o of net.race.others.values()) if (o.hist.length && !o.out && o.pose.x != null) dot(o.pose.x, o.pose.z, o.col, 6, false);
   const [a, b] = mmT(vis.x, vis.z);
   mm.save(); mm.translate(a, b); mm.rotate(Math.PI - vis.h);
   mm.fillStyle = '#ffd23a'; mm.strokeStyle = '#0b0d11'; mm.lineWidth = 2;
@@ -2594,6 +3297,7 @@ function updateHUD(dt) {
     else { const rt = chal ? chal.t : rival.time, d = finishT - rt; dEl.className = 'd ' + (d <= 0 ? 'ahead' : 'behind'); dEl.innerHTML = `<small>${chal ? 'vs ' + escapeHTML(chal.n) : 'vs rival'}</small>${fmtD(d)}`; }
   }
   updateNoteCards();
+  netHUD(dt);
   drawMinimap(); drawGauge();
   if (centerT > 0) { centerT -= dt; if (centerT <= 0) $('centerMsg').innerHTML = ''; }
   if (camTagT > 0) { camTagT -= dt; $('camTag').style.opacity = clamp(camTagT, 0, 1); }
@@ -2662,14 +3366,20 @@ function tick(dt, doRender) {
   readInput();
   evt.hit = 0; evt.land = 0; evt.shift = false; evt.down = false;
   if (mode === 'countdown') {
-    cdT += dt;
-    const n = cdT < 0.6 ? 4 : cdT < 1.6 ? 3 : cdT < 2.6 ? 2 : cdT < 3.6 ? 1 : 0;
-    if (n !== cdShown) {
+    // online the lights run on the shared clock (and wait until the host has everyone on the line)
+    if (netRun()) cdT = net.race.greenL ? 3.6 + (nowMs() - net.race.greenL) / 1000 : -1; else cdT += dt;
+    const n = cdT < 0 ? 5 : cdT < 0.6 ? 4 : cdT < 1.6 ? 3 : cdT < 2.6 ? 2 : cdT < 3.6 ? 1 : 0;
+    if (n === 5) {
+      const g = net.race.grid, ld = netLoaded(net.race.id), txt = `${g.filter(x => ld.has(x.i)).length} of ${g.length} on the line`;
+      if (cdShown !== 5) { center('<div class="mid">Waiting for drivers</div><div class="sub" style="color:var(--mute)" id="netWaitN"></div>', 1e9); net.waitN = ''; }
+      if (txt !== net.waitN && $('netWaitN')) { net.waitN = txt; $('netWaitN').textContent = txt; }
+      cdShown = 5;
+    } else if (n !== cdShown) {
       cdShown = n;
-      if (n === 4) center(`<div class="mid">${W.st.name}</div><div class="sub" style="color:var(--mute)">${P.name}</div>`, 0.6);
+      if (n === 4) center(`<div class="mid">${W.st.name}</div><div class="sub" style="color:var(--mute)">${netRun() ? `Online · ${net.race.grid.length} driver${net.race.grid.length > 1 ? 's' : ''}` : P.name}</div>`, 0.6);
       // start light tree: one red lamp per second, all green on go
       else if (n > 0) { center(`<div class="lights">${[3, 2, 1].map(k => `<i class="${k >= n ? 'r' : ''}"></i>`).join('')}</div><div class="cdn">${n}</div>`, 1.0); sfx.beep(620, 0.12); }
-      else { center('<div class="lights go"><i></i><i></i><i></i></div><div class="big yel">Go</div>', 0.9); sfx.beep(1240, 0.35); mode = 'race'; raceT = 0; acc = 0; }
+      else { center('<div class="lights go"><i></i><i></i><i></i></div><div class="big yel">Go</div>', 0.9); sfx.beep(1240, 0.35); mode = 'race'; raceT = 0; acc = 0; if (netRun()) net.race.green = true; }
     }
     const Ee = P.engine;
     car.rpm += ((Ee.idle + input.thr * (Ee.redline * 0.82 - Ee.idle) + (input.thr > 0 ? Math.sin(time * 40) * 150 : 0)) - car.rpm) * Math.min(1, dt * 9);
@@ -2685,6 +3395,8 @@ function tick(dt, doRender) {
       if (mode === 'race') {
         inp = Object.assign({}, input, { manual: settings.gearbox === 'manual', shiftUp: pendUp > 0, shiftDown: pendDown > 0 });
         if (pendUp > 0) pendUp--; if (pendDown > 0) pendDown--;
+        // online pause: the car waits on the brakes (brake held at a standstill means reverse, so the handbrake holds it there)
+        if (net.pause) { const v = car.vF; inp = { steer: 0, thr: v < -0.5 ? 1 : 0, brk: v > 0.5 ? 1 : 0, hb: Math.abs(v) < 3, analog: true }; }
       }
       if (mode === 'done') { const ai = C.aiDrive(W, car, P, aiDone); inp = { steer: ai.steer, thr: 0, brk: 1, hb: false, analog: true }; }
       C.stepCar(W, car, P, inp, STEP);
@@ -2702,10 +3414,11 @@ function tick(dt, doRender) {
     if (steps >= 12) acc = 0;
     alpha = acc / STEP;
     if (mode === 'race') callNotes();
-    if (mode === 'done') { doneT += dt; if (doneT > 2.2 && !resultsShown) { resultsShown = true; setScreen('results'); } }
+    if (mode === 'done') { doneT += dt; if (doneT > 2.2 && !resultsShown) { resultsShown = true; net.pause = false; setScreen('results'); } }
   }
   if (mode === 'paused') { alpha = 1; }
   updateVis(dt);
+  if (netRun()) netSample();
   if (mode !== 'paused') {
     if (evt.hit > 3 && (mode === 'race' || mode === 'done')) onImpact(evt);
     if (evt.land > 5) rumble(Math.min(1, evt.land / 16), Math.min(0.6, evt.land / 20), 140);
@@ -2719,6 +3432,7 @@ function tick(dt, doRender) {
     S.E.hitK *= Math.exp(-dt * 2.2);
     if (hitFlash > 0.002 || flashShown) { hitFlash *= Math.exp(-dt * 5); flashEl.style.opacity = hitFlash.toFixed(3); flashShown = hitFlash > 0.002; }
     updateCamera(dt);
+    netUpdate(dt);
     emitEffects(dt); dust.update(dt); chips.update(dt); updateSkids();
     if (S.E.snowfall) updateSnow(dt);
     if (S.E.rain) updateRain(dt);
@@ -2782,6 +3496,7 @@ function render() {
       for (const c of S.shadowCasters) R.drawDepth(c.m, c.model);
       R.drawDepth(carModel.body, carMat);
       for (let i = 0; i < 4; i++) R.drawDepth(carModel.wheel, wheelMatrix(i));
+      netDepth();
     }
     R.endShadow();
   }
@@ -2806,6 +3521,7 @@ function render() {
   if (flameT > 0) R.drawLit(carModel.flame, { model: carMat, mode: 4, tint: [2.6 + Math.random(), 1.6 + Math.random() * 0.6, 0.9] });
   const braking = (mode === 'race' && input.brk > 0.1) || mode === 'done' || (mode === 'race' && input.hb);
   R.drawLit(carModel.lightR, { model: carMat, mode: 4, tint: braking ? [3.2, 3.2, 3.2] : lightsOn ? [0.85, 0.85, 0.85] : [0.55, 0.55, 0.55] });
+  netDrawOpaque(E);
   R.drawSky(E); // after opaque geometry: covered pixels fail the depth test and skip the sky shader
   // transparent pass
   gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
@@ -2820,6 +3536,7 @@ function render() {
       R.drawLit(csMesh, { model: shadowM, mode: 6, tex: csTex, alpha: ca });
     }
   }
+  if (netRun()) { gl.polygonOffset(-3, -6); netContact(E); }
   // tinted glass over the interior (the bonnet camera sits in front of it); a little dirt film from the body's level
   if (carModel.glass) { gl.disable(gl.POLYGON_OFFSET_FILL); R.drawLit(carModel.glass, { model: carMat, alpha: 0.8, dirt: dirt * 0.5, carY: baseY, dirtCol: dcol }); if (carModel.lens) R.drawLit(carModel.lens, { model: carMat, alpha: 0.18 }); gl.enable(gl.POLYGON_OFFSET_FILL); }
   // wheel motion blur, fading in with wheel speed
@@ -2852,7 +3569,8 @@ function render() {
       leadPos = { x: ghostP.x, y: ghostP.y, z: ghostP.z };
     }
   }
-  placeLeadTag(leadPos);
+  placeLeadTag($('hud').hidden ? null : leadPos);
+  netDrawTransparent(E);
   R.drawPoints(dust.pts, E, mixLight(E), 1);
   R.drawPoints(chips.pts, E, mixLight(E), 0);
   if (E.snowfall) { gl.blendFunc(gl.SRC_ALPHA, gl.ONE); R.drawPoints(snowPts, E, [0.9, 0.9, 1.0], 0.3); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); }
@@ -2871,6 +3589,7 @@ function render() {
     }
   }
   R.endScene(E.grade, time, cam.blur, rays);
+  placeNetTags();
 }
 // the No. 1 ghost's name tag, over the ghost on screen (hidden when it is behind the camera, very close or far off)
 function placeLeadTag(p) {
@@ -2898,9 +3617,13 @@ const fontsReady = document.fonts && document.fonts.load ? Promise.race([
   Promise.all([document.fonts.load('800 60px "Big Shoulders Display"'), document.fonts.load('700 40px "Chivo Mono"'), document.fonts.load('600 20px "Barlow Semi Condensed"')]),
   new Promise(r => setTimeout(r, 1800)),
 ]).catch(() => {}) : Promise.resolve();
-fontsReady.then(() => loadStage(curKey(), () => checkChallengeLink()));
+fontsReady.then(() => loadStage(curKey(), () => {
+  checkChallengeLink();
+  // a reload in the middle of a room session puts you back in it (sessionStorage: this tab only)
+  const back = sess.get('room'); if (back && !net.ch && settings.name) { $('tabOnline').click(); netJoin(back); }
+}));
 $('optName').value = settings.name || '';
-$('optName').addEventListener('change', () => { const old = settings.name, v = $('optName').value.replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 20); if (!v) { $('optName').value = old || ''; return; } settings.name = v; saveSettings(); if (settings.boardSeeded) renameOnBoard(old, v); else { seedBoard(v); settings.boardSeeded = 1; saveSettings(); } if (keepCarAllowed() && W) setupCar(); updateDriver(); renderTimes(); renderCarList(); });
+$('optName').addEventListener('change', () => { const old = settings.name, v = $('optName').value.replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 20); if (!v) { $('optName').value = old || ''; return; } settings.name = v; saveSettings(); if (settings.boardSeeded) renameOnBoard(old, v); else { seedBoard(v); settings.boardSeeded = 1; saveSettings(); } if (keepCarAllowed() && W) setupCar(); updateDriver(); renderTimes(); renderCarList(); if (inRoom()) netTrack(); });
 updateDriver();
 if (!settings.name) showWelcome(false);
 else if (!settings.boardSeeded) { seedBoard(settings.name); settings.boardSeeded = 1; saveSettings(); }
@@ -2915,5 +3638,5 @@ if (location.protocol === 'file:') window.__rally = {
   view(p, l, fov) { dbgCam = p ? { p, l, fov } : null; },
   pickCar(i) { selectCar(i); },
   audio: () => ({ A, sfx, getTune }),
-  setDirt(v) { dirt = v; }, get mode() { return mode; }, get dbg() { return { dirt, hitFlash, dust: dust.n, chips: chips.n, hitK: S.E.hitK, shake: cam.shake, evt: Object.assign({}, evt) }; }, get car() { return car; }, get W() { return W; }, startRace, settings, keys, toMenu, get raceT() { return raceT; } };
+  setDirt(v) { dirt = v; }, get mode() { return mode; }, get dbg() { return { dirt, hitFlash, dust: dust.n, chips: chips.n, hitK: S.E.hitK, shake: cam.shake, evt: Object.assign({}, evt) }; }, get car() { return car; }, get W() { return W; }, startRace, settings, keys, toMenu, get raceT() { return raceT; }, net, netJoin, netCreate, netStart, netLeave, netRows: () => (netRun() ? netRows() : null) };
 })();
