@@ -255,6 +255,7 @@ uniform vec3 u_verge, u_tt;
 uniform vec3 u_glw; uniform float u_cld, u_time, u_gbump; uniform vec4 u_fogLo;
 uniform float u_wet; uniform vec3 u_skyline;
 uniform sampler2DArray u_arr; uniform vec4 u_fac[16]; uniform float u_night;
+uniform vec4 u_pl[16]; uniform int u_plN; uniform vec3 u_plCol;
 out vec4 o;
 ${COMMON}
 ${OUTC}
@@ -472,7 +473,10 @@ void main(){
       float lv = v_wp.y < 4.0 ? v_wp.y * 0.25 : 1.0 + (v_wp.y - 4.0) / 3.0, fl = floor(lv);
       float hv = hash12(vec2(floor(tu), fl) + sd);
       // over the top floor: the parapet, in the style's party wall
-      vec4 t = texture(u_arr, vec3(tu, lv, fl > top ? u_fac[int(sid) | 1].x : fl < 1.0 ? S.z + floor(hv * S.w) : S.x + floor(hv * S.y)));
+      // (along a ground floor the variants step through the pool from a place of the building's own, so a front
+      // never shows the same shop twice in a row)
+      float gv = mod(floor(tu) * 5.0 + floor(hash12(vec2(sd, 3.7)) * S.w), S.w);
+      vec4 t = texture(u_arr, vec3(tu, lv, fl > top ? u_fac[int(sid) | 1].x : fl < 1.0 ? S.z + gv : S.x + floor(hv * S.y)));
       float glass = 1.0 - smoothstep(0.55, 0.7, t.a), tg = 1.0 - smoothstep(0.3, 0.45, t.a);
       float hw = hash12(vec2(floor(tu * 2.0), fl) + sd * 1.7); // one bay on one floor: its own glass and its own lights
       base = t.rgb * mix(vec3(1.0), v_col.rgb, smoothstep(0.82, 0.95, t.a) + tg) * mix(1.0, 0.8 + 0.4 * hw, glass);
@@ -597,6 +601,15 @@ void main(){
     float cone = smoothstep(0.80, 0.96, dot(-L, u_hlDir));
     float att = 1.0 / (1.0 + d*d*0.0022);
     light += vec3(1.0, 0.92, 0.78) * 4.0 * cone * att * max(dot(n, L)*0.8+0.2, 0.0) * u_hlOn;
+  }
+  // street lamps (the city at night): mostly down out of the head, a pool some 15 m across under each
+  for (int i = 0; i < 16; i++) {
+    if (i >= u_plN) break;
+    vec3 L = u_pl[i].xyz - v_wp; float d2 = dot(L, L);
+    if (d2 > 420.0) continue;
+    L *= inversesqrt(d2);
+    float k = u_pl[i].w / (1.0 + d2 * 0.05) * (1.0 - smoothstep(120.0, 420.0, d2)) * (0.08 + 0.92 * smoothstep(0.3, 0.85, L.y));
+    light += u_plCol * k * max(dot(n, L) * 0.85 + 0.15, 0.0);
   }
   vec3 col = base * light;
   if (spec > 0.0) {
@@ -1464,6 +1477,8 @@ function createRenderer(canvas) {
     gl.uniform3fv(u.u_hitPos, E.hitPos || [0, -999, 0]); gl.uniform1f(u.u_hitK, E.hitK || 0);
     gl.uniform1f(u.u_dirt, 0);
     gl.uniform1f(u.u_night, E.night ? 1 : 0);
+    gl.uniform1i(u.u_plN, E.plN || 0);
+    if (E.plN) { gl.uniform4fv(u['u_pl[0]'], E.pl); gl.uniform3fv(u.u_plCol, [1.0, 0.85, 0.66]); }
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D_ARRAY, whiteArr); gl.uniform1i(u.u_arr, 2);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, shTex); gl.uniform1i(u.u_shadow, 1);
     gl.activeTexture(gl.TEXTURE0); gl.uniform1i(u.u_tex, 0);

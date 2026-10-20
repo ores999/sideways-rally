@@ -49,6 +49,7 @@ const VIS = {
     sunEl: 38, sunAz: 210, sunCol: '#fff2dc', sunI: 2.8, sky: '#95b4d6', skyI: 0.8, gnd: '#6a6862', gndI: 0.5, exp: 0.98,
     fog: [80, 520], road: ['#4b4b4f', '#3b3b3f', '#6f6b67'], icy: 0, lines: true, tt: [1.0, 1.0, 1.0], rays: 0.3,
     ground: ['#4a4a4d', '#454549', '#525256', '#3e3e42'], verge: '#86827b', rock: '#77756f', walk: '#a29a8d', kerb: '#aaa498', roof: '#6b6965',
+    birch: ['#4b6a2f', '#577636', '#647d3c'],
     dust: [0.6, 0.6, 0.6], mark: [0.04, 0.04, 0.05, 0.55], far: '#7f8b98', skirt: '#4c4d50',
     grade: { lift: [0.006, 0.008, 0.014], gain: [1.02, 1.0, 0.97], sat: 0.98, con: 0.12, vig: 0.24, bloom: 0.06, thr: 1.15 },
   },
@@ -240,7 +241,8 @@ function terrainMesh(W) {
   };
   const O = W.O;
   if (O) {
-    for (const t of O.trees || []) shade(t.x, t.z, 5.5 * (t.s || 1) * (t.type === 3 ? 1.3 : 1), st.kind === 'frost' ? 0.22 : t.type === 3 ? 0.36 : 0.3);
+    // (the city's street trees stand on sidewalks over streets the route's road doesn't share the terrain with)
+    for (const t of st.city ? [] : O.trees || []) shade(t.x, t.z, 5.5 * (t.s || 1) * (t.type === 3 ? 1.3 : 1), st.kind === 'frost' ? 0.22 : t.type === 3 ? 0.36 : 0.3);
     for (const r of O.rocks || []) shade(r.x, r.z, 2.5 * (r.s || 1), 0.25);
   }
   // indices grouped in square blocks so the renderer can skip blocks outside the view. Each block also has coarser
@@ -1417,7 +1419,7 @@ function facadeLayers() {
   });
   // shops: a lit sign over each front, a dark frame, displays with shelves and stock, now and then a shutter down
   let shopN = 0;
-  for (let v = 0; v < 6; v++) layer('shop', 4, 123, v, () => {
+  for (let v = 0; v < 8; v++) layer('shop', 4, 123, v, () => {
     render(0, 4, [222, 217, 208], 1);
     box(0, 3.66, FAC_W, 3.76, [236, 232, 224]); ramp(0, 3.56, FAC_W, 3.66, 0, 0.25);
     const two = v % 2 === 1, fronts = two ? [[0.22, 3.2], [3.4, FAC_W - 0.22]] : [[0.22, FAC_W - 0.22]];
@@ -1434,7 +1436,7 @@ function facadeLayers() {
       const fc = pick([[40, 42, 46], [168, 170, 174], [222, 220, 212], [36, 70, 52], [92, 34, 36], [104, 72, 46]], R);
       box(x0, 0, x1, 2.96, fc, MAT.trim);
       box(x0, 0, x1, 0.32, [70, 68, 66], MAT.trim);
-      const shut = R() < 0.22, dl = R() < 0.5, dx0 = dl ? x0 + 0.1 : x1 - 1.05, dx1 = dx0 + 0.95;
+      const shut = R() < 0.13, dl = R() < 0.5, dx0 = dl ? x0 + 0.1 : x1 - 1.05, dx1 = dx0 + 0.95;
       const gx0 = dl ? dx1 + 0.08 : x0 + 0.1, gx1 = dl ? x1 - 0.1 : dx0 - 0.08;
       // inside: a lit back wall, shelves, things on them
       box(gx0, 0.42, gx1, 2.8, jit([92, 86, 78], 0.2), MAT.glass);
@@ -1452,10 +1454,12 @@ function facadeLayers() {
         const sc = [150, 152, 154];
         box(gx0 - 0.04, 0.32, gx1 + 0.04, 2.84, sc, MAT.trim);
         for (let y = 0.32; y < 2.84; y += 0.08) box(gx0 - 0.04, y, gx1 + 0.04, y + 0.018, dim(sc, 0.74));
-        g.strokeStyle = css(pick([[30, 30, 34], [180, 40, 50], [40, 90, 160]], R)); g.lineWidth = 3; g.beginPath();
-        let x = gx0 + 0.3 + R() * 0.5, y = 1.2 + R() * 0.6; g.moveTo(X(x), Y(y));
-        for (let i = 0; i < 7; i++) { x += 0.12 + R() * 0.15; g.quadraticCurveTo(X(x - 0.1), Y(y + (R() - 0.3) * 0.7), X(x), Y(y + (R() - 0.5) * 0.3)); }
-        g.stroke();
+        if (R() < 0.5) {
+          g.strokeStyle = css(pick([[30, 30, 34], [180, 40, 50], [40, 90, 160]], R)); g.lineWidth = 3; g.beginPath();
+          let x = gx0 + 0.3 + R() * 0.5, y = 1.2 + R() * 0.6; g.moveTo(X(x), Y(y));
+          for (let i = 0; i < 7; i++) { x += 0.12 + R() * 0.15; g.quadraticCurveTo(X(x - 0.1), Y(y + (R() - 0.3) * 0.7), X(x), Y(y + (R() - 0.5) * 0.3)); }
+          g.stroke();
+        }
       }
     }
     if (two) { box(3.2, 0, 3.4, 3.62, [228, 223, 214]); ramp(3.34, 0, 3.4, 3.62, 0, 0.2, 'h'); }
@@ -1524,8 +1528,8 @@ function facTable(L) {
   const a = L.at, f = new Float32Array(64), set = (i, u, nu, gr, ng) => f.set([u, nu, gr, ng], i * 4);
   set(1, a.pave, 1, a.pave, 1);
   set(2, a.brickU, 3, a.brickG, 8); set(3, a.brickP, 1, a.brickP, 1);
-  set(4, a.plasterU, 3, a.base, 8); set(5, a.renderP, 1, a.renderP, 1);
-  set(6, a.officeU, 3, a.shop, 8); set(7, a.concreteP, 1, a.concreteP, 1);
+  set(4, a.plasterU, 3, a.base, 10); set(5, a.renderP, 1, a.renderP, 1);
+  set(6, a.officeU, 3, a.shop, 10); set(7, a.concreteP, 1, a.concreteP, 1);
   set(8, a.glassU, 3, a.lobby, 2); set(9, a.glassU, 3, a.glassU, 3);
   set(10, a.classicU, 3, a.base, 4); set(11, a.renderP, 1, a.renderP, 1);
   return f;
@@ -1632,6 +1636,49 @@ function cityMesh(W) {
   const idx = new Uint32Array(p.length / 3); for (let i = 0; i < idx.length; i++) idx[i] = i;
   return { p: new Float32Array(p), n: new Float32Array(nn), c: new Float32Array(cc), u: new Float32Array(uu), idx, chunks };
 }
+// ---------- city street furniture ----------
+const FURN = lin('#3a403f');
+// a street lamp, its arm reaching out over the road along +z; the lens under the head is a mesh of its own (lit at night)
+function lampGeo() {
+  const g = new Geo();
+  g.cyl(0, 0, 0, 0.16, 0.12, 0.55, 10, FURN, 0.15, 'y', true);
+  g.cyl(0, 0.55, 0, 0.085, 0.06, 7.1, 10, FURN, 0.15, 'y', true);
+  g.box(0, 7.6, 0.72, 0.07, 0.07, 1.45, FURN, 0.15);
+  g.box(0, 7.53, 1.55, 0.34, 0.15, 0.64, FURN, 0.2);
+  return smoothGeo(g, 40);
+}
+function lampLensGeo() { const g = new Geo(); g.box(0, 7.448, 1.55, 0.26, 0.02, 0.52, [1, 0.94, 0.82], 0); return g; }
+// traffic lights: a pole, and a head per street facing +z (its amber lens apart, to flash)
+function signalPoleGeo() { const g = new Geo(); g.cyl(0, 0, 0, 0.09, 0.07, 3.7, 10, FURN, 0.15, 'y', true); return smoothGeo(g, 40); }
+function signalHeadGeo() {
+  const g = new Geo(), body = lin('#1c1e1f');
+  g.box(0, 3.0, 0.13, 0.08, 0.08, 0.14, FURN, 0.15);
+  g.box(0, 3.0, 0.31, 0.32, 0.98, 0.24, body, 0.2);
+  for (const y of [3.31, 3.0, 2.69]) g.box(0, y + 0.12, 0.48, 0.26, 0.025, 0.1, body, 0.2);
+  g.box(0, 3.31, 0.435, 0.2, 0.2, 0.012, lin('#3a0d0b'), 0.6);
+  g.box(0, 2.69, 0.435, 0.2, 0.2, 0.012, lin('#0b2a1a'), 0.6);
+  return g;
+}
+function signalLensGeo() { const g = new Geo(); g.box(0, 3.0, 0.437, 0.2, 0.2, 0.012, [1, 0.62, 0.12], 0); return g; }
+// paint and pits: zebra crossings over the streets out of every junction of the route (on the road or on the side
+// street's asphalt) and a square of soil round each street tree, drawn just over what they lie on
+function cityDecals(W) {
+  const { O, T, TR } = W, g = new Geo(), R = C.rng(4242), paint = lin('#e4e2da'), soil = lin('#3d342a'), rim = lin('#9a958a');
+  for (const zb of O.zebras) {
+    const i = C.nearest(T, zb.x, zb.z, 60), y = zb.road && i >= 0 ? T.Y[i] + 0.012 : C.terrainH(TR, zb.x, zb.z) + 0.015;
+    const fx = Math.sin(zb.rot), fz = Math.cos(zb.rot);
+    const P = (a, b) => [zb.x + fx * a + fz * b, y, zb.z + fz * a - fx * b];
+    for (let l = -T.hw + 0.75; l <= T.hw - 0.7; l += 1.0) g.quad(P(-1.5, l - 0.25), P(1.5, l - 0.25), P(1.5, l + 0.25), P(-1.5, l + 0.25), scalec(paint, 0.8 + R() * 0.25), 0.08, [zb.x, y - 5, zb.z]);
+  }
+  const y = C.CITY_X.slab + 0.008;
+  for (const p of O.pits) {
+    const fx = Math.sin(p.rot), fz = Math.cos(p.rot), P = (a, b) => [p.x + fx * a + fz * b, y, p.z + fz * a - fx * b], ref = [p.x, y - 5, p.z];
+    g.quad(P(-0.55, -0.55), P(0.55, -0.55), P(0.55, 0.55), P(-0.55, 0.55), scalec(soil, 0.85 + R() * 0.3), 0, ref);
+    for (const [a0, b0, a1, b1] of [[-0.62, -0.62, 0.62, -0.55], [-0.62, 0.55, 0.62, 0.62], [-0.62, -0.55, -0.55, 0.55], [0.55, -0.55, 0.62, 0.55]])
+      g.quad(P(a0, b0), P(a1, b0), P(a1, b1), P(a0, b1), rim, 0.03, ref);
+  }
+  return g;
+}
 // water-filled barriers across the closed streets: two-metre sections, red and white
 function barrierGeo(list) {
   const g = new Geo(), red = lin('#c8302c'), white = lin('#e8e6e0');
@@ -1670,7 +1717,7 @@ function buildScene(R, W) {
   const rot = o => o.rot;
   if (O.trees.length) {
     const pines = O.trees.filter(t => t.type !== 1), birches = O.trees.filter(t => t.type === 1);
-    const pc = V.pine.map(lin), ptex = R.texture(treeAtlas());
+    const pc = pines.length && V.pine.map(lin), ptex = pines.length && R.texture(treeAtlas());
     // per tree: one of three shapes (the old-growth ones for type 3), a little brighter or darker, and a slight drift
     // towards yellow or blue
     const hh = (o, k) => { const v = Math.sin(o.x * 12.9898 + o.z * 78.233 + k * 37.719) * 43758.5453; return v - Math.floor(v); };
@@ -1713,6 +1760,18 @@ function buildScene(R, W) {
     const fl = facadeLayers();
     S.city = add(R.mesh(cityMesh(W), null, { cullDist: S.E.fog[1] + 60 }), { mode: 12, arr: R.textureArray(fl), fac: facTable(fl) }, true);
     if (O.barriers.length) add(R.mesh(barrierGeo(O.barriers)), { mode: 0 }, true);
+    const one = o => [o.x, o.y, o.z, o.rot, 1, 1, 0, 0, 1, 1, 1];
+    const li = instData(O.lamps, one), heads = instData(O.signals.flatMap(s => s.heads.map(rot => ({ x: s.x, y: s.y, z: s.z, rot }))), one);
+    add(R.mesh(lampGeo(), li, cull), { mode: 0 }, true);
+    // lamp lenses glow at night; the amber of the traffic lights flashes (game.js sets S.amber.tint)
+    add(R.mesh(lampLensGeo(), li, cull), { mode: 4, tint: S.E.night ? [3.2, 2.7, 1.9] : [0.42, 0.42, 0.42] });
+    // at night they light the street: game.js hands the nearest of these heads to the shader
+    if (S.E.night) S.lamps = O.lamps.map(o => [o.x + Math.sin(o.rot) * 1.55, o.y + 7.3, o.z + Math.cos(o.rot) * 1.55]);
+    add(R.mesh(signalPoleGeo(), instData(O.signals, o => [o.x, o.y, o.z, 0, 1, 1, 0, 0, 1, 1, 1]), cull), { mode: 0 }, true);
+    add(R.mesh(signalHeadGeo(), heads, cull), { mode: 0 }, true);
+    S.amber = { mode: 4, tint: [0.1, 0.06, 0.01] };
+    add(R.mesh(signalLensGeo(), heads, cull), S.amber);
+    add(R.mesh(cityDecals(W)), { mode: 0, decal: true });
   }
   if (O.hay.length) add(R.mesh(hayGeo(), instData(O.hay, o => [o.x, o.y, o.z, o.rot, 1, 1, 0, 0, 1, 1, 1])), { mode: 8 }, true);
   // ground cover

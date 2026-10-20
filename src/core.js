@@ -918,6 +918,48 @@ function placeCity(st, out, R, addCol, addSeg) {
       out.fans.push({ x, z, y: -0.06, rot: Math.atan2(-dw[0], -dw[1]) + (R() - 0.5) * 0.8, c: (R() * 12) | 0, ph: R() * 6.28, h: 0.9 + R() * 0.2 });
     }
   }
+  // street furniture round the blocks next to the route, all of it clear of the corners (where everyone cuts): trees in
+  // pits and lamp posts along the sidewalks, a traffic light on every corner of a junction of the route but the inside
+  // of a turn (flashing amber: the streets are closed), and a zebra crossing over each street out of such a junction
+  const wdir = (du, dv) => [du * P.e0[0] + dv * P.e1[0], du * P.e0[1] + dv * P.e1[1]];
+  const rot4 = (q, u, v) => q === 0 ? [u, v] : q === 1 ? [-v, u] : q === 2 ? [-u, -v] : [v, -u];
+  const S = B / 2 - k, span = S - P.kr - 7, ys = CITY_X.slab, Rf = rng(st.seed + 777);
+  out.lamps = []; out.signals = []; out.zebras = []; out.pits = [];
+  for (const key of near) {
+    const [bi, bj] = key.split(',').map(Number), cu = (bi + 0.5) * B, cv = (bj + 0.5) * B;
+    for (let q = 0; q < 4; q++) {
+      const [nu, nv] = rot4(q, 0, 1), dw = wdir(nu, nv), face = Math.atan2(dw[0], dw[1]);
+      const n = Math.floor(2 * span / 10.5), step = 2 * span / n;
+      for (let i = 0; i <= n; i++) {
+        const u = -span + i * step;
+        if (Rf() > 0.12) {
+          const [pu, pv] = rot4(q, u + (Rf() - 0.5) * 0.8, S - 0.95), [x, z] = W_(cu + pu, cv + pv), sc = 1.05 + Rf() * 0.3;
+          out.trees.push({ x, z, y: ys - 0.05, rot: Rf() * 6.28, s: sc, sy: sc * (1.05 + Rf() * 0.25), type: 1, c: Rf() });
+          out.pits.push({ x, z, rot: face });
+          addCol(x, z, 0.28, 'tree');
+        }
+        if (i < n && i % 3 === 1) {
+          const [pu, pv] = rot4(q, u + step / 2, S - 0.45), [x, z] = W_(cu + pu, cv + pv);
+          out.lamps.push({ x, z, y: ys, rot: face });
+          addCol(x, z, 0.14, 'post');
+        }
+      }
+    }
+  }
+  const sc = Math.min(9, k + P.kr * (1 - Math.SQRT1_2) + 0.64);
+  for (const nd of P.nodes) {
+    const b = CSTEP[(nd.din + 2) % 4], o = CSTEP[nd.dout];
+    for (const [su, sv] of [[1, 1], [-1, 1], [-1, -1], [1, -1]]) {
+      if (nd.turn && su === b[0] + o[0] && sv === b[1] + o[1]) continue;
+      const [x, z] = W_(nd.i * B + su * sc, nd.j * B + sv * sc), da = wdir(su, 0), db = wdir(0, sv);
+      out.signals.push({ x, z, y: ys, heads: [Math.atan2(da[0], da[1]), Math.atan2(db[0], db[1])] });
+      addCol(x, z, 0.13, 'post');
+    }
+    for (let c = 0; c < 4; c++) {
+      const f = CSTEP[c], [x, z] = W_(nd.i * B + f[0] * 9.8, nd.j * B + f[1] * 9.8), dw = dirW(c);
+      out.zebras.push({ x, z, rot: Math.atan2(dw[0], dw[1]), road: c === nd.dout || c === (nd.din + 2) % 4 });
+    }
+  }
 }
 
 // ---------------- World ----------------

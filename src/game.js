@@ -1625,6 +1625,7 @@ const sfx = {
     }
     if (kind === 'tree') { this.burst(t, 0.06, 'bandpass', 1700, 1.2, 0.2 + k * 0.3); this.burst(t + 0.06, 0.6 + k * 0.4, 'highpass', 3800, 0.5, 0.03 + k * 0.05); }
     else if (kind === 'rock' || kind === 'wall') this.toneAt(t, 150, 0.1, 'triangle', 0.06 + k * 0.08, 90);
+    else if (kind === 'post') { this.toneAt(t, 410, 0.45, 'sine', 0.05 + k * 0.08, 396); this.toneAt(t, 1130, 0.25, 'sine', 0.025 + k * 0.04, 1105); } // a hollow steel pole rings
   },
 };
 // reverb for the place, rebuilt when the stage changes: [first, last] early reflection, count; tail length; how dark the
@@ -2106,7 +2107,7 @@ const cam = { pos: [0, 5, -10], look: [0, 0, 0], yaw: 0, y: 0, fov: 60, shake: 0
 let tvSpots = [];
 function buildTvSpots() {
   const T = W.T; tvSpots = [];
-  const cols = W.O.cols;
+  const cols = W.O.cols, city = !!W.st.city;
   const blocked = (ax, ay, az, bx, by, bz) => {
     if (C.rayWalls(W, ax, az, bx, bz) < 1) return true;
     const n = 14;
@@ -2115,7 +2116,12 @@ function buildTvSpots() {
       const gx = Math.floor(x / C.CELL), gz = Math.floor(z / C.CELL);
       for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
         const arr = cols.get(C.hkey(gx + a, gz + b)); if (!arr) continue;
-        for (const o of arr) { if (o.kind !== 'tree' && o.kind !== 'rock') continue; const r = o.kind === 'tree' ? 2.4 : o.r + 0.6; if ((x - o.x) ** 2 + (z - o.z) ** 2 < r * r && y < (o.kind === 'tree' ? 9 : 2.5) + C.terrainH(W.TR, o.x, o.z)) return true; }
+        for (const o of arr) {
+          if (o.kind !== 'tree' && o.kind !== 'rock') continue;
+          // a street tree only hides what is behind its crown (3.4-8.8 m up), not its thin trunk
+          const gy = y - C.terrainH(W.TR, o.x, o.z), r = o.kind !== 'tree' ? o.r + 0.6 : !city ? 2.4 : gy < 3.4 ? 0.35 : 1.8;
+          if ((x - o.x) ** 2 + (z - o.z) ** 2 < r * r && gy < (o.kind === 'tree' ? (city ? 8.8 : 9) : 2.5)) return true;
+        }
       }
       if (C.terrainH(W.TR, x, z) > y - 0.5) return true;
     }
@@ -2124,8 +2130,8 @@ function buildTvSpots() {
   let side = 1;
   for (let s = 70; s < T.L - 30; s += 75) {
     let best = null;
-    const city = !!W.st.city;
-    for (const sd of [side, -side]) for (const off of city ? [1.4, 2.6] : [6.5, 9, 12]) for (const hgt of city ? [3.5, 5.5] : [4, 7]) {
+    // in the city: a cameraman on the sidewalk, under the trees, or a first-floor window over them
+    for (const sd of [side, -side]) for (const off of city ? [1.4, 2.6] : [6.5, 9, 12]) for (const hgt of city ? [2.2, 9.6] : [4, 7]) {
       if (best) break;
       const p = C.sampleAt(T, s); const rx = -Math.cos(p.h) * sd, rz = Math.sin(p.h) * sd;
       const x = p.x + rx * (T.hw + off), z = p.z + rz * (T.hw + off);
@@ -2719,6 +2725,8 @@ function tick(dt, doRender) {
     S.updateFans(time, vis.x, vis.z);
   }
   updateAudio(dt);
+  // the city's traffic lights flash amber (a lamp, so it swells and fades rather than blinks)
+  if (S.amber) { const k = clamp(Math.sin(time * 5.7) * 2.2 + 0.4, 0, 1); S.amber.tint = [0.1 + 2.5 * k, 0.06 + 1.55 * k, 0.012 + 0.34 * k]; }
   if (flameT > 0) flameT -= dt;
   if (!$('hud').hidden) { raceChecks(dt); updateHUD(dt); }
   if (doRender) render();
@@ -2739,6 +2747,19 @@ function render() {
   const fx = Math.sin(vis.h), fz = Math.cos(vis.h);
   if (lightsOn) { E.hlOn = E.night ? E.hlK : E.overcast ? 0.5 : 0.25; E.hlPos = [vis.x + fx * 2.3, vis.y + 0.9, vis.z + fz * 2.3]; const l = Math.hypot(fx, 0.1, fz); E.hlDir = [fx / l, -0.1 / l, fz / l]; }
   else E.hlOn = 0;
+  // street lamps at night: the 16 nearest a point ahead of the camera light the scene, the furthest of them faded so
+  // none switches on or off as the set changes
+  if (S.lamps) {
+    const dx = cam.look[0] - cam.pos[0], dz = cam.look[2] - cam.pos[2], dl = Math.hypot(dx, dz) || 1;
+    const px = cam.pos[0] + dx / dl * 22, pz = cam.pos[2] + dz / dl * 22;
+    const L = S.lamps, d = S.lampD || (S.lampD = new Float32Array(L.length)), ix = S.lampI || (S.lampI = L.map((_, i) => i));
+    for (let i = 0; i < L.length; i++) d[i] = (L[i][0] - px) ** 2 + (L[i][2] - pz) ** 2;
+    ix.sort((a, b) => d[a] - d[b]); // nearly sorted already from the last frame
+    const n = Math.min(16, L.length), dmax = Math.sqrt(d[ix[Math.min(n, L.length - 1)]]);
+    if (!E.pl) E.pl = new Float32Array(64);
+    for (let i = 0; i < n; i++) { const l = L[ix[i]]; E.pl.set([l[0], l[1], l[2], 2.4 * (1 - C.sstep(0.7 * dmax, dmax, Math.sqrt(d[ix[i]])))], i * 4); }
+    E.plN = n;
+  } else E.plN = 0;
   // shadow pass: a near cascade (32 m, about 1.5 cm a texel) around the car and a far one (140 m) for the scenery
   if (E.shadows) {
     const sd = E.sunDir;
@@ -2772,6 +2793,7 @@ function render() {
   for (const { m, o } of S.meshes) {
     if (o.farFog) { R.drawLit(m, { mode: 0, fog: [380, 3200], fogRestore: E.fog, fogLo: [E.fog[0], E.fog[1], W.st.kind === 'mesa' ? 100 : 110, (S.farY || 0) - 30] }); continue; }
     if (m === S.road) { gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -2); R.drawLit(m, o); gl.disable(gl.POLYGON_OFFSET_FILL); continue; }
+    if (o.decal) { gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-2, -4); R.drawLit(m, o); gl.disable(gl.POLYGON_OFFSET_FILL); continue; }
     R.drawLit(m, o);
   }
   // car
