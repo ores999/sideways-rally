@@ -104,7 +104,7 @@ function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.
 const nf = n => Math.round(n).toLocaleString('en-US');
 function drawThumb(cv, T, st) {
   const g = cv.getContext('2d'), w = cv.width, h = cv.height;
-  const acc = { pine: '#8cc06f', frost: '#8fb6ff', mesa: '#ff9152', forest: '#6fbf73' }[st.id] || '#ffd23a';
+  const acc = { pine: '#8cc06f', frost: '#8fb6ff', mesa: '#ff9152', forest: '#6fbf73', city: '#a9bdd8' }[st.id] || '#ffd23a';
   g.fillStyle = '#10141a'; g.fillRect(0, 0, w, h);
   g.strokeStyle = 'rgba(255,255,255,0.05)'; g.lineWidth = 1;
   for (let x = 0; x < w; x += 16) { g.beginPath(); g.moveTo(x + 0.5, 0); g.lineTo(x + 0.5, h); g.stroke(); }
@@ -768,11 +768,14 @@ async function ghostDecode(str) {
   try { let u8 = b64d(str.slice(1)); if (str[0] === 'z') { u8 = await zip(u8, true); if (!u8) return null; } else if (str[0] !== 'r') return null; return unpackGhost(u8).g; } catch (e) { return null; }
 }
 function ownGhost(e) { const r = store.get(pbKey(e.k, e.c), null); return r && r.q && Math.abs(r.t - e.t) < 0.005 ? r.q : null; }
+// the stages the server's check takes (online/supabase.sql). Times on any other stage stay on this browser until the
+// server is migrated: one refused row fails the whole batch, and a 400 reads as "no ghost column"
+const ONLINE_STAGES = /^(pine|frost|mesa|forest|city)(-r)?(-night|-rain)?$|^daily-\d{8}$/;
 async function onlineSync() {
   if (!online.on || !settings.name || syncing) return;
   const sent = new Set(store.get('sent', [])), sentG = new Set(store.get('sentG', [])), me = settings.name.toLowerCase(), id = e => e.n.toLowerCase() + '|' + e.k + '|' + e.c + '|' + e.t.toFixed(3);
   const withG = !online.noGhost;
-  const all = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && !isBonus(carById(e.c)) && (!sent.has(id(e)) || (withG && !sentG.has(id(e)) && ownGhost(e))));
+  const all = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && ONLINE_STAGES.test(e.k) && !isBonus(carById(e.c)) && (!sent.has(id(e)) || (withG && !sentG.has(id(e)) && ownGhost(e))));
   const todo = all.slice(0, withG ? 25 : 200);
   if (!todo.length) { syncBonus(sent, id); return; }
   syncing = true;
@@ -801,7 +804,7 @@ async function onlineSync() {
 async function syncBonus(sent, id) {
   if (online.noBonus || !settings.name) return;
   const me = settings.name.toLowerCase();
-  const todo = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && isBonus(carById(e.c)) && !sent.has(id(e))).slice(0, 50);
+  const todo = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && ONLINE_STAGES.test(e.k) && isBonus(carById(e.c)) && !sent.has(id(e))).slice(0, 50);
   if (!todo.length) return;
   try {
     const r = await fetch(ONLINE.url.replace(/\/$/, '') + '/rest/v1/times', { method: 'POST', headers: onlineHeaders(true),
@@ -1607,10 +1610,10 @@ const sfx = {
   crash(v, kind) {
     const c = A.ctx; if (!c) return;
     const t = c.currentTime + 0.004, k = clamp((v - 3) / 12, 0, 1);
-    const soft = kind === 'bank' || kind === 'hay' || kind === 'fan';
+    const soft = kind === 'bank' || kind === 'hay' || kind === 'fan' || kind === 'barrier';
     this.toneAt(t, 60 + Math.random() * 12, 0.22 + k * 0.2, 'sine', 0.3 + k * 0.5, 33);
     this.burst(t, 0.14 + k * 0.16, 'lowpass', soft ? 300 : 420, 0.7, 0.3 + k * 0.5);
-    if (soft) { this.burst(t + 0.02, 0.35 + k * 0.3, 'bandpass', kind === 'bank' ? 1300 : 2200, 0.5, 0.1 + k * 0.2); return; }
+    if (soft) { this.burst(t + 0.02, 0.35 + k * 0.3, 'bandpass', kind === 'bank' ? 1300 : kind === 'barrier' ? 800 : 2200, 0.5, 0.1 + k * 0.2); return; }
     this.burst(t, 0.12 + k * 0.2, 'bandpass', 560 + Math.random() * 280, 0.9, 0.25 + k * 0.65);
     if (v > 5) {
       const r = 0.9 + Math.random() * 0.2;
@@ -1622,6 +1625,7 @@ const sfx = {
     }
     if (kind === 'tree') { this.burst(t, 0.06, 'bandpass', 1700, 1.2, 0.2 + k * 0.3); this.burst(t + 0.06, 0.6 + k * 0.4, 'highpass', 3800, 0.5, 0.03 + k * 0.05); }
     else if (kind === 'rock' || kind === 'wall') this.toneAt(t, 150, 0.1, 'triangle', 0.06 + k * 0.08, 90);
+    else if (kind === 'post') { this.toneAt(t, 410, 0.45, 'sine', 0.05 + k * 0.08, 396); this.toneAt(t, 1130, 0.25, 'sine', 0.025 + k * 0.04, 1105); } // a hollow steel pole rings
   },
 };
 // reverb for the place, rebuilt when the stage changes: [first, last] early reflection, count; tail length; how dark the
@@ -1631,6 +1635,7 @@ const REVERB = {
   forest: { er: [0.008, 0.05, 22], tail: 1.5, damp: 0.5, wet: 0.24 },
   mesa: { er: [0.06, 0.3, 7], tail: 1.0, damp: 0.3, wet: 0.11, echo: [0.62, 0.22] },
   frost: { er: [0.02, 0.1, 8], tail: 0.8, damp: 0.82, wet: 0.09 },
+  city: { er: [0.01, 0.07, 20], tail: 1.2, damp: 0.45, wet: 0.2 },
 };
 function buildReverb() {
   const c = A.ctx; if (!c || !W) return;
@@ -1758,18 +1763,18 @@ function updateAudio(dt) {
   Vc.wh.frequency.setTargetAtTime(Math.max(40, Math.abs(car.vF) / C.RW / (2 * Math.PI) * P.final * 34), t, 0.03);
   // straight-cut gears sing loudest on the overrun, when the load comes off the teeth
   Vc.whg.gain.setTargetAtTime(active ? V.whine * clamp(spd / 22, 0, 1) * (car.gear > 0 ? 1 : 0) * (1 + 0.9 * (1 - thr)) : 0, t, 0.05);
-  // surfaces
-  const sid = W.st.kind;
+  // surfaces (a city is paved from kerb to kerb, off the route too)
+  const sid = W.st.kind, paved = !!W.st.tarmac && (car.onRoad || !!W.st.city);
   let gv = 0, sv = 0;
   if (active && !car.air) {
-    const base = car.onRoad ? (sid === 'pine' ? 0.22 : sid === 'frost' ? 0.12 : 0.03) : 0.26;
-    gv = clamp(spd / 32, 0, 1) * base + clamp(car.slip / 10, 0, 1) * (sid === 'mesa' && car.onRoad ? 0 : 0.15);
-    if ((sid === 'mesa' || sid === 'frost') && car.onRoad) sv = clamp((car.slip - 2.5) / 7, 0, 1) * (sid === 'mesa' ? 0.22 : 0.08);
+    const base = paved ? 0.03 : car.onRoad ? (sid === 'pine' ? 0.22 : sid === 'frost' ? 0.12 : 0.03) : 0.26;
+    gv = clamp(spd / 32, 0, 1) * base + clamp(car.slip / 10, 0, 1) * (paved ? 0 : 0.15);
+    if (paved || (sid === 'frost' && car.onRoad)) sv = clamp((car.slip - 2.5) / 7, 0, 1) * (paved ? 0.22 : 0.08);
   }
-  A.gbp.frequency.setTargetAtTime(sid === 'frost' ? 650 : sid === 'mesa' && car.onRoad ? 500 : 1100, t, 0.1);
+  A.gbp.frequency.setTargetAtTime(sid === 'frost' ? 650 : paved ? 500 : 1100, t, 0.1);
   if (A.cr) {
     // stones under the tyres: click rate follows speed and sliding; snow gives a softer, duller crunch
-    const loose = !(sid === 'mesa' && car.onRoad);
+    const loose = !paved;
     const rate = active && !car.air && loose ? clamp(spd * 14 + car.slip * 90, 0, 2600) : 0;
     A.cr.parameters.get('rate').setTargetAtTime(rate, t, 0.05);
     A.cr.parameters.get('decay').setTargetAtTime(sid === 'frost' ? 0.007 : 0.0025, t, 0.1);
@@ -1779,7 +1784,7 @@ function updateAudio(dt) {
     gv *= 0.6; // the noise bed stays underneath as the rumble
   }
   A.gg.gain.setTargetAtTime(gv, t, 0.05); A.sg.gain.setTargetAtTime(sv * 0.6, t, 0.05);
-  const sq = active && !car.air && sid === 'mesa' && car.onRoad ? clamp((car.slip - 2.2) / 6, 0, 1) : 0;
+  const sq = active && !car.air && paved ? clamp((car.slip - 2.2) / 6, 0, 1) : 0;
   A.sqo.frequency.setTargetAtTime(760 + clamp(car.slip, 0, 12) * 18 + (Math.random() - 0.5) * 70, t, 0.02);
   A.sqg.gain.setTargetAtTime(sq * 0.07, t, 0.04);
   A.wg.gain.setTargetAtTime(active ? Math.pow(spd / 55, 2) * 0.16 + (S.E.blizzard ? 0.05 : 0) : S.E.blizzard ? 0.03 : 0, t, 0.1);
@@ -1793,9 +1798,11 @@ function updateAudio(dt) {
   // ---- the place: reverb send, the gorge's slapback, gravel in the arches, stones off the floor ----
   const inGorge = W.T.walls.some(w => car.s > w.s0 - 15 && car.s < w.s1 + 15);
   A.revIn.gain.setTargetAtTime((A.revWet || 0.15) * (onboard ? 0.35 : 1), t, 0.3);
-  A.slap.delayTime.setTargetAtTime(W.st.rows ? 0.05 : 0.042, t, 0.2);
-  A.slapIn.gain.setTargetAtTime(onboard ? 0.05 : inGorge ? 0.3 : W.st.rows ? 0.07 : 0, t, 0.25);
-  const looseGround = !(sid === 'mesa' && car.onRoad);
+  // the city's building fronts ~8 m off the road on both sides: a slapback there and back (~47 ms)
+  const town = !!W.st.city;
+  A.slap.delayTime.setTargetAtTime(town ? 0.047 : W.st.rows ? 0.05 : 0.042, t, 0.2);
+  A.slapIn.gain.setTargetAtTime(onboard ? 0.05 : inGorge ? 0.3 : town ? 0.2 : W.st.rows ? 0.07 : 0, t, 0.25);
+  const looseGround = !paved;
   if (A.sp) {
     const srate = active && !car.air && looseGround ? clamp(spd * 9 + car.slip * 110 + car.wheelspin * 180, 0, 3600) : 0;
     A.sp.parameters.get('rate').setTargetAtTime(srate, t, 0.05);
@@ -1830,11 +1837,11 @@ function updateAudio(dt) {
   A.gustT -= dt; if (A.gustT <= 0) { A.gustT = 1.2 + Math.random() * 3; A.gustTo = Math.random(); }
   A.gust += ((A.gustTo || 0.4) - A.gust) * Math.min(1, dt * 0.8);
   const night = W.st.cond === 'night', rain = W.st.cond === 'rain', amb = onboard ? 0.45 : 1;
-  const windK = (sid === 'mesa' ? 0.05 : sid === 'frost' ? (S.E.blizzard ? 0.1 : 0.05) : W.st.rows ? 0.02 : 0.03) * (night ? 0.7 : 1);
+  const windK = (sid === 'mesa' ? 0.05 : sid === 'frost' ? (S.E.blizzard ? 0.1 : 0.05) : W.st.rows || sid === 'city' ? 0.02 : 0.03) * (night ? 0.7 : 1);
   const out = racing || mode === 'done'; // the menu only keeps a soft breeze
   A.ambW.gain.setTargetAtTime(windK * (0.35 + 0.9 * A.gust) * amb * (out ? 1 : 0.4), t, 0.4);
   A.ambWlp.frequency.setTargetAtTime(380 + A.gust * 600, t, 0.5);
-  if (out && night && sid !== 'frost') for (let k = 0; k < 3; k++) { A.crickT[k] -= dt; if (A.crickT[k] <= 0) { A.crickT[k] = A.crickP[k] * (0.9 + Math.random() * 0.2); sfx.cricket(k); } }
+  if (out && night && sid !== 'frost' && sid !== 'city') for (let k = 0; k < 3; k++) { A.crickT[k] -= dt; if (A.crickT[k] <= 0) { A.crickT[k] = A.crickP[k] * (0.9 + Math.random() * 0.2); sfx.cricket(k); } }
   if (out && !night && !rain && sid === 'pine') { A.birdT -= dt; if (A.birdT <= 0) { A.birdT = 2.5 + Math.random() * 6; if (Math.random() < 0.85) sfx.bird(); } }
   if (out && !night && sid === 'mesa') { A.hawkT -= dt; if (A.hawkT <= 0) { A.hawkT = 18 + Math.random() * 30; sfx.hawk(); } }
   if (out && rain && sid !== 'frost') { A.thunderT -= dt; if (A.thunderT <= 0) { A.thunderT = 25 + Math.random() * 40; sfx.thunder(); } }
@@ -1910,7 +1917,7 @@ function say(text) {
 function noteWords(n) {
   if (n.kind === 'jump') return 'Jump!';
   if (n.kind === 'crest') return 'Over crest';
-  let t = `${n.dir > 0 ? 'Left' : 'Right'} ${n.sev === 'H' ? 'hairpin' : n.sev}`;
+  let t = `${n.dir > 0 ? 'Left' : 'Right'} ${n.sev === 'H' ? 'hairpin' : n.sev === 'Q' ? 'square' : n.sev}`;
   if (n.mods.includes('long')) t += ' long';
   if (n.mods.includes('dc')) t += ", don't cut";
   if (n.mods.includes('cau')) t += ', caution';
@@ -1936,8 +1943,8 @@ function noteIcon(n) {
   const stroke = 'var(--paper)';
   if (n.kind === 'jump') return `<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M6 52h22l12-14" fill="none" stroke="${stroke}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M42 32q8-16 16-2" fill="none" stroke="var(--signal)" stroke-width="4" stroke-dasharray="4 5" stroke-linecap="round"/><path d="M40 52h18" stroke="${stroke}" stroke-width="6" stroke-linecap="round"/></svg>`;
   if (n.kind === 'crest') return `<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M4 50q28-36 56 0" fill="none" stroke="${stroke}" stroke-width="6" stroke-linecap="round"/><path d="M32 8v14m-6-6 6 6 6-6" fill="none" stroke="var(--signal)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-  const A = { 6: 22, 5: 40, 4: 62, 3: 88, 2: 112, 1: 140, H: 178 }[n.sev] * Math.PI / 180;
-  const r = { 6: 60, 5: 34, 4: 23, 3: 17, 2: 14, 1: 11, H: 9 }[n.sev];
+  const A = { 6: 22, 5: 40, 4: 62, 3: 88, 2: 112, 1: 140, H: 178, Q: 90 }[n.sev] * Math.PI / 180;
+  const r = { 6: 60, 5: 34, 4: 23, 3: 17, 2: 14, 1: 11, H: 9, Q: 5 }[n.sev];
   const sgn = n.dir > 0 ? -1 : 1;
   let x = 0, y = 0, th = 0; const pts = [[0, 0]]; y -= 14; pts.push([x, y]);
   const steps = 16, ds = r * A / steps;
@@ -1957,7 +1964,7 @@ function noteHTML(n, cls) {
   let dir = '', sev = '';
   if (n.kind === 'jump') { dir = 'Caution'; sev = 'Jump'; }
   else if (n.kind === 'crest') { dir = 'Over'; sev = 'Crest'; }
-  else { dir = n.dir > 0 ? 'Left' : 'Right'; sev = n.sev === 'H' ? 'Hairpin' : String(n.sev); }
+  else { dir = n.dir > 0 ? 'Left' : 'Right'; sev = n.sev === 'H' ? 'Hairpin' : n.sev === 'Q' ? 'Square' : String(n.sev); }
   const mods = [];
   if (n.mods.includes('dc')) mods.push(`<span>Don't cut</span>`);
   if (n.mods.includes('cau')) mods.push(`<span>Caution</span>`);
@@ -1992,7 +1999,7 @@ function savePrev() { prev.x = car.x; prev.y = car.y; prev.z = car.z; prev.h = c
 function wheelLocal(i) { const sh = carModel.shape; return [(i % 2 ? -1 : 1) * (sh.W / 2 - 0.13), i < 2 ? carModel.fz : carModel.rz]; }
 function surfBump(x, z, surf) {
   const sid = W.st.kind;
-  const amp = surf === 0 ? (sid === 'pine' ? 0.026 : sid === 'frost' ? 0.016 : 0.004) : surf === 1 ? 0.03 : 0.042;
+  const amp = surf === 0 || W.st.city ? (sid === 'pine' ? 0.026 : sid === 'frost' ? 0.016 : 0.004) : surf === 1 ? 0.03 : 0.042;
   return amp * (W.nz.n2(x * 0.9, z * 0.9) * 0.65 + W.nz.n2(x * 2.6 + 9, z * 2.6) * 0.35);
 }
 function updateVis(dt) {
@@ -2008,7 +2015,7 @@ function updateVis(dt) {
     susp.surf[i] = surf;
     const g = C.groundAt(W, car, wx, wz);
     flat += g;
-    susp.gh[i] = g + surfBump(wx, wz, surf);
+    susp.gh[i] = g + surfBump(wx, wz, surf) + (W.st.city ? C.slabAt(W, wx, wz) : 0); // the kerb only lifts the drawn car
   }
   const gh = susp.gh, fz0 = carModel.fz, rz0 = carModel.rz, hx = wheelLocal(0)[0];
   vis.gp = -Math.atan2((gh[0] + gh[1]) / 2 - (gh[2] + gh[3]) / 2, fz0 - rz0);
@@ -2084,7 +2091,7 @@ function buildContactShadow() {
   csMesh = R.mesh(q);
 }
 // dirt builds up on the lower body and wheels as you drive
-const DIRT = { pine: { col: lin('#857259'), max: 0.6, rate: 0.03 }, frost: { col: lin('#bcc5d3'), max: 0.42, rate: 0.03 }, mesa: { col: lin('#b08a66'), max: 0.32, rate: 0.012 } };
+const DIRT = { pine: { col: lin('#857259'), max: 0.6, rate: 0.03 }, frost: { col: lin('#bcc5d3'), max: 0.42, rate: 0.03 }, mesa: { col: lin('#b08a66'), max: 0.32, rate: 0.012 }, city: { col: lin('#7d7b78'), max: 0.2, rate: 0.008 } };
 let dirt = 0;
 function updateDirt(dt) {
   if (mode !== 'race') return;
@@ -2100,15 +2107,21 @@ const cam = { pos: [0, 5, -10], look: [0, 0, 0], yaw: 0, y: 0, fov: 60, shake: 0
 let tvSpots = [];
 function buildTvSpots() {
   const T = W.T; tvSpots = [];
-  const cols = W.O.cols;
+  const cols = W.O.cols, city = !!W.st.city;
   const blocked = (ax, ay, az, bx, by, bz) => {
+    if (C.rayWalls(W, ax, az, bx, bz) < 1) return true;
     const n = 14;
     for (let i = 1; i < n; i++) {
       const t = i / n, x = ax + (bx - ax) * t, z = az + (bz - az) * t, y = ay + (by - ay) * t;
       const gx = Math.floor(x / C.CELL), gz = Math.floor(z / C.CELL);
       for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
         const arr = cols.get(C.hkey(gx + a, gz + b)); if (!arr) continue;
-        for (const o of arr) { if (o.kind !== 'tree' && o.kind !== 'rock') continue; const r = o.kind === 'tree' ? 2.4 : o.r + 0.6; if ((x - o.x) ** 2 + (z - o.z) ** 2 < r * r && y < (o.kind === 'tree' ? 9 : 2.5) + C.terrainH(W.TR, o.x, o.z)) return true; }
+        for (const o of arr) {
+          if (o.kind !== 'tree' && o.kind !== 'rock') continue;
+          // a street tree only hides what is behind its crown (3.4-8.8 m up), not its thin trunk
+          const gy = y - C.terrainH(W.TR, o.x, o.z), r = o.kind !== 'tree' ? o.r + 0.6 : !city ? 2.4 : gy < 3.4 ? 0.35 : 1.8;
+          if ((x - o.x) ** 2 + (z - o.z) ** 2 < r * r && gy < (o.kind === 'tree' ? (city ? 8.8 : 9) : 2.5)) return true;
+        }
       }
       if (C.terrainH(W.TR, x, z) > y - 0.5) return true;
     }
@@ -2117,13 +2130,14 @@ function buildTvSpots() {
   let side = 1;
   for (let s = 70; s < T.L - 30; s += 75) {
     let best = null;
-    for (const sd of [side, -side]) for (const off of [6.5, 9, 12]) for (const hgt of [4, 7]) {
+    // in the city: a cameraman on the sidewalk, under the trees, or a first-floor window over them
+    for (const sd of [side, -side]) for (const off of city ? [1.4, 2.6] : [6.5, 9, 12]) for (const hgt of city ? [2.2, 9.6] : [4, 7]) {
       if (best) break;
       const p = C.sampleAt(T, s); const rx = -Math.cos(p.h) * sd, rz = Math.sin(p.h) * sd;
       const x = p.x + rx * (T.hw + off), z = p.z + rz * (T.hw + off);
       const y = Math.max(C.terrainH(W.TR, x, z), p.y) + hgt;
       let ok = true;
-      for (const ds of [-25, 0, 25, 45]) { const q = C.sampleAt(T, s + ds); if (blocked(x, y, z, q.x, q.y + 1, q.z)) { ok = false; break; } }
+      for (const ds of city ? [-60, -30, 0, 20] : [-25, 0, 25, 45]) { const q = C.sampleAt(T, s + ds); if (blocked(x, y, z, q.x, q.y + 1, q.z)) { ok = false; break; } }
       if (ok) best = { s, x, y, z };
     }
     if (best) tvSpots.push(best);
@@ -2152,6 +2166,10 @@ function updateCamera(dt) {
     const sh = wide ? -0.4 : 0;
     cam.look = [vis.x + rgx * sh, vis.y + (wide ? 0.5 : -1.0), vis.z + rgz * sh];
     cam.fov = 50; cam.snap = true; cam.roll = 0; cam.pull = 0; cam.blur = 0; cam.up = [0, 1, 0];
+    if (W && W.O.walls) {
+      const f = C.rayWalls(W, vis.x, vis.z, cam.pos[0], cam.pos[2]);
+      if (f < 1) { const k = Math.max(0.25, f - 0.08); cam.pos[0] = vis.x + (cam.pos[0] - vis.x) * k; cam.pos[2] = vis.z + (cam.pos[2] - vis.z) * k; }
+    }
     clampCam();
     return;
   }
@@ -2161,11 +2179,17 @@ function updateCamera(dt) {
     // the car pulls away a little under power and the camera closes in under braking, so g-forces read on screen
     const pullT = car.air ? 0 : clamp(vis.aLong * 0.034, -0.38, 0.46);
     cam.pull += (pullT - cam.pull) * (1 - Math.exp(-dt * (pullT > cam.pull ? 2.2 : 3.5)));
-    const dist = dist0 + cam.pull * (cm === 1 ? 1.3 : 1);
+    let dist = dist0 + cam.pull * (cm === 1 ? 1.3 : 1);
     const vdir = spd > 4 ? Math.atan2(car.vx, car.vz) : vis.h;
     const target = vis.h + wrapA(vdir - vis.h) * 0.5;
-    if (cam.snap) { cam.yaw = target; cam.y = vis.y + hgt; }
+    if (cam.snap) { cam.yaw = target; cam.y = vis.y + hgt; cam.wallD = dist; }
     cam.yaw += wrapA(target - cam.yaw) * (1 - Math.exp(-dt * (car.air ? 2.5 : 5.5)));
+    if (W.O.walls) {
+      // between buildings the camera comes in rather than through a wall: at once, then back out gently
+      const reach = dist + 0.6, f = C.rayWalls(W, vis.x, vis.z, vis.x - Math.sin(cam.yaw) * reach, vis.z - Math.cos(cam.yaw) * reach);
+      cam.wallD = Math.min(Math.max(1.6, f * reach - 0.6), (cam.wallD || dist) + dt * 6);
+      dist = Math.min(dist, cam.wallD);
+    }
     const cx = vis.x - Math.sin(cam.yaw) * dist, cz = vis.z - Math.cos(cam.yaw) * dist;
     const ty = vis.y + hgt;
     cam.y += (ty - cam.y) * (1 - Math.exp(-dt * (car.air ? 1.4 : 8)));
@@ -2196,7 +2220,7 @@ function updateCamera(dt) {
   if (asp < 1.1 && cm !== 3) fovT *= 1 + clamp(1.1 - asp, 0, 0.65) * 0.6;
   cam.fov += (fovT - cam.fov) * (cam.snap ? 1 : Math.min(1, dt * 4));
   if (evt.land > 3) cam.shake = Math.max(cam.shake, Math.min(0.5, evt.land * 0.04));
-  const rough = car.air || !car.onRoad ? 0.03 : (W.st.kind === 'pine' ? 0.012 : W.st.kind === 'frost' ? 0.007 : 0.003);
+  const rough = car.air || (!car.onRoad && !W.st.city) ? 0.03 : (W.st.kind === 'pine' ? 0.012 : W.st.kind === 'frost' ? 0.007 : 0.003);
   const sk = cam.shake + rough * clamp(spd / 30, 0, 1.5);
   if (cm !== 3 && sk > 0.0005) {
     // smooth multi-sine shake rather than per-frame noise, so it reads as a jolt and not as jitter
@@ -2274,12 +2298,14 @@ const SURF_FX = {
   pine: [{ c: [0.52, 0.44, 0.33], a: 0.27, k: 1, chip: [0.22, 0.18, 0.14] }, { c: [0.46, 0.39, 0.29], a: 0.28, k: 1.1, chip: [0.25, 0.2, 0.15] }, { c: [0.38, 0.35, 0.25], a: 0.2, k: 0.8, chip: [0.16, 0.26, 0.09] }],
   frost: [{ c: [0.95, 0.97, 1.0], a: 0.4, k: 1.05, chip: [0.92, 0.95, 1.0] }, { c: [0.95, 0.97, 1.0], a: 0.45, k: 1.3, chip: [0.92, 0.95, 1.0] }, { c: [0.96, 0.98, 1.0], a: 0.5, k: 1.5, chip: [0.94, 0.96, 1.0] }],
   mesa: [{ c: [0.8, 0.79, 0.78], a: 0.1, k: 0.02, chip: null }, { c: [0.76, 0.56, 0.4], a: 0.28, k: 1.0, chip: [0.45, 0.28, 0.18] }, { c: [0.78, 0.55, 0.38], a: 0.3, k: 1.1, chip: [0.5, 0.3, 0.2] }],
+  city: [{ c: [0.8, 0.79, 0.78], a: 0.1, k: 0.02, chip: null }, { c: [0.78, 0.77, 0.75], a: 0.12, k: 0.1, chip: null }, { c: [0.8, 0.79, 0.78], a: 0.1, k: 0.03, chip: null }],
 };
 // in the rain the wheels throw a fine grey spray (tarmac too) and only a little of the gravel
 const SPRAY = { c: [0.8, 0.83, 0.87], a: 0.12, k: 0.75 };
 const SURF_WET = {
   pine: [Object.assign({}, SPRAY, { chip: [0.16, 0.13, 0.1] }), Object.assign({}, SPRAY, { c: [0.62, 0.6, 0.55], a: 0.16, k: 0.8, chip: [0.18, 0.14, 0.1] }), { c: [0.36, 0.34, 0.26], a: 0.14, k: 0.6, chip: [0.14, 0.2, 0.08] }],
   mesa: [Object.assign({}, SPRAY, { chip: null }), { c: [0.6, 0.46, 0.36], a: 0.18, k: 0.7, chip: [0.4, 0.25, 0.16] }, { c: [0.6, 0.45, 0.33], a: 0.2, k: 0.8, chip: [0.45, 0.27, 0.18] }],
+  city: [Object.assign({}, SPRAY, { chip: null }), Object.assign({}, SPRAY, { chip: null }), Object.assign({}, SPRAY, { chip: null })],
 };
 function emitEffects(dt) {
   if (mode === 'menu' || mode === 'paused') return;
@@ -2291,7 +2317,7 @@ function emitEffects(dt) {
       const drive = rear ? 1 - P.drive.front : P.drive.front;
       let rate = (spd * 0.85 + car.slip * (rear ? 3.6 : 1.4) + car.wheelspin * 6 * drive) * f.k * (rear ? 1 : 0.45);
       let smoke = 0;
-      if (sid === 'mesa' && susp.surf[i] === 0 && !S.E.wet) { smoke = clamp((car.slip - 3) / 6, 0, 1) * (rear ? 1 : 0.4); rate += smoke * 24; }
+      if (W.st.tarmac && (susp.surf[i] === 0 || W.st.city) && !S.E.wet) { smoke = clamp((car.slip - 3) / 6, 0, 1) * (rear ? 1 : 0.4); rate += smoke * 24; }
       if (S.E.wet) rate *= clamp(spd / 14, 0.15, 1.4); // spray only really flies at speed
       emitAcc[i] += rate * dt;
       const w = wheelWorld(i);
@@ -2358,7 +2384,7 @@ function onImpact(e) {
       chips.emit(hx + rnd() * 2.4, hy + 1.5 + Math.random() * 3, hz + rnd() * 2.4, rnd() * 1.5, -0.2 - Math.random() * 0.6, rnd() * 1.5, 0.07, 0, 2.2 + Math.random() * 1.2, needle, 0.9, -1.2, 2.5);
   }
   const snowy = e.kind === 'bank' || sid === 'frost';
-  const puff = snowy ? [0.95, 0.97, 1] : sid === 'mesa' ? [0.62, 0.48, 0.36] : [0.33, 0.29, 0.21];
+  const puff = snowy ? [0.95, 0.97, 1] : sid === 'mesa' ? [0.62, 0.48, 0.36] : sid === 'city' ? [0.55, 0.55, 0.56] : [0.33, 0.29, 0.21];
   for (let i = 0; i < Math.round(clamp(v * 1.1, 4, 14)); i++)
     dust.emit(hx + rnd() * 1.2, vis.gy + 0.15 + Math.random() * 0.5, hz + rnd() * 1.2, nx * 2 + rnd() * 3, 0.4 + Math.random() * 1.4, nz * 2 + rnd() * 3, 0.9, 1.6, 1.3, puff, snowy ? 0.5 : 0.22, 0.1);
 }
@@ -2413,6 +2439,7 @@ const TRK = {
   pine: [{ t: [0.45, 0.38, 0.3], base: 0.12, slide: 0.45 }, { t: [0.45, 0.38, 0.3], base: 0.14, slide: 0.45 }, { t: [0.55, 0.6, 0.35], base: 0.16, slide: 0.45 }],
   frost: [{ t: [0.58, 0.66, 0.86], base: 0.3, slide: 0.75 }, { t: [0.58, 0.66, 0.86], base: 0.34, slide: 0.75 }, { t: [0.6, 0.68, 0.88], base: 0.38, slide: 0.75 }],
   mesa: [{ t: [0.1, 0.1, 0.11], base: 0, slide: 0.55 }, { t: [0.6, 0.45, 0.36], base: 0.16, slide: 0.5 }, { t: [0.6, 0.45, 0.36], base: 0.18, slide: 0.5 }],
+  city: [{ t: [0.1, 0.1, 0.11], base: 0, slide: 0.55 }, { t: [0.1, 0.1, 0.11], base: 0, slide: 0.55 }, { t: [0.1, 0.1, 0.11], base: 0, slide: 0.55 }],
 };
 const SK = 4000, SKV = 18;
 const skid = R.trail(SK * SKV);
@@ -2698,6 +2725,8 @@ function tick(dt, doRender) {
     S.updateFans(time, vis.x, vis.z);
   }
   updateAudio(dt);
+  // the city's traffic lights flash amber (a lamp, so it swells and fades rather than blinks)
+  if (S.amber) { const k = clamp(Math.sin(time * 5.7) * 2.2 + 0.4, 0, 1); S.amber.tint = [0.1 + 2.5 * k, 0.06 + 1.55 * k, 0.012 + 0.34 * k]; }
   if (flameT > 0) flameT -= dt;
   if (!$('hud').hidden) { raceChecks(dt); updateHUD(dt); }
   if (doRender) render();
@@ -2718,6 +2747,19 @@ function render() {
   const fx = Math.sin(vis.h), fz = Math.cos(vis.h);
   if (lightsOn) { E.hlOn = E.night ? E.hlK : E.overcast ? 0.5 : 0.25; E.hlPos = [vis.x + fx * 2.3, vis.y + 0.9, vis.z + fz * 2.3]; const l = Math.hypot(fx, 0.1, fz); E.hlDir = [fx / l, -0.1 / l, fz / l]; }
   else E.hlOn = 0;
+  // street lamps at night: the 16 nearest a point ahead of the camera light the scene, the furthest of them faded so
+  // none switches on or off as the set changes
+  if (S.lamps) {
+    const dx = cam.look[0] - cam.pos[0], dz = cam.look[2] - cam.pos[2], dl = Math.hypot(dx, dz) || 1;
+    const px = cam.pos[0] + dx / dl * 22, pz = cam.pos[2] + dz / dl * 22;
+    const L = S.lamps, d = S.lampD || (S.lampD = new Float32Array(L.length)), ix = S.lampI || (S.lampI = L.map((_, i) => i));
+    for (let i = 0; i < L.length; i++) d[i] = (L[i][0] - px) ** 2 + (L[i][2] - pz) ** 2;
+    ix.sort((a, b) => d[a] - d[b]); // nearly sorted already from the last frame
+    const n = Math.min(16, L.length), dmax = Math.sqrt(d[ix[Math.min(n, L.length - 1)]]);
+    if (!E.pl) E.pl = new Float32Array(64);
+    for (let i = 0; i < n; i++) { const l = L[ix[i]]; E.pl.set([l[0], l[1], l[2], 2.4 * (1 - C.sstep(0.7 * dmax, dmax, Math.sqrt(d[ix[i]])))], i * 4); }
+    E.plN = n;
+  } else E.plN = 0;
   // shadow pass: a near cascade (32 m, about 1.5 cm a texel) around the car and a far one (140 m) for the scenery
   if (E.shadows) {
     const sd = E.sunDir;
@@ -2751,6 +2793,7 @@ function render() {
   for (const { m, o } of S.meshes) {
     if (o.farFog) { R.drawLit(m, { mode: 0, fog: [380, 3200], fogRestore: E.fog, fogLo: [E.fog[0], E.fog[1], W.st.kind === 'mesa' ? 100 : 110, (S.farY || 0) - 30] }); continue; }
     if (m === S.road) { gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -2); R.drawLit(m, o); gl.disable(gl.POLYGON_OFFSET_FILL); continue; }
+    if (o.decal) { gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-2, -4); R.drawLit(m, o); gl.disable(gl.POLYGON_OFFSET_FILL); continue; }
     R.drawLit(m, o);
   }
   // car

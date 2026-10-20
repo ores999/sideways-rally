@@ -6,7 +6,7 @@ create table if not exists public.times (
   id bigint generated always as identity primary key,
   created_at timestamptz not null default now(),
   name text not null check (char_length(name) between 1 and 20),
-  stage text not null check (stage ~ '^(pine|frost|mesa|forest)(-r)?(-night|-rain)?$' or stage ~ '^daily-[0-9]{8}$'),
+  stage text not null check (stage ~ '^(pine|frost|mesa|forest|city)(-r)?(-night|-rain)?$' or stage ~ '^daily-[0-9]{8}$'),
   car text not null check (car in ('foca', 'impressa', 'lancha', 'delta', 'pejo', 'kwattro', 'selica', 'saveiro')),
   time real not null check (time > 20 and time < 1200),
   splits real[] not null default '{}' check (cardinality(splits) <= 4)
@@ -36,3 +36,8 @@ alter table public.times add column if not exists ghost text check (ghost is nul
 -- Lets the bonus car through the car check.
 alter table public.times drop constraint if exists times_car_check;
 alter table public.times add constraint times_car_check check (car in ('foca', 'impressa', 'lancha', 'delta', 'pejo', 'kwattro', 'selica', 'saveiro'));
+
+-- 2026-10 · Downtown, the city stage (id 'city'). Lets its times through the stage check; run before the game that
+-- has the city goes live (the game keeps a stage's times local until its id is in ONLINE_STAGES).
+alter table public.times drop constraint if exists times_stage_check;
+alter table public.times add constraint times_stage_check check (stage ~ '^(pine|frost|mesa|forest|city)(-r)?(-night|-rain)?$' or stage ~ '^daily-[0-9]{8}$');

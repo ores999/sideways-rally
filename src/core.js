@@ -176,7 +176,9 @@ function carStats(c) {
 }
 
 // ---------------- Stages ----------------
-const RADIUS = { 6: 190, 5: 125, 4: 82, 3: 54, 2: 35, 1: 23, H: 12.5 };
+// Q: a square corner at a city junction. It always turns exactly its nominal angle (the others turn whatever their
+// rounded sample count gives), so a city route stays on its street grid however many corners it takes
+const RADIUS = { 6: 190, 5: 125, 4: 82, 3: 54, 2: 35, 1: 23, H: 12.5, Q: 9 };
 
 const STAGES = [
   { id: 'pine', kind: 'pine', name: 'Pine Ridge', region: 'Lakeland Forest', surface: 'Gravel', tag: 'Fast forest gravel with big jumps',
@@ -222,6 +224,12 @@ const STAGES = [
       ['R', 4, 60], ['S', 110], ['L', 3, 80], ['S', 60], ['R', 2, 95], ['S', 80], ['J', 2.0], ['S', 90],
       ['L', 4, 60], ['R', 5, 45], ['S', 70], ['L', 3, 85], ['S', 150]
     ] },
+  // downtown: a closed street stage over a grid of 100 m blocks. The road is a walk over the junctions ('S' straight on,
+  // 'L'/'R' a square corner), the side streets are shut with barriers, and the buildings line every block
+  { id: 'city', kind: 'city', name: 'Downtown', region: 'City Centre', surface: 'Tarmac', tag: 'Square corners between the blocks',
+    grip: 1.15, offGrip: 1.05, offDrag: 0.3, tyreB: 11, hw: 4.5, h0: 0.35, seed: 5501, blend: 22, rival: 'Ott Tänakk',
+    tarmac: true, kBlur: 3, city: { B: 100, start: 0.6, end: 0.85, moves: 'SRLSRLRSSSRRSLSRLLRLRSLSS' },
+    elev: { a1: 0, l1: 100, p1: 0, a2: 0, l2: 100, p2: 0 } },
 ];
 
 STAGES.forEach(st => { st.key = st.id; });
@@ -365,20 +373,21 @@ const hkey = (cx, cz) => (cx + 4096) + (cz + 4096) * 8192;
 function buildTrack(st) {
   const k = [], notesRaw = [], ev = [], grades = [];
   let s = 0;
-  for (const seg of st.segs) {
+  for (const seg of st.segs || cityPlan(st).segs) {
     const t = seg[0];
     if (t === 'S') { const n = Math.round(seg[1]); for (let i = 0; i < n; i++) k.push(0); s += n; }
     else if (t === 'L' || t === 'R') {
       const R = RADIUS[seg[1]]; const n = Math.max(4, Math.round(R * seg[2] * PI / 180)); const dir = t === 'L' ? 1 : -1;
       notesRaw.push({ s0: s, s1: s + n, dir, sev: seg[1], ang: seg[2], mods: seg.slice(3) });
-      for (let i = 0; i < n; i++) k.push(dir / R);
+      const kk = seg[1] === 'Q' ? dir * seg[2] * PI / 180 / n : dir / R;
+      for (let i = 0; i < n; i++) k.push(kk);
       s += n;
     }
     else if (t === 'J' || t === 'C') ev.push({ type: t, s, h: seg[1] });
     else if (t === 'G') grades.push({ s, g: seg[1] });
   }
   const L = k.length;
-  const ks = blur(blur(k, 6), 6);
+  const ks = blur(blur(k, st.kBlur || 6), st.kBlur || 6);
   const px = new Float64Array(L + 1), pz = new Float64Array(L + 1), ph = new Float64Array(L + 1), py = new Float64Array(L + 1);
   let x = 0, z = 0, h = st.h0 || 0;
   ph[0] = h;
@@ -516,8 +525,95 @@ function projectRoad(T, i, x, z, out) {
   return out;
 }
 
+// ---------------- City ----------------
+// Cross-section of a street: the road (hw) and a concrete gutter out to the kerb, a raised sidewalk, then the
+// building line. Blocks sit between street axes B apart: a slab (the sidewalk) with rounded kerb corners and a
+// continuous row of buildings round its edge, their corners cut back at 45° (ochavas).
+const CITY_X = { kerb: 5.0, walk: 3.0, slab: 0.15, ochava: 4, margin: 5 };
+const CSTEP = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // lattice step per direction (0 = the start heading, +1 = a left turn)
+
+// The route and its street grid, built once per stage from the forward road (a reversed run goes through the same
+// town). A square corner as built (curvature blurred) meets its straights t back from either end; the straights are
+// cut to fit that, rounding to whole metres with the error carried along each axis, so every street the road takes
+// stays within half a metre of its grid line.
+function cityPlan(st) {
+  const CP = st.city; if (CP.plan) return CP.plan;
+  const B = CP.B, h0 = st.h0 || 0, kerb = CITY_X.kerb;
+  const cal = buildTrack(Object.assign({}, st, { segs: [['S', 80], ['L', 'Q', 90], ['S', 80]], rev: false, h0: 0, walls: null }));
+  const nq = Math.max(4, Math.round(RADIUS.Q * PI / 2)), last = cal.n - 1, sEnd = Math.min(2 * last, cal.L);
+  // entry along +z from the origin, exit along +x: the straights meet at (0, Z_end)
+  const vz = cal.Z[last], tIn = vz - 80, tOut = cal.X[last] - (sEnd - 80 - nq), t = (tIn + tOut) / 2;
+  let a = 1e9; for (let i = 0; i < cal.n; i++) a = Math.min(a, Math.hypot(cal.X[i], cal.Z[i] - vz));
+  // kerb corners are quarter circles tangent to both kerbs whose apex keeps the gutter's width off the road's edge
+  const kr = clamp(a / (Math.SQRT2 - 1) - kerb, 1.5, 15);
+  const dir = d => { const h = h0 + d * PI / 2; return [Math.sin(h), Math.cos(h)]; };
+  const nodes = [], seen = new Set();
+  let d = 0, i = 0, j = 0;
+  for (let k = 0; k < CP.moves.length; k++) {
+    const m = CP.moves[k], din = d;
+    if (m === 'L') d = (d + 1) % 4; else if (m === 'R') d = (d + 3) % 4;
+    const key = i + ',' + j;
+    if (seen.has(key)) throw new Error('city route comes back to junction ' + key);
+    seen.add(key);
+    nodes.push({ i, j, din, dout: d, turn: m === 'L' ? 1 : m === 'R' ? -1 : 0 });
+    if (k < CP.moves.length - 1) { i += CSTEP[d][0]; j += CSTEP[d][1]; }
+  }
+  const segs = [], err = [0, 0];
+  let pend = CP.start * B, corners = 0;
+  const straight = (dd, ends) => {
+    const ax = dd % 2, sg = dd < 2 ? 1 : -1, ideal = pend - ends * t;
+    const n = Math.max(1, Math.round(ideal - sg * err[ax]));
+    err[ax] += sg * (n - ideal);
+    segs.push(['S', n]);
+  };
+  nodes.forEach((nd, k) => {
+    if (nd.turn) { straight(nd.din, corners ? 2 : 1); segs.push([nd.turn > 0 ? 'L' : 'R', 'Q', 90]); corners++; pend = 0; }
+    pend += k < nodes.length - 1 ? B : CP.end * B;
+  });
+  straight(nodes[nodes.length - 1].dout, corners ? 1 : 0);
+  const e0 = dir(0), e1 = dir(1), ox = e0[0] * CP.start * B, oz = e0[1] * CP.start * B;
+  let i0 = 1e9, i1 = -1e9, j0 = 1e9, j1 = -1e9;
+  for (const nd of nodes) { i0 = Math.min(i0, nd.i); i1 = Math.max(i1, nd.i); j0 = Math.min(j0, nd.j); j1 = Math.max(j1, nd.j); }
+  const M = CITY_X.margin;
+  CP.plan = { segs, t, a, kr, B, h0, e0, e1, ox, oz, nodes, dir, blocks: [i0 - M, i1 + M - 1, j0 - M, j1 + M - 1] };
+  return CP.plan;
+}
+const cityW = (P, u, v) => [P.ox + u * P.e0[0] + v * P.e1[0], P.oz + u * P.e0[1] + v * P.e1[1]];
+const cityUV = (P, x, z) => { const dx = x - P.ox, dz = z - P.oz; return [dx * P.e0[0] + dz * P.e0[1], dx * P.e1[0] + dz * P.e1[1]]; };
+// height of the sidewalk under a point (0 on the street): the kerb only lifts the drawn wheels and body, the physics
+// keeps the car on the street level (a 15 cm step at the centre of mass threw it into the air)
+function slabAt(W, x, z) {
+  const P = W.O.city; if (!P) return 0;
+  const [u, v] = cityUV(P, x, z), B = P.B;
+  const bi = Math.floor(u / B), bj = Math.floor(v / B), b = P.blocks;
+  if (bi < b[0] || bi > b[1] || bj < b[2] || bj > b[3]) return 0;
+  const au = Math.abs(u - Math.round(u / B) * B), av = Math.abs(v - Math.round(v / B) * B), k = CITY_X.kerb, r = P.kr;
+  if (au < k || av < k) return 0;
+  if (au < k + r && av < k + r && Math.hypot(k + r - au, k + r - av) > r) return 0;
+  return CITY_X.slab;
+}
+// the first point where the line a→b crosses a building front (0..1), 1 if it is clear: keeps the chase camera out of
+// the walls and lets trackside cameras see down the street
+function rayWalls(W, ax, az, bx, bz) {
+  if (!W.O.walls) return 1;
+  const cols = W.O.cols, rx = bx - ax, rz = bz - az, n = Math.max(1, Math.ceil(Math.hypot(rx, rz) / 4)), seen = new Set();
+  let best = 1;
+  for (let q = 0; q <= n; q++) {
+    const arr = cols.get(hkey(Math.floor((ax + rx * q / n) / CELL), Math.floor((az + rz * q / n) / CELL))); if (!arr) continue;
+    for (const o of arr) {
+      if (!o.seg || o.kind !== 'wall' || seen.has(o)) continue;
+      seen.add(o);
+      const sx = o.x1 - o.x0, sz = o.z1 - o.z0, den = rx * sz - rz * sx; if (Math.abs(den) < 1e-9) continue;
+      const qx = o.x0 - ax, qz = o.z0 - az, t = (qx * sz - qz * sx) / den, u = (qx * rz - qz * rx) / den;
+      if (t >= 0 && t < best && u >= 0 && u <= 1) best = t;
+    }
+  }
+  return best;
+}
+
 // ---------------- Terrain ----------------
 function terrainNatural(st, nz, x, z, d, lat, s, T) {
+  if (st.kind === 'city') return 0;
   if (st.kind === 'pine') {
     let h = 7 * nz.fbm(x / 230, z / 230, 4) + 1.8 * nz.fbm(x / 40, z / 40, 3);
     h += sstep(40, 260, d) * 16 * (0.55 + 0.45 * nz.n2(x / 330 + 3, z / 330));
@@ -586,7 +682,9 @@ function buildTerrain(T, nz) {
       }
       const natural = lerp(nearB, baseline, sstep(16, 52, d)) + terrainNatural(st, nz, x, z, d, lat, s, T);
       let hgt;
-      if (d < flat) hgt = roadY - 0.18;
+      // the city is flat: the streets lie a few centimetres under the road (which is drawn over them)
+      if (st.city) hgt = (d < hw - 0.8 ? roadY - 0.2 : roadY - 0.06);
+      else if (d < flat) hgt = roadY - 0.18;
       else { const t = sstep(flat, hw + st.blend, d); hgt = lerp(nearB - 0.18, natural, t); }
       const idx = j * nx + i;
       Hh[idx] = hgt; D[idx] = d; Ls[idx] = s;
@@ -613,6 +711,14 @@ function placeObjects(T, TR, nz) {
   const addCol = (x, z, r, kind) => {
     const kk = hkey(Math.floor(x / CELL), Math.floor(z / CELL)); let a = cols.get(kk); if (!a) { a = []; cols.set(kk, a); } a.push({ x, z, r, kind });
   };
+  // straight walls (building fronts, barriers): stored once in every cell they pass through
+  const addSeg = (x0, z0, x1, z1, kind) => {
+    const o = { seg: true, x0, z0, x1, z1, x: (x0 + x1) / 2, z: (z0 + z1) / 2, r: 0.05, kind }, keys = new Set();
+    const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / (CELL / 2)));
+    for (let q = 0; q <= n; q++) keys.add(hkey(Math.floor((x0 + (x1 - x0) * q / n) / CELL), Math.floor((z0 + (z1 - z0) * q / n) / CELL)));
+    for (const kk of keys) { let a = cols.get(kk); if (!a) cols.set(kk, a = []); a.push(o); }
+  };
+  if (st.city) { placeCity(st, out, R, addCol, addSeg); out.cols = cols; return out; }
   const tmp = {};
   const roadDist = (x, z) => { const i = nearest(T, x, z, 60); if (i < 0) return 1e4; project(T, i, x, z, tmp); return tmp.dist; };
   const inWall = (s) => T.walls.some(w => s > w.s0 - 40 && s < w.s1 + 40);
@@ -753,6 +859,107 @@ function placeObjects(T, TR, nz) {
   addFanGroup(T.finishS + 10, 1, hw + 8, 8, 26); addFanGroup(T.finishS + 10, -1, hw + 8, 8, 26);
   out.cols = cols;
   return out;
+}
+
+// The city's furniture, all from the forward plan so both directions share it: building fronts round every block the
+// route touches, barriers across each street the route doesn't take (and behind the start, past the end), straw bales
+// on the inside kerb of each corner (the bit everyone cuts), chevrons on the barrier straight ahead of a corner and
+// spectators behind the barriers in the side streets.
+function placeCity(st, out, R, addCol, addSeg) {
+  const P = cityPlan(st), B = P.B, k = CITY_X.kerb, F = B / 2 - k - CITY_X.walk, oc = CITY_X.ochava;
+  const W_ = (u, v) => cityW(P, u, v), dirW = d => P.dir(d);
+  out.city = P; out.walls = true; out.barriers = [];
+  const near = new Set();
+  for (const nd of P.nodes) for (let a = -1; a <= 0; a++) for (let b = -1; b <= 0; b++) near.add((nd.i + a) + ',' + (nd.j + b));
+  for (const key of near) {
+    const [bi, bj] = key.split(',').map(Number), cu = (bi + 0.5) * B, cv = (bj + 0.5) * B;
+    const oct = [[F - oc, F], [F, F - oc], [F, oc - F], [F - oc, -F], [oc - F, -F], [-F, oc - F], [-F, F - oc], [oc - F, F]].map(([u, v]) => W_(cu + u, cv + v));
+    for (let q = 0; q < 8; q++) { const p0 = oct[q], p1 = oct[(q + 1) % 8]; addSeg(p0[0], p0[1], p1[0], p1[1], 'wall'); }
+  }
+  // barriers run from building to building (across the sidewalks too), past the rounded kerb corner where the
+  // ochavas end, so nothing gets round them
+  const dB = k + P.kr + 1.2, wB = k + CITY_X.walk + 0.2;
+  const barrier = (u, v, d) => {
+    const s1 = CSTEP[(d + 1) % 4], p0 = W_(u + s1[0] * wB, v + s1[1] * wB), p1 = W_(u - s1[0] * wB, v - s1[1] * wB);
+    addSeg(p0[0], p0[1], p1[0], p1[1], 'barrier'); out.barriers.push([p0[0], p0[1], p1[0], p1[1]]);
+  };
+  const closed = nd => [0, 1, 2, 3].filter(c => c !== (nd.din + 2) % 4 && c !== nd.dout);
+  for (const nd of P.nodes) for (const c of closed(nd)) barrier(nd.i * B + CSTEP[c][0] * dB, nd.j * B + CSTEP[c][1] * dB, c);
+  barrier(-st.city.start * B - 14, 0, 0);
+  const ln = P.nodes[P.nodes.length - 1], ee = st.city.end * B + 25;
+  barrier(ln.i * B + CSTEP[ln.dout][0] * ee, ln.j * B + CSTEP[ln.dout][1] * ee, ln.dout);
+  // bales round the inside kerb of every corner, a metre in from its edge
+  for (const nd of P.nodes) if (nd.turn) {
+    const b = CSTEP[(nd.din + 2) % 4], o = CSTEP[nd.dout];
+    const cu = nd.i * B + (b[0] + o[0]) * (k + P.kr), cv = nd.j * B + (b[1] + o[1]) * (k + P.kr);
+    const du = -(b[0] + o[0]) / Math.SQRT2, dv = -(b[1] + o[1]) / Math.SQRT2, rr = Math.max(0.4, P.kr - 1.0);
+    for (const a of [-0.55, 0, 0.55]) {
+      const ru = du * Math.cos(a) - dv * Math.sin(a), rv = du * Math.sin(a) + dv * Math.cos(a);
+      const [x, z] = W_(cu + ru * rr, cv + rv * rr), [wx, wz] = [P.e0[0] * ru + P.e1[0] * rv, P.e0[1] * ru + P.e1[1] * rv];
+      out.hay.push({ x, z, y: CITY_X.slab - 0.04, rot: Math.atan2(wx, wz) });
+      addCol(x, z, 0.75, 'hay');
+    }
+  }
+  // which way this run goes through each junction
+  const run = st.rev ? P.nodes.slice().reverse().map(nd => Object.assign({}, nd, { din: (nd.dout + 2) % 4, dout: (nd.din + 2) % 4, turn: -nd.turn })) : P.nodes;
+  for (const nd of run) if (nd.turn) {
+    const f = CSTEP[nd.din], s1 = CSTEP[(nd.din + 1) % 4];
+    for (const l of [-2.6, 0, 2.6]) {
+      const [x, z] = W_(nd.i * B + f[0] * (dB - 0.5) + s1[0] * l, nd.j * B + f[1] * (dB - 0.5) + s1[1] * l);
+      out.chevrons.push({ x, z, y: -0.06, rot: P.h0 + nd.din * PI / 2 + PI, dir: nd.turn });
+    }
+  }
+  for (const nd of P.nodes) {
+    if (R() > 0.65) continue;
+    const cs = closed(nd), c = cs[(R() * cs.length) | 0], f = CSTEP[c], s1 = CSTEP[(c + 1) % 4], dw = dirW(c);
+    for (let q = 0, n = 6 + ((R() * 7) | 0); q < n; q++) {
+      const along = dB + 1.6 + R() * 6, l = (R() - 0.5) * 2 * (k - 0.6);
+      const [x, z] = W_(nd.i * B + f[0] * along + s1[0] * l, nd.j * B + f[1] * along + s1[1] * l);
+      out.fans.push({ x, z, y: -0.06, rot: Math.atan2(-dw[0], -dw[1]) + (R() - 0.5) * 0.8, c: (R() * 12) | 0, ph: R() * 6.28, h: 0.9 + R() * 0.2 });
+    }
+  }
+  // street furniture round the blocks next to the route, all of it clear of the corners (where everyone cuts): trees in
+  // pits and lamp posts along the sidewalks, a traffic light on every corner of a junction of the route but the inside
+  // of a turn (flashing amber: the streets are closed), and a zebra crossing over each street out of such a junction
+  const wdir = (du, dv) => [du * P.e0[0] + dv * P.e1[0], du * P.e0[1] + dv * P.e1[1]];
+  const rot4 = (q, u, v) => q === 0 ? [u, v] : q === 1 ? [-v, u] : q === 2 ? [-u, -v] : [v, -u];
+  const S = B / 2 - k, span = S - P.kr - 7, ys = CITY_X.slab, Rf = rng(st.seed + 777);
+  out.lamps = []; out.signals = []; out.zebras = []; out.pits = [];
+  for (const key of near) {
+    const [bi, bj] = key.split(',').map(Number), cu = (bi + 0.5) * B, cv = (bj + 0.5) * B;
+    for (let q = 0; q < 4; q++) {
+      const [nu, nv] = rot4(q, 0, 1), dw = wdir(nu, nv), face = Math.atan2(dw[0], dw[1]);
+      const n = Math.floor(2 * span / 10.5), step = 2 * span / n;
+      for (let i = 0; i <= n; i++) {
+        const u = -span + i * step;
+        if (Rf() > 0.12) {
+          const [pu, pv] = rot4(q, u + (Rf() - 0.5) * 0.8, S - 0.95), [x, z] = W_(cu + pu, cv + pv), sc = 1.05 + Rf() * 0.3;
+          out.trees.push({ x, z, y: ys - 0.05, rot: Rf() * 6.28, s: sc, sy: sc * (1.05 + Rf() * 0.25), type: 1, c: Rf() });
+          out.pits.push({ x, z, rot: face });
+          addCol(x, z, 0.28, 'tree');
+        }
+        if (i < n && i % 3 === 1) {
+          const [pu, pv] = rot4(q, u + step / 2, S - 0.45), [x, z] = W_(cu + pu, cv + pv);
+          out.lamps.push({ x, z, y: ys, rot: face });
+          addCol(x, z, 0.14, 'post');
+        }
+      }
+    }
+  }
+  const sc = Math.min(9, k + P.kr * (1 - Math.SQRT1_2) + 0.64);
+  for (const nd of P.nodes) {
+    const b = CSTEP[(nd.din + 2) % 4], o = CSTEP[nd.dout];
+    for (const [su, sv] of [[1, 1], [-1, 1], [-1, -1], [1, -1]]) {
+      if (nd.turn && su === b[0] + o[0] && sv === b[1] + o[1]) continue;
+      const [x, z] = W_(nd.i * B + su * sc, nd.j * B + sv * sc), da = wdir(su, 0), db = wdir(0, sv);
+      out.signals.push({ x, z, y: ys, heads: [Math.atan2(da[0], da[1]), Math.atan2(db[0], db[1])] });
+      addCol(x, z, 0.13, 'post');
+    }
+    for (let c = 0; c < 4; c++) {
+      const f = CSTEP[c], [x, z] = W_(nd.i * B + f[0] * 9.8, nd.j * B + f[1] * 9.8), dw = dirW(c);
+      out.zebras.push({ x, z, rot: Math.atan2(dw[0], dw[1]), road: c === nd.dout || c === (nd.din + 2) % 4 });
+    }
+  }
 }
 
 // ---------------- World ----------------
@@ -1052,7 +1259,14 @@ function collide(W, c) {
     for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
       const arr = cols.get(hkey(gx + a, gz + b)); if (!arr) continue;
       for (const o of arr) {
-        const dx = (c.x + fx * off) - o.x, dz = (c.z + fz * off) - o.z; const md = R + o.r;
+        const px = c.x + fx * off, pz = c.z + fz * off;
+        let ox = o.x, oz = o.z;
+        if (o.seg) {
+          // a wall: the nearest point on it stands in for the post
+          const ex = o.x1 - o.x0, ez = o.z1 - o.z0, t = clamp(((px - o.x0) * ex + (pz - o.z0) * ez) / (ex * ex + ez * ez), 0, 1);
+          ox = o.x0 + ex * t; oz = o.z0 + ez * t;
+        }
+        const dx = px - ox, dz = pz - oz; const md = R + o.r;
         const d2 = dx * dx + dz * dz;
         if (d2 < md * md) {
           const d = Math.sqrt(d2) || 0.001, nx = dx / d, nz = dz / d, pen = md - d;
@@ -1063,12 +1277,13 @@ function collide(W, c) {
           const vn = c.vx * nx + c.vz * nz;
           if (vn < 0) {
             const sp = Math.hypot(c.vx, c.vz) || 1, sq = Math.min(1, -vn / sp);
-            const e = o.kind === 'hay' ? 0.1 : 0.25;
+            // straw gives, a water-filled barrier a little; trees, rocks and buildings don't
+            const e = o.kind === 'hay' ? 0.1 : o.kind === 'barrier' ? 0.15 : 0.25;
             c.vx -= (1 + e) * vn * nx; c.vz -= (1 + e) * vn * nz;
-            const keep = 1 - (o.kind === 'hay' ? 0.25 : 0.18) * Math.pow(sq, TUNE.impactP);
+            const keep = 1 - (o.kind === 'hay' ? 0.25 : o.kind === 'barrier' ? 0.16 : 0.18) * Math.pow(sq, TUNE.impactP);
             c.vx *= keep; c.vz *= keep;
             c.w += (off > 0 ? 1 : -1) * (fx * nz - fz * nx) * Math.min(-vn, 14) * 0.13;
-            if (-vn > c.hitV) { c.hitV = -vn; c.hitKind = o.kind; c.hitX = o.x; c.hitZ = o.z; c.hitNx = nx; c.hitNz = nz; c.hitFront = off > 0; }
+            if (-vn > c.hitV) { c.hitV = -vn; c.hitKind = o.kind; c.hitX = ox; c.hitZ = oz; c.hitNx = nx; c.hitNz = nz; c.hitFront = off > 0; }
             if (-vn > 4 && !c.air) c.vy = Math.max(c.vy, Math.min(1.4, -vn * 0.07));
           }
         }
@@ -1234,6 +1449,7 @@ function measureCar(P) {
 CARS.forEach(measureCar);
 
 return { TUNE, CARS, STAGES, CONDS, stageDef, stageKey, stageTitle, condName, dailyKey, selfClearance, RADIUS, RW, carStats, torqueAt, engineCurve, measureCar, buildWorld, buildTrack, makeNoise, rng, sampleAt, roadYAt, terrainH, nearest, project,
-  makeCar, resetCar, stepCar, locate, groundAt, simulateRun, prepAI, aiDrive, clamp, lerp, sstep, wrapA, hkey, CELL };
+  makeCar, resetCar, stepCar, locate, groundAt, simulateRun, prepAI, aiDrive, clamp, lerp, sstep, wrapA, hkey, CELL,
+  CITY_X, CSTEP, cityPlan, cityW, cityUV, slabAt, rayWalls };
 })();
 if (typeof module !== 'undefined') module.exports = RallyCore;
