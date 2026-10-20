@@ -180,6 +180,10 @@ function carStats(c) {
 // rounded sample count gives), so a city route stays on its street grid however many corners it takes
 const RADIUS = { 6: 190, 5: 125, 4: 82, 3: 54, 2: 35, 1: 23, H: 12.5, Q: 9 };
 
+// the Monaco lap (OpenStreetMap contributors, ODbL): centreline every 4 m from the line, the sea's outline, the
+// pontoons (packed: decimetre steps, game axes x east, z south), and the climbs (fraction of the lap, metres)
+const MONACO = {"path": "0,0;-4,-40;-3,-40;-3,-40;-3,-39;-3,-40;-3,-40;-3,-40;-4,-40;-3,-40;-4,-40;-3,-40;-2,-40;-2,-39;-2,-40;-2,-40;-1,-40;-1,-40;0,-40;1,-40;1,-40;2,-40;2,-40;2,-40;3,-40;3,-40;3,-40;4,-40;5,-39;5,-40;6,-40;6,-39;8,-39;8,-40;8,-39;10,-39;10,-38;11,-39;11,-38;12,-38;12,-38;12,-39;12,-38;11,-38;9,-39;8,-39;6,-40;6,-40;6,-39;6,-40;7,-39;8,-39;13,-38;18,-35;27,-30;34,-21;38,-13;39,-8;40,-6;39,-5;40,-5;40,-5;39,-6;40,-5;40,-5;39,-5;40,-6;39,-5;40,-6;40,-5;39,-6;40,-5;40,-6;39,-6;40,-6;39,-6;40,-7;39,-7;39,-8;40,-7;39,-9;39,-8;39,-10;38,-10;39,-10;39,-10;38,-11;39,-11;38,-11;38,-11;39,-12;38,-11;39,-11;38,-12;38,-11;39,-12;38,-11;38,-12;39,-11;38,-11;39,-11;38,-11;39,-10;38,-11;39,-11;38,-10;39,-11;39,-10;39,-9;39,-8;39,-8;39,-6;40,-6;40,-5;40,-4;39,-5;40,-4;40,-5;40,-4;39,-4;40,-4;40,-4;40,-5;39,-8;39,-10;38,-12;37,-14;37,-15;36,-17;37,-17;36,-17;36,-18;36,-17;36,-17;36,-18;36,-17;36,-17;36,-18;36,-17;36,-18;36,-17;36,-17;37,-17;36,-16;37,-15;38,-13;38,-13;38,-12;39,-11;38,-10;39,-10;39,-10;38,-11;39,-11;38,-11;38,-12;39,-12;38,-12;38,-12;38,-11;40,-7;40,-2;39,-2;38,10;40,1;40,-3;40,-5;39,-7;39,-7;40,-8;38,-10;38,-12;38,-14;37,-15;36,-17;36,-18;34,-21;34,-21;32,-24;32,-24;31,-25;30,-26;30,-28;28,-28;27,-30;25,-31;25,-31;22,-33;21,-34;18,-36;15,-37;10,-39;7,-39;4,-40;0,-40;-2,-40;-4,-40;-5,-39;-7,-40;-8,-39;-9,-39;-12,-38;-13,-38;-15,-37;-15,-37;-17,-36;-17,-36;-19,-36;-23,-33;-27,-29;-30,-26;-31,-26;-30,-26;-30,-27;-30,-26;-30,-27;-29,-27;-29,-27;-28,-29;-26,-31;-22,-33;-19,-35;-15,-37;-10,-39;-5,-40;2,-40;6,-39;11,-38;14,-38;17,-36;18,-36;21,-34;22,-34;23,-33;23,-32;24,-32;23,-33;24,-32;23,-32;24,-32;24,-33;24,-32;23,-32;24,-32;24,-32;23,-33;24,-32;23,-33;23,-32;24,-33;23,-32;24,-32;24,-32;25,-32;24,-32;24,-31;25,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;25,-31;25,-32;26,-29;32,-25;36,-16;40,-5;39,5;38,12;36,19;31,24;28,29;24,32;18,36;12,38;8,39;4,40;2,40;3,40;5,39;9,40;13,37;17,37;19,35;22,33;22,33;23,33;23,33;23,33;23,33;22,33;20,35;18,35;17,36;18,36;23,33;31,25;38,10;39,-7;34,-21;23,-33;8,-39;-7,-39;-18,-35;-25,-31;-28,-30;-27,-28;-28,-29;-26,-31;-24,-31;-25,-32;-24,-32;-23,-32;-24,-33;-23,-32;-20,-35;-15,-37;-7,-39;4,-40;14,-37;23,-33;31,-25;35,-20;36,-16;38,-13;38,-11;39,-10;39,-11;38,-12;37,-15;37,-14;37,-16;38,-14;37,-13;38,-13;39,-10;39,-8;40,-5;40,0;39,6;37,15;29,27;18,35;8,40;1,40;-1,40;-1,40;-2,40;-2,40;-2,40;-1,39;-2,40;-2,40;-2,40;-2,40;-2,40;-2,40;-1,40;-2,40;-2,40;-2,40;-2,40;-3,40;-2,40;-3,40;-4,40;-4,39;-5,40;-5,40;-5,39;-6,40;-7,39;-7,40;-7,39;-8,39;-9,39;-9,39;-9,39;-10,39;-10,39;-11,38;-11,39;-12,38;-12,38;-13,38;-13,38;-14,37;-14,38;-15,37;-15,37;-15,37;-16,37;-16,36;-17,36;-18,36;-17,36;-18,36;-19,35;-19,36;-19,35;-20,34;-20,35;-21,34;-21,34;-22,34;-22,33;-22,33;-23,33;-23,33;-23,32;-24,32;-25,32;-24,32;-26,31;-25,31;-26,30;-26,30;-27,30;-27,30;-27,29;-28,29;-28,28;-28,29;-29,28;-28,27;-30,27;-29,27;-30,27;-31,26;-30,26;-31,25;-32,25;-31,24;-32,25;-32,23;-33,24;-32,23;-33,23;-34,22;-33,22;-34,21;-34,21;-34,21;-35,20;-35,20;-35,19;-35,19;-35,18;-36,19;-36,18;-35,18;-36,18;-36,18;-35,18;-36,18;-36,18;-36,18;-35,18;-36,18;-35,19;-36,18;-36,18;-35,18;-36,18;-36,18;-36,16;-38,15;-37,14;-38,12;-38,13;-38,13;-38,13;-38,12;-38,13;-38,12;-38,12;-39,10;-38,11;-39,9;-39,10;-39,10;-39,9;-39,9;-39,7;-39,7;-40,7;-39,7;-40,6;-39,7;-40,7;-39,7;-39,7;-40,7;-39,7;-39,7;-40,7;-39,7;-40,7;-39,7;-40,6;-39,7;-39,8;-38,12;-33,22;-19,35;-7,39;-3,40;-8,39;-20,34;-33,22;-39,11;-39,6;-40,2;-40,-5;-38,-12;-36,-17;-37,-16;-38,-11;-40,-3;-40,3;-40,5;-39,6;-40,6;-39,5;-40,6;-40,5;-39,6;-40,5;-40,5;-39,6;-40,5;-39,5;-40,6;-40,5;-39,6;-40,5;-40,5;-39,6;-40,5;-40,5;-39,6;-40,5;-40,6;-39,5;-40,5;-39,6;-40,5;-40,6;-39,5;-40,6;-40,5;-39,6;-40,6;-39,7;-39,7;-40,7;-39,7;-40,6;-39,6;-40,5;-40,5;-39,5;-40,5;-40,5;-39,5;-40,6;-40,5;-40,5;-39,5;-40,5;-40,5;-39,7;-39,10;-36,17;-32,24;-27,29;-23,33;-20,34;-20,35;-18,36;-18,35;-18,36;-17,36;-17,37;-16,36;-15,37;-14,38;-13,38;-12,38;-12,38;-11,39;-11,38;-10,39;-9,39;-8,39;-7,39;-7,40;-5,39;-5,40;-4,40;-2,40;-2,40;0,40;0,40;0,40;1,40;2,40;3,40;5,39;8,40;10,38;12,38;14,38;19,35;24,32;29,28;30,26;32,24;32,24;31,25;30,26;27,30;22,33;16,37;9,39;6,40;5,39;5,40;7,39;7,40;7,39;7,39;8,40;7,39;7,39;8,40;7,39;7,39;8,40;7,39;7,39;7,40;8,39;7,39;7,40;8,39;7,39;8,40;9,39;9,38;10,39;8,40;4,39;-3,40;-15,37;-24,32;-30,26;-33,23;-34,21;-31,26;-22,33;-9,38;1,40;6,40;9,39;11,38;12,38;12,38;14,38;13,38;14,37;14,38;15,37;15,37;17,36;17,37;17,36;17,36;18,35;19,36;19,35;20,34;21,34;22,34;23,32;25,32;25,31;26,31;26,30;28,29;28,28;30,27;31,25;31,25;33,23;34,21;35,20;35,18;36,18;36,17;37,17;35,17;36,20;33,21;31,26;24,32;16,37;7,39;-4,39;-16,37;-27,29;-34,21;-37,15;-38,12;-39,11;-38,11;-39,11;-38,11;-39,10;-39,10;-39,8;-40,6;-39,6;-40,4;-40,3;-40,1;-40,-2;-40,-4;-38,-10;-37,-17;-31,-24;-25,-32;-16,-36;-9,-39;-7,-39;-8,-40;-11,-38;-13,-38;-16,-36;-19,-35;-22,-34;-23,-33;-25,-31;-25,-31;-25,-32;-23,-32;-23,-33;-22,-34;-21,-33;-21,-34;-22,-34;-21,-34;-21,-34;-21,-34;-20,-35;-19,-35;-18,-36;-18,-36;-16,-36;-14,-38;-13,-38;-11,-38;-12,-38;-10,-39;-11,-38;-10,-39;-11,-38;-11,-39;-12,-38;-12,-38;-12,-39;-11,-38;-11,-38;-12,-39;-11,-38;-11,-38;-11,-39;-11,-38;-11,-39;-11,-38;-11,-39;-11,-38;-10,-39;-11,-39;-10,-38;-10,-39;-10,-39;-9,-39;-8,-39;-8,-39;-8,-39;-7,-40;-7,-39;-6,-40;-7,-39;-6,-40;-6,-39;-7,-40;-6,-39;-6,-40;-6,-39;-6,-40;-5,-39;-5,-40;-4,-40;-5,-40;-5,-39;-4,-40", "sea": "-26104,17285;212,150;238,-72;1205,-749;2382,-300;-62,193;262,322;1073,15;-134,391;224,164;364,-279;949,188;332,-437;802,165;-107,342;516,437;71,-454;307,-195;103,-546;-114,-276;277,-247;150,-508;513,-222;552,16;1238,314;176,432;1199,577;266,760;733,547;347,-92;354,-430;-262,-364;-516,-21;-22,-471;480,-176;188,-369;352,-217;-61,-199;873,-210;184,-267;1347,-265;354,-348;511,-687;133,-589;551,-395;-82,-156;-311,188;-182,-168;-94,-259;169,-416;1226,-1028;336,-31;146,360;778,50;1159,768;206,-282;-160,28;-1303,-838;101,-174;-181,-48;190,-7;-178,-68;34,-247;909,-687;2172,1522;-1191,1342;-1149,59;13,219;1202,-121;1942,-1965;164,-165;59,60;69,14;22,-8;63,-62;1,-88;-62,-66;856,-853;49,49;89,7;63,-64;8,-27;-14,-68;-49,-47;279,-275;2398,-1552;-120,-182;-404,254;-19,-33;-519,346;11,22;-138,78;-89,-16;-103,-69;-265,-223;-165,-203;-67,-125;-62,-138;-112,-315;37,-136;78,4;-17,-247;-79,6;-11,92;-1711,117;-39,-488;-491,28;-73,-1042;451,-62;-14,-85;-1117,159;-41,-92;-44,26;3,-61;19,-9;-91,-194;797,-702;30,31;25,-22;34,31;46,-44;113,52;67,-15;70,24;16,45;112,40;39,-23;65,22;26,34;59,36;59,-22;65,71;111,160;94,32;71,115;70,189;47,-6;39,54;13,128;106,103;94,131;126,23;144,-48;75,14;60,-119;59,14;37,-91;96,-38;43,16;5,-80;78,-60;204,42;118,98;80,29;50,235;-36,52;-3,117;38,32;95,18;53,107;185,132;88,-95;93,-13;117,55;-46,1117;234,13;9,-150;-61,-13;37,-883;55,10;6,13;104,-8;57,12;106,-22;-14,18;6,6;36,-21;59,-2;53,8;13,38;21,2;142,-53;56,-2;185,5;36,34;48,10;21,-34;25,-10;138,-14;50,-45;36,-78;219,-273;82,9;63,-39;130,-3;33,-42;15,-215;127,-83;68,-97;125,-105;93,-40;92,-84;194,-59;30,-47;35,-151;44,-48;110,-8;71,45;46,59;265,75;102,6;66,-39;335,-352;318,-407;-28,-163;58,-273;43,-31;19,4;57,-45;-13,-52;2,-55;133,-143;58,-112;25,-25;71,-28;74,6;27,-11;-4,-16;-60,-27;-13,-35;19,-32;-13,-27;-40,-13;-7,-41;60,-75;-53,-48;5,-77;34,-49;32,-362;961,-1158;-101,-79;8,-18;1063,-1297;1146,-1427;-215,-160;-2241,2701;-115,-95;-408,68;-445,-363;-118,-606;-385,74;70,345;117,-19;222,1139;-1442,401;-35,0;-99,29;3,13;-931,273;-219,-719;157,-48;36,-35;-14,-47;-58,-31;-363,104;-36,52;10,47;54,22;143,-41;219,715;-814,230;-109,-367;-151,-82;-118,-90;-56,-56;-94,-129;-58,-111;-50,-128;-96,-498;22,-140;-77,-390;141,-25;115,563;55,-8;-113,-566;387,-75;128,605;104,-19;-282,-1444;-107,19;108,569;-21,4;7,39;-374,75;-100,-570;-53,9;104,569;-166,33;-151,-760;-70,-89;-100,-42;-117,11;-11,-213;9,-195;31,-207;90,-313;193,-366;2135,-311;139,98;455,-62;-16,-115;883,-118;244,1227;-117,22;69,352;386,-66;-283,-1481;845,-220;764,-226;543,1330;184,-69;38,-45;-541,-1315;65,-25;64,-82;-39,-29;65,-73;10,-52;371,-474;-158,-357;325,-448;-70,-181;226,-280;-78,-181;175,-221;-82,-176;105,-148;-113,-249;-47,-78;41,-480;196,2;125,-290;450,187;-294,732;-68,-28;-29,56;70,28;-63,142;67,27;-130,309;248,102;126,-308;289,117;658,-1598;160,-192;496,-331;209,-260;127,-314;26,-329;-75,-336;-595,-1061;111,-40;-212,-387;2,-124;79,-119;272,-177;188,-280;18,-85;-96,-41;-52,12;-43,54;44,40;-141,171;-132,20;-67,-153;-64,-247;32,-280;111,-343;93,-155;306,-347;235,-188;544,-363;398,-163;143,-41;172,-17;123,22;335,119;63,2;-89,169;-201,134;-39,-53;-27,-9;-26,14;-22,31;-4,32;42,70;38,23;76,-9;195,-103;56,-57;57,-100;66,-159;42,-59;189,-180;5,-33;-12,-42;-26,-32;-44,-14;-41,13;-20,20;37,49;-154,120;-212,-263;70,-242;72,-114;101,-98;101,-75;112,-57;133,-27;98,3;348,657;305,494;128,167;161,127;172,61;151,35;199,16;304,-46;248,-77;517,-443;-636,-2827;82,-143;1345,-916;508,-566;1184,-338;652,19;346,262;1,453;277,-42;148,196;-216,538;481,-268;340,-859;17,-505;559,-476;287,-734;553,-718;626,-471;377,-795;781,-484;557,-669;552,-1028;313,-181;74,-936;365,-680;490,-474;1508,-794;1251,-199;1811,-27;-278,-488;455,-350;1470,-237;1517,-486;134,235;356,145;9,322;117,-76;218,532;513,210;87,249;492,254;1414,1637;241,-48;209,-348;652,400;408,71;19,330;442,386;6,661;556,961;774,262;-28,157;603,606;364,745;121,-64;486,699;182,15;-58,307;452,395;271,-175;-26,238;317,294;225,-62;451,181;77,767;721,112;44,213;627,300;445,-165;237,137;115,328;297,75;-14,135;638,-63;169,368;401,-106;237,213;278,-228;654,439;291,-94;917,412;1550,-348;661,4;182,201;351,-204;518,192;488,540;30000,60000;-78756,62675;-50000,-30000", "piers": ["1026,-300;0,0", "4851,1642;0,0", "-2950,5347;0,0", "-1724,5477;0,0", "-385,6963;0,0", "193,6828;0,0", "1050,6406;0,0", "1771,1011;0,0", "1292,1061;0,0", "4468,1594;0,0", "4206,1827;0,0", "3707,1954;0,0", "3232,2110;0,0", "4567,-974;0,0", "5424,-2514;0,0", "5555,-2543;0,0", "5858,-2629;0,0", "1959,2472;0,0", "2276,2384;0,0", "1490,-433;0,0", "2663,-2139;0,0", "6443,-2462;0,0", "-197,5567;0,0", "-2182,4550;0,0", "2609,2288;0,0", "3235,-2101;0,0", "4958,1614;0,0", "5024,1596;0,0", "5128,1266;0,0", "7639,-5798;0,0"], "elev": [[0.0, 6], [0.06081, 7], [0.08817, 9], [0.14594, 25], [0.19155, 37], [0.23107, 43], [0.27364, 47], [0.30404, 45], [0.33566, 41], [0.38005, 33], [0.4059, 26], [0.43022, 17], [0.46215, 12], [0.57768, 6], [0.62633, 4], [0.71146, 3], [0.82092, 3], [0.87565, 3.5], [0.90909, 4], [1.0, 6]]};
+
 const STAGES = [
   { id: 'pine', kind: 'pine', name: 'Pine Ridge', region: 'Lakeland Forest', surface: 'Gravel', tag: 'Fast forest gravel with big jumps',
     grip: 0.92, offGrip: 0.62, offDrag: 1.4, tyreB: 8, hw: 4.3, h0: 0.0, seed: 1201, blend: 24, rival: 'Tommi Mäkinon',
@@ -224,12 +228,13 @@ const STAGES = [
       ['R', 4, 60], ['S', 110], ['L', 3, 80], ['S', 60], ['R', 2, 95], ['S', 80], ['J', 2.0], ['S', 90],
       ['L', 4, 60], ['R', 5, 45], ['S', 70], ['L', 3, 85], ['S', 150]
     ] },
-  // downtown: a closed street stage over a grid of 100 m blocks. The road is a walk over the junctions ('S' straight on,
-  // 'L'/'R' a square corner), the side streets are shut with barriers, and the buildings line every block
-  { id: 'city', kind: 'city', name: 'Downtown', region: 'City Centre', surface: 'Tarmac', tag: 'Square corners between the blocks',
-    grip: 1.15, offGrip: 1.05, offDrag: 0.3, tyreB: 11, hw: 4.5, h0: 0.35, seed: 5501, blend: 22, rival: 'Ott Tänakk',
-    tarmac: true, kBlur: 3, city: { B: 100, start: 0.6, end: 0.85, moves: 'SRLSRLRSSSRRSLSRLLRLRSLSS' },
-    elev: { a1: 0, l1: 100, p1: 0, a2: 0, l2: 100, p2: 0 } },
+  // Monaco: one lap of the street circuit (its shape from OpenStreetMap, its climbs), from the grid round to just
+  // short of the line. Armco both sides the whole way; the harbour on one side or the other for most of it
+  { id: 'monaco', kind: 'city', name: 'Monaco', region: 'Monte Carlo', surface: 'Tarmac', tag: 'Casino, the hairpin and the tunnel',
+    grip: 1.15, offGrip: 1.05, offDrag: 0.3, tyreB: 11, hw: 4.5, h0: 0, seed: 5501, blend: 22, rival: 'Ott Tänakk',
+    tarmac: true, town: true, elev: { a1: 0, l1: 100, p1: 0, a2: 0, l2: 100, p2: 0 },
+    street: { gap: 50, path: MONACO.path, sea: MONACO.sea, piers: MONACO.piers, elev: MONACO.elev,
+      at: { tunnel0: 0.46215, tunnel1: 0.57768, casino: 0.27364 }, stands: [[0.73579, 0.86652, 1], [0.92429, 0.05473, 1]] } },
 ];
 
 STAGES.forEach(st => { st.key = st.id; });
@@ -372,8 +377,11 @@ const hkey = (cx, cz) => (cx + 4096) + (cz + 4096) * 8192;
 
 function buildTrack(st) {
   const k = [], notesRaw = [], ev = [], grades = [];
+  let L, px, pz, ph, py, ks;
+  if (st.street) ({ L, px, pz, ph, py, ks } = streetRoad(st, notesRaw));
+  else {
   let s = 0;
-  for (const seg of st.segs || cityPlan(st).segs) {
+  for (const seg of st.segs) {
     const t = seg[0];
     if (t === 'S') { const n = Math.round(seg[1]); for (let i = 0; i < n; i++) k.push(0); s += n; }
     else if (t === 'L' || t === 'R') {
@@ -386,9 +394,9 @@ function buildTrack(st) {
     else if (t === 'J' || t === 'C') ev.push({ type: t, s, h: seg[1] });
     else if (t === 'G') grades.push({ s, g: seg[1] });
   }
-  const L = k.length;
-  const ks = blur(blur(k, st.kBlur || 6), st.kBlur || 6);
-  const px = new Float64Array(L + 1), pz = new Float64Array(L + 1), ph = new Float64Array(L + 1), py = new Float64Array(L + 1);
+  L = k.length;
+  ks = blur(blur(k, st.kBlur || 6), st.kBlur || 6);
+  px = new Float64Array(L + 1); pz = new Float64Array(L + 1); ph = new Float64Array(L + 1); py = new Float64Array(L + 1);
   let x = 0, z = 0, h = st.h0 || 0;
   ph[0] = h;
   for (let i = 0; i < L; i++) {
@@ -408,6 +416,7 @@ function buildTrack(st) {
     let u = E.a1 * Math.sin(i / E.l1 + E.p1) + E.a2 * Math.sin(i / E.l2 + E.p2);
     u *= sstep(0, 90, i) * sstep(0, 80, L - i);
     py[i] += u;
+  }
   }
   let walls = (st.walls || []).map(([a, b, off]) => ({ s0: Math.round(L * a), s1: Math.round(L * b), off }));
   let evs = ev, nraw = notesRaw, ksr = ks;
@@ -525,73 +534,145 @@ function projectRoad(T, i, x, z, out) {
   return out;
 }
 
-// ---------------- City ----------------
-// Cross-section of a street: the road (hw) and a concrete gutter out to the kerb, a raised sidewalk, then the
-// building line. Blocks sit between street axes B apart: a slab (the sidewalk) with rounded kerb corners and a
-// continuous row of buildings round its edge, their corners cut back at 45° (ochavas).
-const CITY_X = { kerb: 5.0, walk: 3.0, slab: 0.15, ochava: 4, margin: 5 };
-const CSTEP = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // lattice step per direction (0 = the start heading, +1 = a left turn)
-
-// The route and its street grid, built once per stage from the forward road (a reversed run goes through the same
-// town). A square corner as built (curvature blurred) meets its straights t back from either end; the straights are
-// cut to fit that, rounding to whole metres with the error carried along each axis, so every street the road takes
-// stays within half a metre of its grid line.
-function cityPlan(st) {
-  const CP = st.city; if (CP.plan) return CP.plan;
-  const B = CP.B, h0 = st.h0 || 0, kerb = CITY_X.kerb;
-  const cal = buildTrack(Object.assign({}, st, { segs: [['S', 80], ['L', 'Q', 90], ['S', 80]], rev: false, h0: 0, walls: null }));
-  const nq = Math.max(4, Math.round(RADIUS.Q * PI / 2)), last = cal.n - 1, sEnd = Math.min(2 * last, cal.L);
-  // entry along +z from the origin, exit along +x: the straights meet at (0, Z_end)
-  const vz = cal.Z[last], tIn = vz - 80, tOut = cal.X[last] - (sEnd - 80 - nq), t = (tIn + tOut) / 2;
-  let a = 1e9; for (let i = 0; i < cal.n; i++) a = Math.min(a, Math.hypot(cal.X[i], cal.Z[i] - vz));
-  // kerb corners are quarter circles tangent to both kerbs whose apex keeps the gutter's width off the road's edge
-  const kr = clamp(a / (Math.SQRT2 - 1) - kerb, 1.5, 15);
-  const dir = d => { const h = h0 + d * PI / 2; return [Math.sin(h), Math.cos(h)]; };
-  const nodes = [], seen = new Set();
-  let d = 0, i = 0, j = 0;
-  for (let k = 0; k < CP.moves.length; k++) {
-    const m = CP.moves[k], din = d;
-    if (m === 'L') d = (d + 1) % 4; else if (m === 'R') d = (d + 3) % 4;
-    const key = i + ',' + j;
-    if (seen.has(key)) throw new Error('city route comes back to junction ' + key);
-    seen.add(key);
-    nodes.push({ i, j, din, dout: d, turn: m === 'L' ? 1 : m === 'R' ? -1 : 0 });
-    if (k < CP.moves.length - 1) { i += CSTEP[d][0]; j += CSTEP[d][1]; }
+// ---------------- Street circuit ----------------
+// A stage drawn from a real lap (st.street): its centreline every 4 m from the start line, the sea's outline (the
+// coast, land on its left, closed far out at sea), the harbour's pontoons and the climbs (fractions of the lap, metres).
+// The road is a spline through the points, sampled every metre; the stage runs from the line round to `gap` metres
+// short of it. The rest of the lap is still there, drawn and fenced, so the town closes round.
+// Cross-section (metres off the axis): kerb, the Armco just behind it, the building line.
+const STREET = { kerb: 5.0, rail: 5.35, line: 8.6, slab: 0.15 };
+// "x,z;dx,dz;..." in decimetres
+function unpackPts(str) {
+  const out = []; let x = 0, z = 0;
+  for (const p of str.split(';')) { const c = p.indexOf(','); x += +p.slice(0, c); z += +p.slice(c + 1); out.push([x / 10, z / 10]); }
+  return out;
+}
+// the whole lap as a closed loop, every metre: X, Z, heading H, curvature K and the height Y
+function streetLoop(st) {
+  const SP = st.street; if (SP.loop) return SP.loop;
+  const P = unpackPts(SP.path), m = P.length, fine = [];
+  for (let i = 0; i < m; i++) {
+    const p0 = P[(i - 1 + m) % m], p1 = P[i], p2 = P[(i + 1) % m], p3 = P[(i + 2) % m];
+    for (let q = 0; q < 8; q++) {
+      const t = q / 8, t2 = t * t, t3 = t2 * t;
+      const f = (a, b, c, d) => 0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (3 * b - a - 3 * c + d) * t3);
+      fine.push([f(p0[0], p1[0], p2[0], p3[0]), f(p0[1], p1[1], p2[1], p3[1])]);
+    }
   }
-  const segs = [], err = [0, 0];
-  let pend = CP.start * B, corners = 0;
-  const straight = (dd, ends) => {
-    const ax = dd % 2, sg = dd < 2 ? 1 : -1, ideal = pend - ends * t;
-    const n = Math.max(1, Math.round(ideal - sg * err[ax]));
-    err[ax] += sg * (n - ideal);
-    segs.push(['S', n]);
-  };
-  nodes.forEach((nd, k) => {
-    if (nd.turn) { straight(nd.din, corners ? 2 : 1); segs.push([nd.turn > 0 ? 'L' : 'R', 'Q', 90]); corners++; pend = 0; }
-    pend += k < nodes.length - 1 ? B : CP.end * B;
-  });
-  straight(nodes[nodes.length - 1].dout, corners ? 1 : 0);
-  const e0 = dir(0), e1 = dir(1), ox = e0[0] * CP.start * B, oz = e0[1] * CP.start * B;
-  let i0 = 1e9, i1 = -1e9, j0 = 1e9, j1 = -1e9;
-  for (const nd of nodes) { i0 = Math.min(i0, nd.i); i1 = Math.max(i1, nd.i); j0 = Math.min(j0, nd.j); j1 = Math.max(j1, nd.j); }
-  const M = CITY_X.margin;
-  CP.plan = { segs, t, a, kr, B, h0, e0, e1, ox, oz, nodes, dir, blocks: [i0 - M, i1 + M - 1, j0 - M, j1 + M - 1] };
-  return CP.plan;
+  const F = fine.length, acc = new Float64Array(F + 1);
+  for (let i = 1; i <= F; i++) { const a = fine[i - 1], b = fine[i % F]; acc[i] = acc[i - 1] + Math.hypot(b[0] - a[0], b[1] - a[1]); }
+  const len = acc[F], N = Math.round(len), X = new Float64Array(N), Z = new Float64Array(N);
+  for (let s = 0, j = 0; s < N; s++) {
+    const d = s * len / N; while (acc[j + 1] < d) j++;
+    const a = fine[j], b = fine[(j + 1) % F], t = (d - acc[j]) / (acc[j + 1] - acc[j]);
+    X[s] = a[0] + (b[0] - a[0]) * t; Z[s] = a[1] + (b[1] - a[1]) * t;
+  }
+  const H = new Float64Array(N), K = new Float64Array(N), Y = new Float64Array(N), raw = new Float64Array(N);
+  for (let s = 0; s < N; s++) { const a = (s - 1 + N) % N, b = (s + 1) % N; H[s] = Math.atan2(X[b] - X[a], Z[b] - Z[a]); }
+  for (let s = 0; s < N; s++) K[s] = wrapA(H[(s + 1) % N] - H[(s - 1 + N) % N]) / 2;
+  // climbs: straight lines between the control points, eased over 80 m
+  const E = SP.elev;
+  for (let s = 0, j = 0; s < N; s++) {
+    const f = s / N; while (j < E.length - 2 && E[j + 1][0] <= f) j++;
+    raw[s] = E[j][1] + (E[j + 1][1] - E[j][1]) * clamp((f - E[j][0]) / (E[j + 1][0] - E[j][0]), 0, 1);
+  }
+  for (let s = 0; s < N; s++) { let a = 0; for (let q = -40; q <= 40; q++) a += raw[(s + q + N) % N]; Y[s] = a / 81; }
+  // a coarse hash of the loop, for distances to it (the stage's own T leaves the gap out)
+  const hash = new Map();
+  for (let s = 0; s < N; s += 2) { const k = hkey(Math.floor(X[s] / CELL), Math.floor(Z[s] / CELL)); let a = hash.get(k); if (!a) hash.set(k, a = []); a.push(s); }
+  const at = s => Math.round(SP.at[s] * N);
+  return SP.loop = { N, X, Z, H, K, Y, hash, at };
 }
-const cityW = (P, u, v) => [P.ox + u * P.e0[0] + v * P.e1[0], P.oz + u * P.e0[1] + v * P.e1[1]];
-const cityUV = (P, x, z) => { const dx = x - P.ox, dz = z - P.oz; return [dx * P.e0[0] + dz * P.e0[1], dx * P.e1[0] + dz * P.e1[1]]; };
-// height of the sidewalk under a point (0 on the street): the kerb only lifts the drawn wheels and body, the physics
-// keeps the car on the street level (a 15 cm step at the centre of mass threw it into the air)
-function slabAt(W, x, z) {
-  const P = W.O.city; if (!P) return 0;
-  const [u, v] = cityUV(P, x, z), B = P.B;
-  const bi = Math.floor(u / B), bj = Math.floor(v / B), b = P.blocks;
-  if (bi < b[0] || bi > b[1] || bj < b[2] || bj > b[3]) return 0;
-  const au = Math.abs(u - Math.round(u / B) * B), av = Math.abs(v - Math.round(v / B) * B), k = CITY_X.kerb, r = P.kr;
-  if (au < k || av < k) return 0;
-  if (au < k + r && av < k + r && Math.hypot(k + r - au, k + r - av) > r) return 0;
-  return CITY_X.slab;
+// a point beside the loop: lat > 0 is to the right of the direction of the lap
+const loopSide = (LP, s, lat) => { s = ((Math.round(s) % LP.N) + LP.N) % LP.N; return [LP.X[s] - Math.cos(LP.H[s]) * lat, LP.Z[s] + Math.sin(LP.H[s]) * lat]; };
+// the nearest point of the loop within r metres: { s, d } (d = 1e9 if none)
+function loopNear(LP, x, z, r) {
+  const k = Math.ceil(r / CELL), cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
+  let bs = -1, bd = r * r;
+  for (let a = -k; a <= k; a++) for (let b = -k; b <= k; b++) {
+    const arr = LP.hash.get(hkey(cx + a, cz + b)); if (!arr) continue;
+    for (const s of arr) { const dx = x - LP.X[s], dz = z - LP.Z[s], d = dx * dx + dz * dz; if (d < bd) { bd = d; bs = s; } }
+  }
+  if (bs < 0) return { s: -1, d: 1e9 };
+  // refine between the neighbouring metres
+  let best = bs, bd2 = bd;
+  for (let q = -2; q <= 2; q++) { const s = (bs + q + LP.N) % LP.N, dx = x - LP.X[s], dz = z - LP.Z[s], d = dx * dx + dz * dz; if (d < bd2) { bd2 = d; best = s; } }
+  return { s: best, d: Math.sqrt(bd2) };
 }
+// the stage's share of the lap, and pace notes read off the curvature: a run over 1/150 (carried on while over 1/300),
+// rated by its tightest radius ('Q' a tight corner, 'H' a tight one that turns back on itself)
+function streetRoad(st, notesRaw) {
+  const LP = streetLoop(st), L = LP.N - st.street.gap;
+  const px = new Float64Array(L + 1), pz = new Float64Array(L + 1), ph = new Float64Array(L + 1), py = new Float64Array(L + 1);
+  for (let i = 0; i <= L; i++) { px[i] = LP.X[i]; pz[i] = LP.Z[i]; py[i] = LP.Y[i]; ph[i] = i ? ph[i - 1] + wrapA(LP.H[i] - LP.H[i - 1]) : LP.H[0]; }
+  const k = new Float64Array(L); for (let i = 0; i < L; i++) k[i] = ph[i + 1] - ph[i];
+  const ks = blur(k, 3);
+  for (let i = 0; i < L;) {
+    if (Math.abs(ks[i]) <= 1 / 150) { i++; continue; }
+    const dir = ks[i] > 0 ? 1 : -1; let j = i, a = 0, km = 0;
+    while (j < L && ks[j] * dir > 1 / 300) { a += ks[j]; km = Math.max(km, Math.abs(ks[j])); j++; }
+    const ang = Math.round(Math.abs(a) * 180 / PI), r = 1 / km;
+    if (ang >= 12) {
+      let sev = r < 17 ? (ang >= 120 ? 'H' : 'Q') : r < 28 ? 1 : r < 44 ? 2 : r < 68 ? 3 : r < 100 ? 4 : r < 155 ? 5 : 6;
+      if (typeof sev === 'number' && ang < 30) sev = Math.max(sev, 5);
+      notesRaw.push({ s0: i, s1: j, dir, sev, ang, mods: [] });
+    }
+    i = j;
+  }
+  return { L, px, pz, ph, py, ks };
+}
+// Water (harbour and sea) on a grid: W[cell] = 1 under water, D = metres from a dry cell to the water (for the
+// hillside). `ext` metres round the loop, `cell` metres a cell; the outline is filled row by row.
+function waterMask(st, ext, cell) {
+  const SP = st.street, key = ext + ':' + cell; SP.wm = SP.wm || {}; if (SP.wm[key]) return SP.wm[key];
+  const LP = streetLoop(st), ring = SP.ring || (SP.ring = unpackPts(SP.sea));
+  let mnX = 1e9, mxX = -1e9, mnZ = 1e9, mxZ = -1e9;
+  for (let s = 0; s < LP.N; s++) { mnX = Math.min(mnX, LP.X[s]); mxX = Math.max(mxX, LP.X[s]); mnZ = Math.min(mnZ, LP.Z[s]); mxZ = Math.max(mxZ, LP.Z[s]); }
+  const x0 = Math.floor((mnX - ext) / cell) * cell, z0 = Math.floor((mnZ - ext) / cell) * cell;
+  const nx = Math.ceil((mxX + ext - x0) / cell) + 1, nz = Math.ceil((mxZ + ext - z0) / cell) + 1;
+  const W = new Uint8Array(nx * nz), D = new Float32Array(nx * nz);
+  for (let j = 0; j < nz; j++) {
+    const z = z0 + j * cell, xs = [];
+    for (let i = 0, k = ring.length - 1; i < ring.length; k = i++) {
+      const a = ring[k], b = ring[i];
+      if ((a[1] > z) !== (b[1] > z)) xs.push(a[0] + (z - a[1]) / (b[1] - a[1]) * (b[0] - a[0]));
+    }
+    xs.sort((a, b) => a - b);
+    for (let q = 0; q + 1 < xs.length; q += 2) {
+      const i0 = Math.max(0, Math.ceil((xs[q] - x0) / cell)), i1 = Math.min(nx - 1, Math.floor((xs[q + 1] - x0) / cell));
+      for (let i = i0; i <= i1; i++) W[j * nx + i] = 1;
+    }
+  }
+  // chamfer distance from the water, two passes
+  const c1 = cell, c2 = cell * Math.SQRT2;
+  for (let i = 0; i < W.length; i++) D[i] = W[i] ? 0 : 1e6;
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+    const k = j * nx + i; let d = D[k];
+    if (i > 0) d = Math.min(d, D[k - 1] + c1);
+    if (j > 0) { d = Math.min(d, D[k - nx] + c1); if (i > 0) d = Math.min(d, D[k - nx - 1] + c2); if (i < nx - 1) d = Math.min(d, D[k - nx + 1] + c2); }
+    D[k] = d;
+  }
+  for (let j = nz - 1; j >= 0; j--) for (let i = nx - 1; i >= 0; i--) {
+    const k = j * nx + i; let d = D[k];
+    if (i < nx - 1) d = Math.min(d, D[k + 1] + c1);
+    if (j < nz - 1) { d = Math.min(d, D[k + nx] + c1); if (i < nx - 1) d = Math.min(d, D[k + nx + 1] + c2); if (i > 0) d = Math.min(d, D[k + nx - 1] + c2); }
+    D[k] = d;
+  }
+  return SP.wm[key] = { x0, z0, cell, nx, nz, W, D };
+}
+const wetAt = (wm, x, z) => { const i = Math.round((x - wm.x0) / wm.cell), j = Math.round((z - wm.z0) / wm.cell); return i < 0 || j < 0 || i >= wm.nx || j >= wm.nz ? 0 : wm.W[j * wm.nx + i]; };
+function shoreDist(wm, x, z) {
+  let fx = clamp((x - wm.x0) / wm.cell, 0, wm.nx - 1.001), fz = clamp((z - wm.z0) / wm.cell, 0, wm.nz - 1.001);
+  const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, k = j * wm.nx + i;
+  return lerp(lerp(wm.D[k], wm.D[k + 1], u), lerp(wm.D[k + wm.nx], wm.D[k + wm.nx + 1], u), v);
+}
+// the land away from the streets: Monaco climbs about 13 m in every 100 m from the shore, steeper further up, with
+// spurs and gullies; the quays stand 2.5 m over the water
+function hillAt(nz, d, x, z) {
+  const t = d < 450 ? 2.5 + d * 0.13 : 61 + (d - 450) * 0.3;
+  return t + Math.min(1, d / 120) * (9 * nz.fbm(x / 260, z / 260, 3) + 2.5 * nz.n2(x / 60, z / 60));
+}
+
 // the first point where the line a→b crosses a building front (0..1), 1 if it is clear: keeps the chase camera out of
 // the walls and lets trackside cameras see down the street
 function rayWalls(W, ax, az, bx, bz) {
@@ -649,6 +730,7 @@ function buildTerrain(T, nz) {
   let meanY = 0; for (let i = 0; i < T.n; i++) meanY += T.Y[i]; meanY /= T.n;
   const tmp = {};
   const hw = T.hw, flat = hw + 1.6;
+  const LP = st.street && streetLoop(st), wm = st.street && waterMask(st, 640, 4);
   const W_CUT = 1 / (185 * 185 + 900), N_CUT = 1 / ((46 * 46 + 1) * (46 * 46 + 1));
   for (let j = 0; j < nzc; j++) {
     const z = z0 + j * cell;
@@ -683,7 +765,18 @@ function buildTerrain(T, nz) {
       const natural = lerp(nearB, baseline, sstep(16, 52, d)) + terrainNatural(st, nz, x, z, d, lat, s, T);
       let hgt;
       // the city is flat: the streets lie a few centimetres under the road (which is drawn over them)
-      if (st.city) hgt = (d < hw - 0.8 ? roadY - 0.2 : roadY - 0.06);
+      if (st.street) {
+        // paved at the road's level out to the building line (the whole lap, gap included), the harbour and the sea
+        // well under the water line, the hillside beyond
+        const ln = loopNear(LP, x, z, 60);
+        if (ln.d < STREET.line) hgt = LP.Y[ln.s] - (ln.d < hw - 0.8 ? 0.2 : 0.06);
+        else if (wetAt(wm, x, z)) hgt = -6;
+        else {
+          // the hillside, but never more than a 30 % slope away from the streets (it is built up, not cliffs)
+          const dd = Math.min(ln.d, d) - STREET.line, base = nearB - 0.06;
+          hgt = lerp(base, clamp(hillAt(nz, shoreDist(wm, x, z), x, z), base - 0.3 * dd, base + 0.3 * dd), sstep(0, 60, dd));
+        }
+      }
       else if (d < flat) hgt = roadY - 0.18;
       else { const t = sstep(flat, hw + st.blend, d); hgt = lerp(nearB - 0.18, natural, t); }
       const idx = j * nx + i;
@@ -718,7 +811,7 @@ function placeObjects(T, TR, nz) {
     for (let q = 0; q <= n; q++) keys.add(hkey(Math.floor((x0 + (x1 - x0) * q / n) / CELL), Math.floor((z0 + (z1 - z0) * q / n) / CELL)));
     for (const kk of keys) { let a = cols.get(kk); if (!a) cols.set(kk, a = []); a.push(o); }
   };
-  if (st.city) { placeCity(st, out, R, addCol, addSeg); out.cols = cols; return out; }
+  if (st.street) { placeStreet(T, TR, st, nz, out, R, addCol, addSeg); out.cols = cols; return out; }
   const tmp = {};
   const roadDist = (x, z) => { const i = nearest(T, x, z, 60); if (i < 0) return 1e4; project(T, i, x, z, tmp); return tmp.dist; };
   const inWall = (s) => T.walls.some(w => s > w.s0 - 40 && s < w.s1 + 40);
@@ -861,105 +954,143 @@ function placeObjects(T, TR, nz) {
   return out;
 }
 
-// The city's furniture, all from the forward plan so both directions share it: building fronts round every block the
-// route touches, barriers across each street the route doesn't take (and behind the start, past the end), straw bales
-// on the inside kerb of each corner (the bit everyone cuts), chevrons on the barrier straight ahead of a corner and
-// spectators behind the barriers in the side streets.
-function placeCity(st, out, R, addCol, addSeg) {
-  const P = cityPlan(st), B = P.B, k = CITY_X.kerb, F = B / 2 - k - CITY_X.walk, oc = CITY_X.ochava;
-  const W_ = (u, v) => cityW(P, u, v), dirW = d => P.dir(d);
-  out.city = P; out.walls = true; out.barriers = [];
-  const near = new Set();
-  for (const nd of P.nodes) for (let a = -1; a <= 0; a++) for (let b = -1; b <= 0; b++) near.add((nd.i + a) + ',' + (nd.j + b));
-  for (const key of near) {
-    const [bi, bj] = key.split(',').map(Number), cu = (bi + 0.5) * B, cv = (bj + 0.5) * B;
-    const oct = [[F - oc, F], [F, F - oc], [F, oc - F], [F - oc, -F], [oc - F, -F], [-F, oc - F], [-F, F - oc], [oc - F, F]].map(([u, v]) => W_(cu + u, cv + v));
-    for (let q = 0; q < 8; q++) { const p0 = oct[q], p1 = oct[(q + 1) % 8]; addSeg(p0[0], p0[1], p1[0], p1[1], 'wall'); }
+// What stands round the lap, all from the loop so both directions share it: Armco both sides the whole way (colliders
+// every 4 m), rows of buildings up the hill behind the sidewalks (the fronts nearest the road are walls, for the
+// cameras), grandstands, palms along the waterfront, street lamps, the tunnel's lights, yachts moored stern-to along the
+// quays and the pontoons, and the crowd.
+function placeStreet(T, TR, st, nz, out, R, addCol, addSeg) {
+  const LP = streetLoop(st), N = LP.N, SP = st.street, wm = waterMask(st, 640, 4), line = STREET.line;
+  const t0 = LP.at('tunnel0'), t1 = LP.at('tunnel1'), cas = LP.at('casino');
+  const wrapS = s => ((s % N) + N) % N;
+  const within = (s, a, b) => a <= b ? s >= a && s <= b : s >= a || s <= b;
+  const inTunnel = s => within(wrapS(s), t0 - 6, t1 + 6);
+  const stands = SP.stands.map(([a, b, sd]) => [Math.round(a * N), Math.round(b * N), sd]);
+  const inStand = (s, sd) => stands.some(([a, b, q]) => q === sd && within(wrapS(s), a - 4, b + 4));
+  out.street = LP; out.walls = true;
+  out.bldgs = []; out.lamps = []; out.palms = []; out.boats = []; out.stands = []; out.tlights = [];
+  for (let s = 0; s < N; s += 4) for (const sd of [-1, 1]) {
+    const a = loopSide(LP, s, sd * STREET.rail), b = loopSide(LP, s + 4, sd * STREET.rail);
+    addSeg(a[0], a[1], b[0], b[1], 'rail');
   }
-  // barriers run from building to building (across the sidewalks too), past the rounded kerb corner where the
-  // ochavas end, so nothing gets round them
-  const dB = k + P.kr + 1.2, wB = k + CITY_X.walk + 0.2;
-  const barrier = (u, v, d) => {
-    const s1 = CSTEP[(d + 1) % 4], p0 = W_(u + s1[0] * wB, v + s1[1] * wB), p1 = W_(u - s1[0] * wB, v - s1[1] * wB);
-    addSeg(p0[0], p0[1], p1[0], p1[1], 'barrier'); out.barriers.push([p0[0], p0[1], p1[0], p1[1]]);
+  // ---- buildings ----
+  // convex footprints on a grid of 16 m cells; a new one may not overlap another or come within `min` of the lap
+  const FC = 16, grid = new Map();
+  const cellsOf = pts => { const ks = new Set(); let a = 1e9, b = -1e9, c = 1e9, d = -1e9; for (const [x, z] of pts) { a = Math.min(a, x); b = Math.max(b, x); c = Math.min(c, z); d = Math.max(d, z); } for (let i = Math.floor(a / FC); i <= Math.floor(b / FC); i++) for (let j = Math.floor(c / FC); j <= Math.floor(d / FC); j++) ks.add(hkey(i, j)); return ks; };
+  const sep = (A, B) => {
+    for (const P of [A, B]) for (let i = 0; i < P.length; i++) {
+      const [ax, az] = P[i], [bx, bz] = P[(i + 1) % P.length], nx = bz - az, nz2 = ax - bx;
+      let a0 = 1e9, a1 = -1e9, b0 = 1e9, b1 = -1e9;
+      for (const [x, z] of A) { const v = x * nx + z * nz2; a0 = Math.min(a0, v); a1 = Math.max(a1, v); }
+      for (const [x, z] of B) { const v = x * nx + z * nz2; b0 = Math.min(b0, v); b1 = Math.max(b1, v); }
+      if (a1 <= b0 + 0.05 || b1 <= a0 + 0.05) return true;
+    }
+    return false;
   };
-  const closed = nd => [0, 1, 2, 3].filter(c => c !== (nd.din + 2) % 4 && c !== nd.dout);
-  for (const nd of P.nodes) for (const c of closed(nd)) barrier(nd.i * B + CSTEP[c][0] * dB, nd.j * B + CSTEP[c][1] * dB, c);
-  barrier(-st.city.start * B - 14, 0, 0);
-  const ln = P.nodes[P.nodes.length - 1], ee = st.city.end * B + 25;
-  barrier(ln.i * B + CSTEP[ln.dout][0] * ee, ln.j * B + CSTEP[ln.dout][1] * ee, ln.dout);
-  // bales round the inside kerb of every corner, a metre in from its edge
-  for (const nd of P.nodes) if (nd.turn) {
-    const b = CSTEP[(nd.din + 2) % 4], o = CSTEP[nd.dout];
-    const cu = nd.i * B + (b[0] + o[0]) * (k + P.kr), cv = nd.j * B + (b[1] + o[1]) * (k + P.kr);
-    const du = -(b[0] + o[0]) / Math.SQRT2, dv = -(b[1] + o[1]) / Math.SQRT2, rr = Math.max(0.4, P.kr - 1.0);
-    for (const a of [-0.55, 0, 0.55]) {
-      const ru = du * Math.cos(a) - dv * Math.sin(a), rv = du * Math.sin(a) + dv * Math.cos(a);
-      const [x, z] = W_(cu + ru * rr, cv + rv * rr), [wx, wz] = [P.e0[0] * ru + P.e1[0] * rv, P.e0[1] * ru + P.e1[1] * rv];
-      out.hay.push({ x, z, y: CITY_X.slab - 0.04, rot: Math.atan2(wx, wz) });
-      addCol(x, z, 0.75, 'hay');
+  const free = pts => { for (const k of cellsOf(pts)) for (const o of grid.get(k) || []) if (!sep(pts, o)) return false; return true; };
+  const clear = (pts, min) => {
+    const smp = pts.slice(); for (let i = 0; i < pts.length; i++) { const a = pts[i], b = pts[(i + 1) % pts.length]; smp.push([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]); }
+    smp.push([(pts[0][0] + pts[2][0]) / 2, (pts[0][1] + pts[2][1]) / 2]);
+    return smp.every(([x, z]) => loopNear(LP, x, z, min + 1).d >= min - 0.05 && !wetAt(wm, x, z));
+  };
+  const keep = pts => { for (const k of cellsOf(pts)) { let a = grid.get(k); if (!a) grid.set(k, a = []); a.push(pts); } };
+  const rows = [{ off: 0, dep: [12, 24], fl: [3, 10] }, { off: 30, dep: [14, 26], fl: [6, 15] }, { off: 62, dep: [16, 30], fl: [8, 21] }, { off: 98, dep: [16, 30], fl: [8, 24] }];
+  for (const sd of [-1, 1]) rows.forEach((row, ri) => {
+    for (let s = 0; s < N;) {
+      const w = Math.round(9 + R() * 9), s1 = s + w;
+      if (inTunnel(s) || inTunnel(s1) || (ri === 0 && (inStand(s, sd) || inStand(s1, sd)))) { s += 4; continue; }
+      const off = line + row.off + (ri ? R() * 6 : 0);
+      const a = loopSide(LP, s, sd * off), b = loopSide(LP, s1, sd * off);
+      const tx = b[0] - a[0], tz = b[1] - a[1], tl = Math.hypot(tx, tz) || 1, ox = sd * -tz / tl, oz = sd * tx / tl;
+      let placed = false;
+      for (let dep = row.dep[0] + R() * (row.dep[1] - row.dep[0]); dep >= 8 && !placed; dep -= 5) {
+        const pts = [a, b, [b[0] + ox * dep, b[1] + oz * dep], [a[0] + ox * dep, a[1] + oz * dep]];
+        if (tl < 5 || !clear(pts, off - 0.4) || !free(pts)) continue;
+        // the casino square is old and low; elsewhere the towers rise row by row up the hill
+        const square = ri === 0 && within(wrapS(s), cas - 90, cas + 110);
+        const fl = square ? 2 + Math.round(R() * 2) : Math.round(row.fl[0] + R() * (row.fl[1] - row.fl[0]) * (R() < 0.3 ? 1 : 0.6));
+        let lo = 1e9, hi = -1e9;
+        for (const [x, z] of pts) { const h = terrainH(TR, x, z); lo = Math.min(lo, h); hi = Math.max(hi, h); }
+        const base = ri === 0 ? Math.min(LP.Y[wrapS(s)], LP.Y[wrapS(s1)]) + STREET.slab : hi;
+        out.bldgs.push({ pts, base, low: Math.min(lo, base) - 1.5, floors: fl, row: ri, classic: square, c: R() });
+        keep(pts);
+        if (ri === 0) addSeg(a[0], a[1], b[0], b[1], 'wall');
+        placed = true;
+      }
+      s = placed ? s1 + (R() < 0.12 ? 3 + Math.round(R() * 5) : 0) : s + 4;
+    }
+  });
+  // ---- the rest of the hill, built up: a jittered grid of blocks wherever there is dry land left, turned to the
+  // nearest street, ever taller further up ----
+  let mnX = 1e9, mxX = -1e9, mnZ = 1e9, mxZ = -1e9;
+  for (let s = 0; s < N; s += 8) { mnX = Math.min(mnX, LP.X[s]); mxX = Math.max(mxX, LP.X[s]); mnZ = Math.min(mnZ, LP.Z[s]); mxZ = Math.max(mxZ, LP.Z[s]); }
+  for (let gz = mnZ - 260; gz < mxZ + 260; gz += 21) for (let gx = mnX - 260; gx < mxX + 260; gx += 21) {
+    const cx = gx + (R() - 0.5) * 6, cz = gz + (R() - 0.5) * 6, ln = loopNear(LP, cx, cz, 280);
+    if (ln.d < 14 || wetAt(wm, cx, cz)) continue;
+    const h = ln.s >= 0 ? LP.H[ln.s] + (R() < 0.3 ? PI / 2 : 0) + (R() - 0.5) * 0.2 : R() * PI;
+    const ux = Math.sin(h), uz = Math.cos(h), vx = Math.cos(h), vz = -Math.sin(h), a2 = 6 + R() * 4, b2 = 6 + R() * 5;
+    const pts = [[cx - ux * a2 - vx * b2, cz - uz * a2 - vz * b2], [cx + ux * a2 - vx * b2, cz + uz * a2 - vz * b2], [cx + ux * a2 + vx * b2, cz + uz * a2 + vz * b2], [cx - ux * a2 + vx * b2, cz - uz * a2 + vz * b2]];
+    if (!clear(pts, line + 1.5) || !free(pts)) continue;
+    let lo = 1e9, hi = -1e9;
+    for (const [x, z] of pts) { const t = terrainH(TR, x, z); lo = Math.min(lo, t); hi = Math.max(hi, t); }
+    const far = Math.min(1, ln.d / 200);
+    out.bldgs.push({ pts, base: hi, low: lo - 1.5, floors: Math.round(5 + R() * (8 + far * 14)), row: 4, classic: false, c: R() });
+    keep(pts);
+  }
+  // ---- grandstands, with their crowd ----
+  const shirts = 12;
+  for (const [a, b, sd] of stands) {
+    out.stands.push({ s0: a, s1: b, sd });
+    for (let s = a; within(s, a, b) && s !== wrapS(b); s = wrapS(s + 1)) for (let tier = 0; tier < 5; tier++) {
+      if (R() > 0.3) continue;
+      const [x, z] = loopSide(LP, s + R(), sd * (line + 1.2 + tier * 1.25)), dw = loopSide(LP, s, 0);
+      out.fans.push({ x, z, y: LP.Y[s] + STREET.slab + 0.55 + tier * 0.62, rot: Math.atan2(dw[0] - x, dw[1] - z) + (R() - 0.5) * 0.5, c: (R() * shirts) | 0, ph: R() * 6.28, h: 0.9 + R() * 0.2 });
     }
   }
-  // which way this run goes through each junction
-  const run = st.rev ? P.nodes.slice().reverse().map(nd => Object.assign({}, nd, { din: (nd.dout + 2) % 4, dout: (nd.din + 2) % 4, turn: -nd.turn })) : P.nodes;
-  for (const nd of run) if (nd.turn) {
-    const f = CSTEP[nd.din], s1 = CSTEP[(nd.din + 1) % 4];
-    for (const l of [-2.6, 0, 2.6]) {
-      const [x, z] = W_(nd.i * B + f[0] * (dB - 0.5) + s1[0] * l, nd.j * B + f[1] * (dB - 0.5) + s1[1] * l);
-      out.chevrons.push({ x, z, y: -0.06, rot: P.h0 + nd.din * PI / 2 + PI, dir: nd.turn });
+  // ---- palms on the waterfront, lamps, the tunnel's lights ----
+  const nearFront = (x, z) => { for (const k of cellsOf([[x - 3, z - 3], [x + 3, z + 3]])) if ((grid.get(k) || []).length) return true; return false; };
+  for (const sd of [-1, 1]) for (let s = 6; s < N; s += 11) {
+    if (inTunnel(s) || inStand(s, sd)) continue;
+    const [x, z] = loopSide(LP, s, sd * 7.3);
+    if (!wetAt(wm, x, z) && shoreDist(wm, x, z) < 45 && !nearFront(x, z) && loopNear(LP, x, z, 8).d > 6.8) {
+      out.palms.push({ x, z, y: LP.Y[s] + STREET.slab, rot: R() * 6.28, s: 0.85 + R() * 0.35, c: R() });
     }
   }
-  for (const nd of P.nodes) {
-    if (R() > 0.65) continue;
-    const cs = closed(nd), c = cs[(R() * cs.length) | 0], f = CSTEP[c], s1 = CSTEP[(c + 1) % 4], dw = dirW(c);
-    for (let q = 0, n = 6 + ((R() * 7) | 0); q < n; q++) {
-      const along = dB + 1.6 + R() * 6, l = (R() - 0.5) * 2 * (k - 0.6);
-      const [x, z] = W_(nd.i * B + f[0] * along + s1[0] * l, nd.j * B + f[1] * along + s1[1] * l);
-      out.fans.push({ x, z, y: -0.06, rot: Math.atan2(-dw[0], -dw[1]) + (R() - 0.5) * 0.8, c: (R() * 12) | 0, ph: R() * 6.28, h: 0.9 + R() * 0.2 });
-    }
+  for (let s = 10, k = 0; s < N; s += 31, k++) {
+    if (inTunnel(s)) continue;
+    const sd = k % 2 ? 1 : -1, [x, z] = loopSide(LP, s, sd * 6.1), [rx, rz] = loopSide(LP, s, 0);
+    if (wetAt(wm, x, z)) continue;
+    out.lamps.push({ x, z, y: LP.Y[s] + STREET.slab, rot: Math.atan2(rx - x, rz - z) });
   }
-  // street furniture round the blocks next to the route, all of it clear of the corners (where everyone cuts): trees in
-  // pits and lamp posts along the sidewalks, a traffic light on every corner of a junction of the route but the inside
-  // of a turn (flashing amber: the streets are closed), and a zebra crossing over each street out of such a junction
-  const wdir = (du, dv) => [du * P.e0[0] + dv * P.e1[0], du * P.e0[1] + dv * P.e1[1]];
-  const rot4 = (q, u, v) => q === 0 ? [u, v] : q === 1 ? [-v, u] : q === 2 ? [-u, -v] : [v, -u];
-  const S = B / 2 - k, span = S - P.kr - 7, ys = CITY_X.slab, Rf = rng(st.seed + 777);
-  out.lamps = []; out.signals = []; out.zebras = []; out.pits = [];
-  for (const key of near) {
-    const [bi, bj] = key.split(',').map(Number), cu = (bi + 0.5) * B, cv = (bj + 0.5) * B;
-    for (let q = 0; q < 4; q++) {
-      const [nu, nv] = rot4(q, 0, 1), dw = wdir(nu, nv), face = Math.atan2(dw[0], dw[1]);
-      const n = Math.floor(2 * span / 10.5), step = 2 * span / n;
-      for (let i = 0; i <= n; i++) {
-        const u = -span + i * step;
-        if (Rf() > 0.12) {
-          const [pu, pv] = rot4(q, u + (Rf() - 0.5) * 0.8, S - 0.95), [x, z] = W_(cu + pu, cv + pv), sc = 1.05 + Rf() * 0.3;
-          out.trees.push({ x, z, y: ys - 0.05, rot: Rf() * 6.28, s: sc, sy: sc * (1.05 + Rf() * 0.25), type: 1, c: Rf() });
-          out.pits.push({ x, z, rot: face });
-          addCol(x, z, 0.28, 'tree');
-        }
-        if (i < n && i % 3 === 1) {
-          const [pu, pv] = rot4(q, u + step / 2, S - 0.45), [x, z] = W_(cu + pu, cv + pv);
-          out.lamps.push({ x, z, y: ys, rot: face });
-          addCol(x, z, 0.14, 'post');
-        }
+  for (let s = t0; within(s, t0, t1) && s !== t1; s = wrapS(s + 7)) for (const sd of [-1, 1]) {
+    const [x, z] = loopSide(LP, s, sd * 3.1); out.tlights.push([x, LP.Y[s] + 5.7, z]);
+  }
+  // ---- yachts, moored stern-to along the pontoons and the harbour's quays ----
+  const piers = SP.piers.map(unpackPts);
+  let hx = 0, hz = 0, hn = 0; for (const p of piers) for (const [x, z] of p) { hx += x; hz += z; hn++; }
+  hx /= hn; hz /= hn;
+  const edges = [];
+  for (const p of piers) for (let i = 0; i + 1 < p.length; i++) edges.push([p[i], p[i + 1], 0], [p[i], p[i + 1], 1]);
+  const ring = SP.ring || (SP.ring = unpackPts(SP.sea));
+  for (let i = 0; i + 1 < ring.length; i++) if (Math.hypot(ring[i][0] - hx, ring[i][1] - hz) < 330) edges.push([ring[i], ring[i + 1], 2]);
+  const boats = [];
+  for (const [a, b, kind] of edges) {
+    const ex = b[0] - a[0], ez = b[1] - a[1], el = Math.hypot(ex, ez); if (el < 6) continue;
+    // into the water: off either side of a pontoon, off the right of the coast (land is on its left)
+    const sides = kind === 2 ? [1] : [kind ? 1 : -1];
+    for (const sg of sides) {
+      const nx = sg * -ez / el, nz2 = sg * ex / el;
+      for (let t = 4; t < el - 4; t += 8 + R() * 6) {
+        const len = 12 + R() * R() * 34, wd = len * 0.27, px = a[0] + ex * t / el, pz = a[1] + ez * t / el;
+        const cx = px + nx * (len / 2 + 1.5), cz = pz + nz2 * (len / 2 + 1.5);
+        // the whole hull in the water: both quarters at the stern and at the bow, and the middle
+        const ok = [[0.5, 0], [-0.5, 0], [0.5, 1], [-0.5, 1], [0, 0.5]].every(([u, v]) => wetAt(wm, px + nx * (2 + v * len) - nz2 * u * wd, pz + nz2 * (2 + v * len) + nx * u * wd));
+        if (!ok || boats.some(o => Math.hypot(o.x - cx, o.z - cz) < (o.len + len) * 0.3)) continue;
+        if (loopNear(LP, cx, cz, 12).d < 11) continue;
+        boats.push({ x: cx, z: cz, rot: Math.atan2(nx, nz2), len, c: R() });
       }
     }
   }
-  const sc = Math.min(9, k + P.kr * (1 - Math.SQRT1_2) + 0.64);
-  for (const nd of P.nodes) {
-    const b = CSTEP[(nd.din + 2) % 4], o = CSTEP[nd.dout];
-    for (const [su, sv] of [[1, 1], [-1, 1], [-1, -1], [1, -1]]) {
-      if (nd.turn && su === b[0] + o[0] && sv === b[1] + o[1]) continue;
-      const [x, z] = W_(nd.i * B + su * sc, nd.j * B + sv * sc), da = wdir(su, 0), db = wdir(0, sv);
-      out.signals.push({ x, z, y: ys, heads: [Math.atan2(da[0], da[1]), Math.atan2(db[0], db[1])] });
-      addCol(x, z, 0.13, 'post');
-    }
-    for (let c = 0; c < 4; c++) {
-      const f = CSTEP[c], [x, z] = W_(nd.i * B + f[0] * 9.8, nd.j * B + f[1] * 9.8), dw = dirW(c);
-      out.zebras.push({ x, z, rot: Math.atan2(dw[0], dw[1]), road: c === nd.dout || c === (nd.din + 2) % 4 });
-    }
-  }
+  out.boats = boats;
 }
 
 // ---------------- World ----------------
@@ -1450,6 +1581,6 @@ CARS.forEach(measureCar);
 
 return { TUNE, CARS, STAGES, CONDS, stageDef, stageKey, stageTitle, condName, dailyKey, selfClearance, RADIUS, RW, carStats, torqueAt, engineCurve, measureCar, buildWorld, buildTrack, makeNoise, rng, sampleAt, roadYAt, terrainH, nearest, project,
   makeCar, resetCar, stepCar, locate, groundAt, simulateRun, prepAI, aiDrive, clamp, lerp, sstep, wrapA, hkey, CELL,
-  CITY_X, CSTEP, cityPlan, cityW, cityUV, slabAt, rayWalls };
+  STREET, streetLoop, loopSide, loopNear, waterMask, wetAt, shoreDist, hillAt, unpackPts, rayWalls };
 })();
 if (typeof module !== 'undefined') module.exports = RallyCore;
