@@ -1248,7 +1248,7 @@ function netLoadRace(race) {
   if (isBonus(C.CARS[settings.car])) { settings.car = plainCar(); saveSettings(); renderCarList(); }
   netClearRun();
   const nr = net.race = { id: race.id, k: race.k, at: race.at || 0, greenL: 0, green: false, grid: race.grid.map(g => Object.assign({}, g)), others: new Map(), fin: Object.assign({}, race.fin),
-    hist: [], buf: [], lastS: -1e9, lastSend: -1e9, inRun: true, done: false, close: 0, col: PCOL[0] };
+    hist: [], buf: [], lastS: -1e9, lastSend: -1e9, cut: false, inRun: true, done: false, close: 0, col: PCOL[0] };
   nr.grid.forEach((g, k) => {
     g.col = PCOL[k % PCOL.length];
     if (g.i === netId) nr.col = g.col;
@@ -1325,17 +1325,25 @@ function netFin(id, p) {
 // Supabase counts a broadcast once sent and once per receiver: n drivers sending f a second cost n·n·f
 function netRate() { const n = Math.max(1, net.race.grid.filter(g => g.i === netId || net.peers.has(g.i)).length); return clamp(70 / (n * n), 2, 6); }
 const netWT = () => (nowMs() - net.race.greenL) / 1000;
-// a sample every 0.1 s of race time: [wt, x, y, z, heading, vx, vz, s, pitch, roll, front wheel angle, brake | lights]
+// a sample every 0.1 s of race time: [wt, x, y, z, heading, vx, vz, s, pitch, roll, front wheel angle, flags, rpm / 10]
+// flags: 1 brake, 2 lights, bits 2-4 throttle (0-7), bits 5-7 boost (0-7), 256 a gear change since the last sample (not
+// the limiter: at ten samples a second it would cut their engine for whole tenths). The engine fields are for the
+// others' engine sound; clients from before them read the first 12 fields and the two lowest bits only
 function netSample() {
   const nr = net.race; if (!nr.greenL || !net.ch) return;
   const wt = netWT();
   if (mode === 'done' && doneT > 6) { if (nr.buf.length) netSend(wt); return; } // parked after the finish: nothing more to say
+  if (car.shiftT > 0) nr.cut = true;
   if ((mode !== 'countdown' && mode !== 'race' && mode !== 'done') || wt < -4 || wt - nr.lastS < 0.1) return;
   nr.lastS = wt;
   const brk = (mode === 'race' && (input.brk > 0.1 || input.hb || net.pause)) || mode === 'done';
-  nr.buf.push([r3(wt), r2(vis.x), r2(vis.y + susp.heave + 0.02), r2(vis.z), r3(vis.h), r1(car.vx), r1(car.vz), r1(car.s), r3(susp.pitch), r3(susp.roll), r2(vis.steer), (brk ? 1 : 0) | (lightsOn ? 2 : 0)]);
+  const thr = mode === 'done' ? 0 : car.thrE || input.thr, q = v => Math.round(clamp(v, 0, 1) * 7);
+  nr.buf.push([r3(wt), r2(vis.x), r2(vis.y + susp.heave + 0.02), r2(vis.z), r3(vis.h), r1(car.vx), r1(car.vz), r1(car.s), r3(susp.pitch), r3(susp.roll), r2(vis.steer),
+    (brk ? 1 : 0) | (lightsOn ? 2 : 0) | q(thr) << 2 | q(car.boost) << 5 | (nr.cut ? 256 : 0), Math.round(car.rpm / 10)]);
+  nr.cut = false;
   nr.hist.push([wt, car.s]);
-  if (wt - nr.lastSend >= 1 / (mode === 'countdown' ? 1 : netRate()) - 0.02) netSend(wt);
+  // 1 Hz on the grid, but the last second before the green goes at the race rate so the launch is heard on time
+  if (wt - nr.lastSend >= 1 / (mode === 'countdown' && wt < -1.2 ? 1 : netRate()) - 0.02) netSend(wt);
 }
 function netSend(wt) { const nr = net.race; net.ch.send('st', { f: netId, r: nr.id, p: nr.buf }); nr.buf = []; nr.lastSend = wt; }
 const npA = {}, npB = {};
@@ -1351,6 +1359,8 @@ function netState(p) {
     if (!Array.isArray(s) || s.length < 12) continue;
     let ok = true; for (let k = 0; k < 12; k++) if (typeof s[k] !== 'number' || !isFinite(s[k])) { ok = false; break; }
     if (!ok || (o.hist.length && s[0] <= o.hist[o.hist.length - 1][0])) continue;
+    s[12] = typeof s[12] === 'number' && isFinite(s[12]) ? clamp(s[12] * 10, 0, 12000) : -1; // rpm (-1: an older client, estimated from speed)
+    s.length = 13;
     o.hist.push(s);
   }
   if (o.hist.length > 12000) { o.hist.splice(0, o.hist.length - 9000); o.cur = 0; }
@@ -1928,9 +1938,11 @@ class Engine extends AudioWorkletProcessor {
     // afterfire: unburnt fuel lighting off in the hot exhaust. A bang queued from the game goes out with the next firing;
     // on the overrun the 'pop' parameter sets how often a firing turns into a crackle (and how often one misfires)
     this.bq = 0; this.bA = 0; this.bt = 1; this.bTau = 0.01; this.bl = 0;
-    if (this.port) this.port.onmessage = e => { if (e.data && e.data.bang) this.bq = Math.max(this.bq, e.data.bang); };
+    // end: the voice was let go. A processor that returns true keeps running after its node is disconnected
+    if (this.port) this.port.onmessage = e => { if (e.data && e.data.bang) this.bq = Math.max(this.bq, e.data.bang); if (e.data && e.data.end) this.end = true; };
   }
   process(_, outputs, P) {
+    if (this.end) return false;
     const out = outputs[0][0]; if (!out) return true;
     const fs = sampleRate, N = out.length;
     const rpmT = P.rpm[0], loadT = P.load[0], boost = P.boost[0], cutT = P.cut[0], inside = P.inside[0], pop = P.pop ? P.pop[0] : 0;
@@ -2006,8 +2018,9 @@ class Crunch extends AudioWorkletProcessor {
     const k = (name, def, max) => ({ name, defaultValue: def, minValue: 0, maxValue: max, automationRate: 'k-rate' });
     return [k('rate', 0, 4000), k('decay', 0.003, 0.05)];
   }
-  constructor() { super(); this.env = 0; }
+  constructor() { super(); this.env = 0; if (this.port) this.port.onmessage = e => { if (e.data && e.data.end) this.end = true; }; }
   process(_, outputs, P) {
+    if (this.end) return false;
     const out = outputs[0][0]; if (!out) return true;
     const p = P.rate[0] / sampleRate, kd = Math.exp(-1 / (P.decay[0] * sampleRate));
     for (let i = 0; i < out.length; i++) {
@@ -2103,9 +2116,18 @@ function buildSurfaces() {
     A.cl.parameters.get('rate').value = 0; A.cl.parameters.get('decay').value = 0.012;
   } catch (e) { A.cr = null; }
 }
+// stop and unplug a voice's nodes; worklet processors are told to end, or they would keep running unheard
+function freeNodes(nodes) {
+  for (const n of nodes) {
+    try { n.stop && n.stop(); } catch (e) { /* already stopped */ }
+    if (n.port) n.port.postMessage({ end: 1 });
+    try { n.disconnect(); } catch (e) { /* ignore */ }
+  }
+  nodes.length = 0;
+}
 function buildVoice() {
   const ctx = A.ctx; if (!ctx) return;
-  if (A.voice) { for (const n of A.voice.nodes) { try { n.stop && n.stop(); } catch (e) { /* already stopped */ } try { n.disconnect(); } catch (e) { /* ignore */ } } }
+  if (A.voice) freeNodes(A.voice.nodes);
   const V = VOICES[P.id] || VOICES.foca;
   const nodes = [];
   const osc = (type) => { const o = ctx.createOscillator(); o.type = type; o.start(); nodes.push(o); return o; };
@@ -2130,7 +2152,7 @@ function buildVoice() {
       en.connect(body); body.connect(air); air.connect(eg); eg.connect(A.car);
       A.voice = Object.assign({ id: P.id, ex: getTune(P.id).exhaust, V, EN, nodes, wk: en, prm: en.parameters, eg }, turbo());
       return;
-    } catch (e) { A.wk = false; for (const n of nodes) { try { n.stop && n.stop(); } catch (e2) { /* ignore */ } try { n.disconnect(); } catch (e2) { /* ignore */ } } nodes.length = 0; }
+    } catch (e) { A.wk = false; freeNodes(nodes); }
   }
   const sum = A.gain(1); nodes.push(sum);
   const oscs = V.orders.map(([ord, type, amp], i) => { const o = osc(type); if (i === 1) o.detune.value = 7; const g = A.gain(amp); nodes.push(g); o.connect(g); g.connect(sum); return { o, ord }; });
@@ -2146,6 +2168,159 @@ function buildVoice() {
   const ns = A.noiseSrc(); nodes.push(ns); const ib = A.filt('bandpass', 1200, 1.2); nodes.push(ib); const ig = A.gain(0); nodes.push(ig);
   ns.connect(ib); ib.connect(ig); ig.connect(A.car);
   A.voice = Object.assign({ id: P.id, ex: getTune(P.id).exhaust, V, nodes, oscs, lp, lfo, eg, ib, ig }, tb);
+}
+// ---- the others' engines (online rooms) ----
+// The nearest one or two rivals within ~120 m of the camera get a voice of their own: the combustion model with their
+// car's ENGINES entry (stock exhaust), the turbo whistle, dump valve and anti-lag bangs, and gravel or a tyre hiss
+// while they slide close by. Each goes through a bus with the same distance gain, air absorption, pan and Doppler as
+// your car, taken from where their car is drawn. The engine itself (rpm, throttle, boost, gear changes) plays their
+// samples about one network batch behind the drawn car, so it runs on smoothly instead of holding a note and jumping
+// when the next batch comes in. Rivals sit a little under your own car (NV_K) and are muffled on the bonnet camera.
+// Without the worklet two oscillators stand in for the engine.
+const NV_MAX = 2, NV_ON = 120, NV_OFF = 135, NV_K = 0.6;
+function nvBuild(o) {
+  const ctx = A.ctx, nodes = [], c = carById(o.c) || C.CARS[0], V = VOICES[c.id] || VOICES.foca, EN = ENGINES[c.id] || ENGINES.foca;
+  const bus = A.gain(0), lp = A.filt('lowpass', 8000, 0.5), pan = ctx.createStereoPanner ? ctx.createStereoPanner() : A.gain(1), eg = A.gain(0);
+  eg.connect(bus); bus.connect(lp); lp.connect(pan); pan.connect(A.master); pan.connect(A.revIn);
+  nodes.push(eg, bus, lp, pan);
+  const v = { o, P: c, V, EN, nodes, bus, lp, pan, eg, en: null, cr: null, wk: !!A.wk, dopp: 1, lag: 0.3, acur: 0, gear: 1, hold: 0, press: 0, pk: 0, dumpT: 0, alT: 0, popT: 0, cutI: -1, end: 0 };
+  if (A.wk) {
+    try {
+      const en = new AudioWorkletNode(ctx, 'engine', { numberOfInputs: 0, outputChannelCount: [1], processorOptions: EN }); nodes.push(en);
+      const body = A.filt('peaking', EN.body[0], 0.8); body.gain.value = EN.body[1]; nodes.push(body);
+      en.connect(body); body.connect(eg); v.en = en;
+    } catch (e) { /* the oscillators below */ }
+    if (v.en) try {
+      const cr = new AudioWorkletNode(ctx, 'crunch', { numberOfInputs: 0, outputChannelCount: [1] }), crbp = A.filt('bandpass', 1900, 0.8), crg = A.gain(0);
+      nodes.push(cr, crbp, crg); cr.connect(crbp); crbp.connect(crg); crg.connect(bus); Object.assign(v, { cr, crbp, crg });
+    } catch (e) { v.cr = null; }
+  }
+  if (!v.en) {
+    v.lpo = A.filt('lowpass', 900, V.q); nodes.push(v.lpo); v.lpo.connect(eg);
+    v.oscs = V.orders.slice(0, 2).map(([ord, type, amp]) => { const os = ctx.createOscillator(); os.type = type; os.start(); const g = A.gain(amp); os.connect(g); g.connect(v.lpo); nodes.push(os, g); return { os, ord }; });
+  }
+  v.tw = ctx.createOscillator(); v.tw.type = 'sine'; v.tw.start(); v.tg = A.gain(0); v.tw.connect(v.tg); v.tg.connect(bus); nodes.push(v.tw, v.tg);
+  return v;
+}
+// a driver's engine at time ta of their samples: rpm (older clients send none: then it comes from the speed and the
+// gearbox, with the car's own shift points), throttle, boost, and whether a gear change falls in this stretch
+const nvE = { rpm: 0, thr: 0, boost: 0, cut: 0, ci: -1 };
+function nvEngine(v, ta) {
+  const H = v.o.hist, n = H.length;
+  let i = Math.min(v.acur, n - 1);
+  while (i > 0 && H[i][0] > ta) i--;
+  while (i < n - 1 && H[i + 1][0] <= ta) i++;
+  v.acur = i;
+  const a = H[i], b = i < n - 1 ? H[i + 1] : a, u = b === a ? 0 : clamp((ta - a[0]) / Math.max(1e-3, b[0] - a[0]), 0, 1), fa = a[11] | 0, fb = b[11] | 0;
+  nvE.thr = lerp((fa >> 2) & 7, (fb >> 2) & 7, u) / 7; nvE.boost = lerp((fa >> 5) & 7, (fb >> 5) & 7, u) / 7;
+  nvE.cut = b !== a && fb & 256 ? 1 : 0; nvE.ci = i;
+  if (a[12] >= 0 && b[12] >= 0) nvE.rpm = lerp(a[12], b[12], u);
+  else {
+    const P0 = v.P, E = P0.engine, w = Math.hypot(lerp(a[5], b[5], u), lerp(a[6], b[6], u)) / C.RW * P0.final * 60 / (2 * Math.PI), at = g => w * P0.ratios[g - 1];
+    while (v.gear < P0.ratios.length && at(v.gear) > E.redline - 220) v.gear++;
+    while (v.gear > 1 && at(v.gear) < E.redline * 0.52 && at(v.gear - 1) < E.redline - 900) v.gear--;
+    nvE.rpm = Math.max(E.idle, at(v.gear), v.gear === 1 && nvE.thr > 0.05 ? 1400 + nvE.thr * 2600 : 0); // the clutch slips on launch
+  }
+  return nvE;
+}
+function nvUpdate(v, d, dt, t, wt, crx, crz, onboard) {
+  const o = v.o, p = o.pose, H = o.hist, E = v.P.engine, V = v.V, newest = H[H.length - 1][0];
+  // how far behind the newest sample to play: the biggest recent gap, eased down slowly
+  const lag = wt - newest;
+  v.lag = lag > v.lag ? lag : v.lag + (lag - v.lag) * Math.min(1, dt);
+  const e = nvEngine(v, Math.min(newest, wt - v.lag - 0.02)), rpm = e.rpm, thr = e.thr, boost = e.boost;
+  v.rpm = rpm; v.thr = thr;
+  // ---- where it is for the listener ----
+  const dx = p.x - cam.pos[0], dz = p.z - cam.pos[2];
+  const vr = ((p.vx - A.camVel[0]) * dx + (p.vz - A.camVel[2]) * dz) / d;
+  v.dopp += (clamp(343 / (343 + vr), 0.82, 1.22) - v.dopp) * Math.min(1, dt * 6);
+  v.d = d; v.gk = (d <= 9 ? 1 : Math.pow(9 / d, 0.9)) * clamp((NV_OFF - d) / 30, 0, 1) * NV_K * (onboard ? 0.5 : 1);
+  v.bus.gain.setTargetAtTime(v.gk, t, 0.05);
+  v.lp.frequency.setTargetAtTime(clamp(20000 / (1 + Math.pow(d / 40, 1.5)), 900, 20000) * (onboard ? 0.3 : 1), t, 0.06);
+  if (v.pan.pan) v.pan.pan.setTargetAtTime(clamp((dx * crx + dz * crz) / d * 0.9, -0.85, 0.85), t, 0.05);
+  // ---- the engine ----
+  if (v.en) {
+    const pr = v.en.parameters;
+    pr.get('rpm').setTargetAtTime(rpm * v.dopp, t, 0.03);
+    pr.get('load').setTargetAtTime(thr, t, 0.04);
+    pr.get('boost').setTargetAtTime(boost, t, 0.05);
+    pr.get('cut').setTargetAtTime(e.cut, t, 0.006);
+    pr.get('pop').setTargetAtTime((V.antilag > 0 ? 0.1 : 0.04) + (v.alT > 0 ? 0.25 * V.antilag : 0), t, 0.05);
+    v.eg.gain.setTargetAtTime(v.EN.gain * (0.75 + rpm / E.redline * 0.35) * (1.45 - 0.45 * thr), t, 0.03);
+  } else {
+    for (const q of v.oscs) q.os.frequency.setTargetAtTime(rpm / 60 * q.ord * v.dopp, t, 0.02);
+    v.lpo.frequency.setTargetAtTime(V.lp[0] + thr * (V.lp[1] - V.lp[0]) + rpm * 0.12, t, 0.03);
+    v.eg.gain.setTargetAtTime(0.06 + thr * 0.12 + rpm / E.redline * 0.05, t, 0.025);
+  }
+  v.tw.frequency.setTargetAtTime((1500 + boost * 5400) * v.dopp, t, 0.05);
+  v.tg.gain.setTargetAtTime(boost * V.turbo * (0.4 + thr), t, 0.06);
+  // lifts and gear changes, as on your car: the dump valve lets go of the pressure built while the throttle was held,
+  // and anti-lag cars bang on the overrun
+  const bang = size => { if (v.en) v.en.port.postMessage({ bang: size }); };
+  const dump = k => { if (V.flutter > 0.5) sfx.flutter(v.press * k, boost, v.bus); else sfx.bov(v.press * k, v.bus); v.press *= 1 - k; v.dumpT = 0.5; };
+  const held = v.hold;
+  if (thr > 0.6) { v.hold = held + dt; v.press += (boost - v.press) * Math.min(1, dt * 2.5); }
+  else { if (thr < 0.3) v.hold = 0; v.press = Math.max(0, v.press - dt * 1.5); }
+  v.dumpT -= dt;
+  const canDump = v.press > 0.3 && held > 0.3 && v.dumpT <= 0;
+  v.pk = Math.max(thr, v.pk - dt * 2.5);
+  if (v.pk > 0.5 && thr < 0.1) {
+    v.pk = 0; v.hold = 0;
+    if (canDump) dump(1);
+    if (V.antilag > 0 && rpm > 3800) v.alT = 0.5 + V.antilag * 0.8;
+    else if (rpm > 5000) bang(0.45);
+  }
+  if (v.alT > 0) {
+    v.alT -= dt;
+    if (thr < 0.1 && rpm > 2800) { if (V.antilag > 0) { v.popT -= dt; if (v.popT <= 0) { bang(Math.random() < 0.3 ? 1 : 0.6); v.popT = 0.06 + Math.random() * 0.14 / V.antilag; } } }
+    else v.alT = 0;
+  }
+  if (e.cut && v.cutI !== e.ci) {
+    v.cutI = e.ci;
+    if (V.antilag > 0.5 && Math.random() < 0.7) bang(Math.random() < 0.4 ? 1 : 0.6);
+    if (v.P.gearbox.type !== 'Sequential' && canDump) dump(0.55);
+  }
+  // ---- their tyres, close by: stones under them on gravel and snow, a hiss when they slide on tarmac ----
+  if (v.cr) {
+    const tar = !!W.st.tarmac, frost = W.st.kind === 'frost', spd = Math.hypot(p.vx, p.vz), slip = Math.abs(p.vx * Math.cos(p.h) - p.vz * Math.sin(p.h));
+    const near = clamp((70 - d) / 30, 0, 1), hiss = tar ? clamp((slip - 2.5) / 7, 0, 1) : 0;
+    const rate = near > 0 ? (tar ? (hiss > 0 ? 2600 : 0) : clamp(spd * 14 + slip * 90, 0, 2600)) : 0;
+    const pr = v.cr.parameters;
+    pr.get('rate').setTargetAtTime(rate, t, 0.05);
+    pr.get('decay').setTargetAtTime(frost ? 0.007 : 0.0025, t, 0.1);
+    v.crbp.frequency.setTargetAtTime(tar ? 2400 : frost ? 900 : 1900, t, 0.1);
+    v.crbp.Q.setTargetAtTime(tar ? 3 : 0.8, t, 0.1);
+    v.crg.gain.setTargetAtTime(rate > 0 ? near * (tar ? hiss * 0.3 : frost ? 0.5 : 0.65) : 0, t, 0.05);
+  }
+}
+function netAudio(dt, t, crx, crz, onboard) {
+  const nv = A.nv || (A.nv = new Map()), nr = net.race;
+  const on = !!(nr && nr.inRun && nr.greenL && (mode === 'race' || mode === 'countdown' || mode === 'done'));
+  // who is heard: the nearest NV_MAX in range (a voice that is playing holds on a little further out, and against
+  // a newcomer that is only slightly nearer)
+  const pick = [];
+  if (on) for (const o of nr.others.values()) {
+    if (o.out || !o.hist.length || o.pose.x === undefined) continue;
+    const d = Math.max(0.5, Math.hypot(o.pose.x - cam.pos[0], o.pose.y + 0.6 - cam.pos[1], o.pose.z - cam.pos[2])), v = nv.get(o), live = v && !v.end;
+    if (d < (live ? NV_OFF : NV_ON)) pick.push({ o, d, k: live ? d * 0.85 : d });
+  }
+  pick.sort((a, b) => a.k - b.k);
+  if (pick.length > NV_MAX) pick.length = NV_MAX;
+  // the rest fade out and are taken apart
+  for (const [o, v] of nv) {
+    if (pick.some(q => q.o === o)) continue;
+    if (!v.end) { v.end = t + 0.6; v.bus.gain.setTargetAtTime(0, t, 0.12); }
+    else if (t >= v.end) { freeNodes(v.nodes); nv.delete(o); }
+  }
+  if (!pick.length) return;
+  const wt = netWT();
+  for (const q of pick) {
+    let v = nv.get(q.o);
+    if (v && !v.wk && A.wk) { freeNodes(v.nodes); v = null; } // built while the worklet was still loading
+    if (!v) { v = nvBuild(q.o); nv.set(q.o, v); }
+    v.end = 0;
+    nvUpdate(v, q.d, dt, t, wt, crx, crz, onboard);
+  }
 }
 const sfx = {
   click() {
@@ -2185,8 +2360,8 @@ const sfx = {
   },
   // blow-off valve: "pssshh". The valve opens with a soft puff, then the boost vents as a broad hiss that
   // settles slightly lower as the pressure bleeds off (no resonant sweep - that reads as a whip)
-  bov(amt) {
-    const c = A.ctx; if (!c) return; const t = c.currentTime + 0.01, k = clamp(amt, 0.3, 1.2), dur = 0.3 + k * 0.4;
+  bov(amt, dest) {
+    const c = A.ctx; if (!c) return; const t = c.currentTime + 0.01, k = clamp(amt, 0.3, 1.2), dur = 0.3 + k * 0.4, out = dest || A.car;
     const s = c.createBufferSource(); s.buffer = A.noise;
     const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.Q.value = 0.5;
     hp.frequency.setValueAtTime(1700, t); hp.frequency.linearRampToValueAtTime(1100, t + dur);
@@ -2195,16 +2370,16 @@ const sfx = {
     const g = c.createGain();
     g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.26 * k, t + 0.03);
     g.gain.setValueAtTime(0.26 * k, t + 0.06); g.gain.setTargetAtTime(0.0001, t + 0.06, dur / 3.2);
-    s.connect(hp); hp.connect(pk); pk.connect(lp); lp.connect(g); g.connect(A.car); s.start(t, Math.random() * 1.2); s.stop(t + dur + 0.5);
-    this.burst(t, 0.1, 'bandpass', 650, 0.9, 0.16 * k, 0.012);
+    s.connect(hp); hp.connect(pk); pk.connect(lp); lp.connect(g); g.connect(out); s.start(t, Math.random() * 1.2); s.stop(t + dur + 0.5);
+    this.burst(t, 0.1, 'bandpass', 650, 0.9, 0.16 * k, 0.012, out);
   },
   blowoff(amt) { this.bov(amt); },
   // compressor surge (no valve): the trapped boost can't get out, so it pushes back out of the turbo's inlet in puffs
   // as the compressor stalls and recovers - "stu-tu-tu-tu". It's air, not parts: a rush that never fully stops,
   // swelling and dipping in soft rounded pulses that come slower and fainter as the turbo spins down, with the
   // turbo's whistle winding down underneath
-  flutter(amt, boost) {
-    const c = A.ctx; if (!c) return;
+  flutter(amt, boost, dest) {
+    const c = A.ctx; if (!c) return; const out = dest || A.car;
     const k = clamp(amt, 0.3, 1.2), t0 = c.currentTime + 0.01, R = 1500, dur = 0.5 + 0.45 * k;
     const L = Math.ceil(dur * R) + 1, ea = new Float32Array(L), ew = new Float32Array(L), ef = new Float32Array(L);
     let ph = 0, rate = 19 + 6 * k, jit = 1;
@@ -2222,7 +2397,7 @@ const sfx = {
       if (ph >= 1) { ph -= 1; jit = 0.92 + Math.random() * 0.16; }
       rate = Math.max(9, rate * Math.exp(-1.1 / R)); // the surge slows as the wheel loses speed
     }
-    const env = c.createGain(); env.gain.setValueCurveAtTime(ea, t0, dur); env.connect(A.car);
+    const env = c.createGain(); env.gain.setValueCurveAtTime(ea, t0, dur); env.connect(out);
     const src = c.createBufferSource(); src.buffer = A.noise;
     // the air: a broad rush (highpassed so it isn't a rumble), opening up at each puff, with a soft hollow
     // colour from the inlet pipe and a little low "whoomph" body
@@ -2235,7 +2410,7 @@ const sfx = {
     const gb = c.createGain(); gb.gain.value = 0.55;
     src.connect(body); body.connect(gb); gb.connect(env);
     // the whistle winding down, only lightly touched by the pulses
-    const wenv = c.createGain(); wenv.gain.setValueCurveAtTime(ew, t0, dur); wenv.connect(A.car);
+    const wenv = c.createGain(); wenv.gain.setValueCurveAtTime(ew, t0, dur); wenv.connect(out);
     const w = c.createOscillator(); w.type = 'sine'; const wf = 1500 + clamp(boost == null ? amt : boost, 0, 1) * 5400;
     w.frequency.setValueAtTime(wf, t0); w.frequency.exponentialRampToValueAtTime(wf * 0.5, t0 + dur);
     const gw = c.createGain(); gw.gain.value = 0.035; w.connect(gw); gw.connect(wenv);
@@ -2435,6 +2610,7 @@ function updateAudio(dt) {
   A.car.gain.setTargetAtTime(dk, t, 0.05);
   A.carLp.frequency.setTargetAtTime(clamp(20000 / (1 + Math.pow(dist / 40, 1.5)), 900, 20000), t, 0.06);
   if (A.carPan.pan) A.carPan.pan.setTargetAtTime(clamp((ldx * crx + ldz * crz) / dist * 0.9, -0.85, 0.85), t, 0.05);
+  netAudio(dt, t, crx, crz, onboard);
   if (Vc.wk) {
     const pr = Vc.prm;
     pr.get('rpm').setTargetAtTime(rpm * A.dopp, t, 0.012);
