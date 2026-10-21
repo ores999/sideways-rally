@@ -51,3 +51,9 @@ alter table public.times add constraint times_stage_check check (stage ~ '^(pine
 -- the server refuses its rows and the game keeps them on each browser.
 alter table public.times drop constraint if exists times_car_check;
 alter table public.times add constraint times_car_check check (car in ('foca', 'impressa', 'lancha', 'delta', 'pejo', 'kwattro', 'selica', 'saveiro', 'f1'));
+
+-- 2026-10 · Monaco's endless laps: every lap goes on the board under '<stage>-lap' ('monaco-lap', 'monaco-r-night-lap'),
+-- a table of its own. Lets those keys through the stage check; until this runs the server refuses lap rows (sent in
+-- a request of their own) and the game keeps them on each browser.
+alter table public.times drop constraint if exists times_stage_check;
+alter table public.times add constraint times_stage_check check (stage ~ '^(pine|frost|mesa|forest|city|monaco)(-r)?(-night|-rain)?$' or stage ~ '^daily-[0-9]{8}$' or stage ~ '^monaco(-r)?(-night|-rain)?-lap$');

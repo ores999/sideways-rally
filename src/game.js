@@ -86,10 +86,17 @@ const rallyOn = () => !!(rally && !rally.done && rally.playing);
 let raceT = 0, cdT = 0, cdShown = -1, finishT = 0, doneT = 0, splitsHit = [], ghostRec = [], ghostTimer = 0;
 // Endless laps (settings.laps) on a closed circuit (W.T.lap, Monaco): no finish, the clock runs per lap from the line,
 // the best lap per road and car is kept (store 'lap.<key>.<car>': time and where the car was every 0.05 s, for the
-// delta). Laps stay on this browser: no board, no medals, no challenge links. Never in rallies or online rooms.
+// delta). Every lap goes on the board (and online) under its own key, `<stage key>-lap` (lapKeyOf): a flying lap
+// isn't comparable with the one-lap stage from the grid, so laps get a table of their own. No medals, no challenge
+// links, no No. 1. Never in rallies or online rooms.
 const lap = { n: 0, t0: 0, next: 0, best: null, last: null, rec: [], list: [] };
 const lapsOn = () => !!(settings.laps && W && W.T.lap && !rallyOn() && !netRun());
 const lapKey = (key, car) => `lap.${key}.${car}`;
+// board keys: a stage key, or a stage key + '-lap' for the endless-laps table
+const lapKeyOf = key => key + '-lap', isLapKey = k => /-lap$/.test(k), boardDef = k => C.stageDef(String(k).replace(/-lap$/, ''));
+const boardTitle = k => C.stageTitle(boardDef(k)) + (isLapKey(k) ? ' · Laps' : '');
+const lapsMenu = () => !!(settings.laps && settings.stage !== 'daily' && C.STAGES[settings.stage].street);
+const curBoard = () => mapKey(curKeyMenu()) + (lapsMenu() ? '-lap' : '');
 function lapBest(key, car) {
   const b = store.get(lapKey(key, car), null);
   return b && b.t > 0 && Array.isArray(b.s) ? { t: b.t, sArr: Float32Array.from(b.s, v => v / 10) } : null;
@@ -102,6 +109,7 @@ function onLap() {
     store.set(lapKey(W.st.key, P.id), { t, s: lap.rec.map(v => Math.round(v * 10)), at: Date.now() });
   }
   lap.rec = [];
+  if (settings.name && t > 20 && t < 1200 && boardAdd([{ n: settings.name, k: lapKeyOf(W.st.key), c: P.id, t, s: [], d: Date.now() }])) onlineSync();
   const d = old ? fmtD(t - old.t) : '';
   center(`<div class="mid yel">Lap ${lap.n}${isBest ? ' · best' : ''}</div><div class="sub ${!old || t <= old.t ? 'ahead' : 'behind'}">${fmt(t)}${d ? ` <span style="font-size:.6em;color:var(--mute)">${d}</span>` : ''}</div>`, 2.8);
   sfx.beep(990, 0.09); if (isBest) setTimeout(() => sfx.beep(1320, 0.18), 120);
@@ -203,7 +211,7 @@ function updateSummary() {
     $('selSummary').textContent = `${it.name} · ${(r ? carById(r.car) : C.CARS[settings.car]).name}`;
     $('startBtn').firstChild.textContent = r ? `Continue rally · SS${r.idx + 1} ` : 'Start rally ';
   } else {
-    const laps = settings.laps && settings.stage !== 'daily' && C.STAGES[settings.stage].street, lb = laps && lapBest(curKeyMenu(), C.CARS[settings.car].id);
+    const laps = lapsMenu(), lb = laps && lapBest(curKeyMenu(), C.CARS[settings.car].id);
     $('selSummary').textContent = `${C.stageTitle(C.stageDef(curKeyMenu()))} · ${C.CARS[settings.car].name}${laps ? ' · endless laps' + (lb ? ', best ' + fmt(lb.t) : '') : ''}`;
     $('startBtn').firstChild.textContent = laps ? 'Start laps ' : 'Start stage ';
   }
@@ -410,7 +418,7 @@ function selectStage(i) {
 }
 for (const b of $('optDir').children) b.addEventListener('click', () => { settings.rev = b.dataset.v === 'rev'; selectStage(settings.stage); });
 for (const b of $('optCond').children) b.addEventListener('click', () => { settings.cond = b.dataset.v; selectStage(settings.stage); });
-for (const b of $('optLaps').children) b.addEventListener('click', () => { settings.laps = b.dataset.v === 'laps'; saveSettings(); renderStageList(); });
+for (const b of $('optLaps').children) b.addEventListener('click', () => { settings.laps = b.dataset.v === 'laps'; saveSettings(); timesStage = null; renderStageList(); renderTimes(); });
 // per-car customisation (sound only): what the turbo does on a lift, and the exhaust
 function getTune(id) {
   const V = VOICES[id] || VOICES.foca, t = (settings.tune || {})[id] || {};
@@ -822,8 +830,8 @@ function onlineHeaders(json) {
   return h;
 }
 // the board groups by road (stage and direction), not by conditions: day, night and rain share a table
-const mapKey = k => String(k).replace(/-(night|rain)$/, '');
-const mapVariants = m => /^daily-/.test(m) ? [m] : [m, m + '-night', m + '-rain'];
+const mapKey = k => String(k).replace(/-(night|rain)(?=(-lap)?$)/, '');
+const mapVariants = m => { if (/^daily-/.test(m)) return [m]; const lp = isLapKey(m) ? '-lap' : '', b = lp ? m.slice(0, -4) : m; return [b, b + '-night', b + '-rain'].map(x => x + lp); };
 async function onlineFetch(key) {
   const c = online.cache.get(key);
   if (c && performance.now() - c.at < 30000) return c.rows;
@@ -853,12 +861,12 @@ async function ghostDecode(str) {
 function ownGhost(e) { const r = store.get(pbKey(e.k, e.c), null); return r && r.q && Math.abs(r.t - e.t) < 0.005 ? r.q : null; }
 // the stages the server's check takes (online/supabase.sql). Times on any other stage stay on this browser until the
 // server is migrated: one refused row fails the whole batch, and a 400 reads as "no ghost column"
-const ONLINE_STAGES = /^(pine|frost|mesa|forest|monaco)(-r)?(-night|-rain)?$|^daily-\d{8}$/;
+const ONLINE_STAGES = /^(pine|frost|mesa|forest|monaco)(-r)?(-night|-rain)?$|^daily-\d{8}$|^monaco(-r)?(-night|-rain)?-lap$/;
 async function onlineSync() {
   if (!online.on || !settings.name || syncing) return;
   const sent = new Set(store.get('sent', [])), sentG = new Set(store.get('sentG', [])), me = settings.name.toLowerCase(), id = e => e.n.toLowerCase() + '|' + e.k + '|' + e.c + '|' + e.t.toFixed(3);
   const withG = !online.noGhost;
-  const all = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && ONLINE_STAGES.test(e.k) && !apart(carById(e.c)) && (!sent.has(id(e)) || (withG && !sentG.has(id(e)) && ownGhost(e))));
+  const all = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && ONLINE_STAGES.test(e.k) && !isLapKey(e.k) && !apart(carById(e.c)) && (!sent.has(id(e)) || (withG && !sentG.has(id(e)) && ownGhost(e))));
   const todo = all.slice(0, withG ? 25 : 200);
   if (!todo.length) { syncApart(sent, id); return; }
   syncing = true;
@@ -885,14 +893,16 @@ async function onlineSync() {
 // The cars kept apart (the Saveiro, the F1) send their times in requests of their own, one per car, and without
 // ghosts (so the No. 1 ghost query, fastest row with a ghost, never lands on one): a server whose car check doesn't
 // list a car yet (online/supabase.sql not run) refuses its rows, and that must not hold back anyone else's times.
-// A refused car is left alone for the session (online.noCar).
+// A refused car is left alone for the session (online.noCar). Laps go the same way, apart from the stage times
+// (a server whose stage check has no '-lap' keys yet refuses them), in groups of their own per apart car.
 async function syncApart(sent, id) {
   if (!settings.name) return;
   const me = settings.name.toLowerCase();
   online.noCar = online.noCar || new Set();
-  const all = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && ONLINE_STAGES.test(e.k) && apart(carById(e.c)) && !online.noCar.has(e.c) && !sent.has(id(e)));
-  for (const car of new Set(all.map(e => e.c))) {
-    const todo = all.filter(e => e.c === car).slice(0, 50);
+  const grp = e => (isLapKey(e.k) ? 'lap|' : '|') + (apart(carById(e.c)) ? e.c : '');
+  const all = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && ONLINE_STAGES.test(e.k) && (apart(carById(e.c)) || isLapKey(e.k)) && !online.noCar.has(grp(e)) && !sent.has(id(e)));
+  for (const car of new Set(all.map(grp))) {
+    const todo = all.filter(e => grp(e) === car).slice(0, 50);
     try {
       const r = await fetch(ONLINE.url.replace(/\/$/, '') + '/rest/v1/times', { method: 'POST', headers: onlineHeaders(true),
         body: JSON.stringify(todo.map(e => ({ name: e.n, stage: e.k, car: e.c, time: +e.t.toFixed(3), splits: (e.s || []).slice(0, 4).map(x => +(+x).toFixed(3)) }))) });
@@ -942,14 +952,14 @@ let timesStage = null, timesCar = 'all';
 function renderTimes() {
   for (const box of [$('gTimes'), $('timesInline')]) {
     box.innerHTML = '';
-    const b = boardAll(), key = mapKey(timesStage || curKeyMenu());
+    const b = boardAll(), key = timesStage || curBoard();
     const head = el('div', 't-head'); head.append(el('h4', null, 'Times'));
     const share = el('button', 'btn', 'Share my times'); share.addEventListener('click', shareTimes); head.append(share);
     const f = el('div', 'filters'), ss = el('select'), cs = el('select');
     ss.setAttribute('aria-label', 'Stage'); cs.setAttribute('aria-label', 'Car');
-    const keys = [...new Set([key, mapKey(curKeyMenu()), ...b.map(e => mapKey(e.k))])].filter(k => C.stageDef(k));
-    keys.sort((a, c) => (a === key ? -1 : c === key ? 1 : 0) || C.stageTitle(C.stageDef(a)).localeCompare(C.stageTitle(C.stageDef(c))));
-    for (const k of keys) { const o = el('option', null, C.stageTitle(C.stageDef(k)) + (/^daily-/.test(k) ? ' · ' + k.slice(12, 14) + '/' + k.slice(10, 12) : '')); o.value = k; o.selected = k === key; ss.append(o); }
+    const keys = [...new Set([key, curBoard(), mapKey(curKeyMenu()), ...b.map(e => mapKey(e.k))])].filter(k => boardDef(k));
+    keys.sort((a, c) => (a === key ? -1 : c === key ? 1 : 0) || boardTitle(a).localeCompare(boardTitle(c)));
+    for (const k of keys) { const o = el('option', null, boardTitle(k) + (/^daily-/.test(k) ? ' · ' + k.slice(12, 14) + '/' + k.slice(10, 12) : '')); o.value = k; o.selected = k === key; ss.append(o); }
     for (const [v, t] of [['all', 'All cars'], ...C.CARS.map(c => [c.id, shortCar(c.id)])]) { const o = el('option', null, t); o.value = v; o.selected = v === timesCar; cs.append(o); }
     ss.addEventListener('change', () => { timesStage = ss.value; renderTimes(); });
     ss.title = 'Day, night and rain runs of a stage share its table';
@@ -966,7 +976,7 @@ function renderTimes() {
     if (rival && !isBonus(P) && mapKey(loadedKey) === key && (timesCar === 'all' || timesCar === P.id)) rows = [...rows, { n: W.st.rival + ' (AI)', k: loadedKey, c: P.id, t: rival.time, ai: 1 }].sort((a, c) => a.t - c.t);
     const note = el('p', 'board-note', online.on ? (online.status === 'error' ? 'Offline: showing this browser\'s times' : oc ? 'Online leaderboard' : 'Loading the online leaderboard…') : 'Times on this browser and from friends\' links');
     box.append(note);
-    if (!rows.length) { box.append(el('p', 'empty', 'No times on this stage yet. Set one, or open a friend\'s link.')); continue; }
+    if (!rows.length) { box.append(el('p', 'empty', isLapKey(key) ? 'No laps on this road yet: run endless laps to set one.' : 'No times on this stage yet. Set one, or open a friend\'s link.')); continue; }
     const tb = el('table', 'tt board'), hr = el('tr');
     ['', 'Driver', 'Car', 'Time', 'Gap'].forEach(h => hr.append(el('th', null, h))); tb.append(hr);
     // the Saveiro's times are listed where they fall, gold and without a place: they never count, so places and gaps
@@ -977,7 +987,7 @@ function renderTimes() {
       const ec = carById(e.c), bonus = apart(ec);
       const tr = el('tr', (isBonus(ec) ? 'bonus ' : '') + (e.ai ? 'ai' : e.n.toLowerCase() === me ? 'me' : ''));
       // night and rain runs share the table with a small tag, so you can see where a time came from
-      const cond = e.k && /-(night|rain)$/.test(e.k) ? C.condName(C.stageDef(e.k)) : '';
+      const cond = e.k && /-(night|rain)(-lap)?$/.test(e.k) ? C.condName(boardDef(e.k)) : '';
       const carTd = el('td', null, shortCar(e.c)); if (cond) carTd.append(el('span', 'cond', cond)); if (bonus) carTd.append(el('span', 'cond nc', isBonus(ec) ? 'doesn\'t count' : 'own class'));
       const first = !bonus && place === 0, d = e.t - lead;
       tr.append(el('td', null, bonus ? '—' : String(++place)), el('td', null, e.n), carTd, el('td', null, fmt(e.t)), el('td', null, first ? '—' : (d < 0 ? '−' : '+') + Math.abs(d).toFixed(2)));
@@ -986,12 +996,12 @@ function renderTimes() {
     box.append(tb);
   }
   // fetch the online table for this road and draw again when it arrives
-  const key = mapKey(timesStage || curKeyMenu());
+  const key = timesStage || curBoard();
   if (online.on) {
     const c = online.cache.get(key);
     // one request at a time per stage: drawing again while it is out must not start (or wait on) another
     if ((!c || performance.now() - c.at >= 30000) && !online.busy.has(key)) onlineFetch(key).then(() => {
-      if ((timesStage || curKeyMenu()) === key) renderTimes();
+      if ((timesStage || curBoard()) === key) renderTimes();
       if (mapKey(curKeyMenu()) === key && mode === 'menu') { if (keepCarAllowed() && curKey() === loadedKey) setupCar(); renderCarList(); }
     });
   }
@@ -1014,7 +1024,7 @@ async function readTimes(text) {
   if (u8[0] & 0x80) { raw = await zip(raw, true); if (!raw) throw new Error('this browser cannot unpack it'); }
   const h = JSON.parse(utf8d.decode(raw)), n = cleanName(h.n);
   if (!Array.isArray(h.e)) throw new Error('no times');
-  const list = h.e.slice(0, 300).filter(r => Array.isArray(r) && C.stageDef(r[0]) && carById(r[1]) && r[2] > 20 && r[2] < 1200).map(r => ({ n, k: r[0], c: r[1], t: r[2], s: [], d: (r[3] || 0) * 1000, f: 1 }));
+  const list = h.e.slice(0, 300).filter(r => Array.isArray(r) && boardDef(r[0]) && carById(r[1]) && r[2] > 20 && r[2] < 1200).map(r => ({ n, k: r[0], c: r[1], t: r[2], s: [], d: (r[3] || 0) * 1000, f: 1 }));
   return { n, added: boardAdd(list), total: list.length };
 }
 // ---------- driver name ----------
