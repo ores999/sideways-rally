@@ -397,7 +397,8 @@ const hkey = (cx, cz) => (cx + 4096) + (cz + 4096) * 8192;
 function buildTrack(st) {
   const k = [], notesRaw = [], ev = [], grades = [];
   let L, px, pz, ph, py, ks;
-  if (st.street) ({ L, px, pz, ph, py, ks } = streetRoad(st, notesRaw));
+  let Lst, lap = 0;
+  if (st.street) ({ L, px, pz, ph, py, ks, Lst, lap } = streetRoad(st, notesRaw));
   else {
   let s = 0;
   for (const seg of st.segs) {
@@ -413,7 +414,7 @@ function buildTrack(st) {
     else if (t === 'J' || t === 'C') ev.push({ type: t, s, h: seg[1] });
     else if (t === 'G') grades.push({ s, g: seg[1] });
   }
-  L = k.length;
+  L = Lst = k.length;
   ks = blur(blur(k, st.kBlur || 6), st.kBlur || 6);
   px = new Float64Array(L + 1); pz = new Float64Array(L + 1); ph = new Float64Array(L + 1); py = new Float64Array(L + 1);
   let x = 0, z = 0, h = st.h0 || 0;
@@ -481,8 +482,8 @@ function buildTrack(st) {
     nt.dist = (nx && gap > 95) ? Math.min(500, Math.round(gap / 50) * 50) : 0;
   }
   const T = { st, L, n, X, Z, Y, H, K, hash, notes, hw: st.hw, events: evs,
-    bbox: { minX, maxX, minZ, maxZ }, spawnS: 14, startS: 22, finishS: L - 45,
-    splits: [Math.round(L * 0.34), Math.round(L * 0.67)] };
+    bbox: { minX, maxX, minZ, maxZ }, spawnS: 14, startS: 22, finishS: Lst - 45,
+    splits: [Math.round(Lst * 0.34), Math.round(Lst * 0.67)], lap };
   T.walls = walls;
   return T;
 }
@@ -620,10 +621,14 @@ function loopNear(LP, x, z, r) {
 }
 // the stage's share of the lap, and pace notes read off the curvature: a run over 1/150 (carried on while over 1/300),
 // rated by its tightest radius ('Q' a tight corner, 'H' a tight one that turns back on itself)
+// The road goes on past the stage's end, round the gap and LAP_RUN metres into the next lap (before the start for a
+// reversed run, which the flip turns into after its end), so a run can go round lap after lap (game.js lap mode
+// moves the car back one lap as it passes); `Lst` is the stage's own length, which its start, splits and finish use.
+const LAP_RUN = 400;
 function streetRoad(st, notesRaw) {
-  const LP = streetLoop(st), L = LP.N - st.street.gap;
+  const LP = streetLoop(st), N = LP.N, Lst = N - st.street.gap, A = st.rev ? -(st.street.gap + LAP_RUN) : 0, L = Lst + st.street.gap + LAP_RUN;
   const px = new Float64Array(L + 1), pz = new Float64Array(L + 1), ph = new Float64Array(L + 1), py = new Float64Array(L + 1);
-  for (let i = 0; i <= L; i++) { px[i] = LP.X[i]; pz[i] = LP.Z[i]; py[i] = LP.Y[i]; ph[i] = i ? ph[i - 1] + wrapA(LP.H[i] - LP.H[i - 1]) : LP.H[0]; }
+  for (let i = 0; i <= L; i++) { const q = ((i + A) % N + N) % N; px[i] = LP.X[q]; pz[i] = LP.Z[q]; py[i] = LP.Y[q]; ph[i] = i ? ph[i - 1] + wrapA(LP.H[q] - LP.H[((q - 1) % N + N) % N]) : LP.H[q]; }
   const k = new Float64Array(L); for (let i = 0; i < L; i++) k[i] = ph[i + 1] - ph[i];
   const ks = blur(k, 3);
   for (let i = 0; i < L;) {
@@ -638,7 +643,7 @@ function streetRoad(st, notesRaw) {
     }
     i = j;
   }
-  return { L, px, pz, ph, py, ks };
+  return { L, px, pz, ph, py, ks, Lst, lap: N };
 }
 // Water (harbour and sea) on a grid: W[cell] = 1 under water, D = metres from a dry cell to the water (for the
 // hillside). `ext` metres round the loop, `cell` metres a cell; the outline is filled row by row.
@@ -1226,6 +1231,13 @@ function locate(T, c) {
   c.s = c.rd.s; c.lat = c.rd.lat;
 }
 
+// lap mode on a closed circuit (T.lap metres round): once the car is well into the next lap it is moved back one lap
+// along the road, to the same place in the world, so nothing on screen moves. True when it was.
+function lapWrap(W, c) {
+  const T = W.T; if (!T.lap || c.s < T.startS + T.lap + 150) return false;
+  c.idx = Math.max(0, c.idx - Math.round(T.lap / 2)); locate(T, c); return true;
+}
+
 function groundAt(W, c, x, z) {
   // uses the car's current road frame (valid within a few meters)
   const T = W.T, rd = c.rd;
@@ -1694,7 +1706,7 @@ function measureCar(P) {
 }
 CARS.forEach(measureCar);
 
-return { TUNE, CARS, STAGES, CONDS, stageDef, stageKey, stageTitle, condName, dailyKey, selfClearance, RADIUS, RW, carStats, torqueAt, engineCurve, measureCar, buildWorld, buildTrack, makeNoise, rng, sampleAt, roadYAt, terrainH, nearest, project,
+return { TUNE, CARS, STAGES, CONDS, stageDef, stageKey, stageTitle, condName, dailyKey, selfClearance, RADIUS, RW, carStats, torqueAt, engineCurve, measureCar, buildWorld, buildTrack, lapWrap, makeNoise, rng, sampleAt, roadYAt, terrainH, nearest, project,
   makeCar, resetCar, stepCar, locate, groundAt, simulateRun, prepAI, aiDrive, clamp, lerp, sstep, wrapA, hkey, CELL,
   STREET, streetLoop, streetPads, loopSide, loopNear, waterMask, wetAt, shoreDist, hillAt, unpackPts, rayWalls };
 })();
