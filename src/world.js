@@ -48,7 +48,7 @@ const VIS = {
     sunEl: 46, sunAz: 200, sunCol: '#fff3df', sunI: 3.0, sky: '#8fb4dc', skyI: 0.82, gnd: '#7a7468', gndI: 0.5, exp: 0.96,
     fog: [160, 1100], road: ['#4b4b4f', '#3b3b3f', '#6f6b67'], icy: 0, lines: 2, tt: [1.0, 1.0, 1.0], rays: 0.3,
     ground: ['#4a4a4d', '#454549', '#525256', '#3e3e42'], verge: '#8c877e', rock: '#8f887c', walk: '#b3a894', kerb: '#bdb5a6', roof: '#8a6f5e',
-    sea: '#0f4a5e', seabed: '#2f4e50', hill: ['#8a8068', '#9a8b72', '#7a7a5c'], scrub: '#4a5a30',
+    sea: '#0f4a5e', seabed: '#2f4e50', hill: ['#7d7b66', '#8b8571', '#69714f'], scrub: '#4a5a30',
     dust: [0.6, 0.6, 0.6], mark: [0.04, 0.04, 0.05, 0.55], far: '#8a96a2', skirt: '#4c4d50',
     grade: { lift: [0.004, 0.008, 0.016], gain: [1.03, 1.0, 0.96], sat: 1.06, con: 0.12, vig: 0.22, bloom: 0.06, thr: 1.15 },
   },
@@ -196,6 +196,7 @@ function terrainMesh(W) {
   const verge = lin(V.verge), rock = lin(V.rock);
   const strata = V.strata ? V.strata.map(lin) : null;
   const hw = T.hw, gardens = W.O && W.O.gardens && W.O.gardens.length ? W.O.gardens : null;
+  const pads = st.street ? C.streetPads(st, C.streetLoop(st)) : null;
   for (let j = 0; j < nzc; j++) for (let i = 0; i < nx; i++) {
     const k = j * nx + i, x = TR.x0 + i * cell, z = TR.z0 + j * cell, y = H[k];
     pos[k * 3] = x; pos[k * 3 + 1] = y; pos[k * 3 + 2] = z;
@@ -217,6 +218,8 @@ function terrainMesh(W) {
       if (y >= 0.5) c = mixc(c, mixc(lin('#bfae92'), lin('#a89a82'), n2), C.sstep(0.3, 0.55, slope));
       // the gardens (Boulingrins, Petite Afrique) are lawns
       if (gardens && gardens.some(G => padIn(G, x, z))) c = mixc(lin('#4d6a2c'), lin('#66833a'), n2 * 0.7 + n1 * 0.3);
+      // the square and the pool's surroundings are paved
+      else if (pads && pads.some(p => padIn(p.P, x, z))) c = mixc(lin('#b9b0a0'), lin('#a8a092'), n1);
     } else if (st.kind === 'city') {
       c = mixc(pal[0], pal[1], n1); c = mixc(c, pal[2], n3 * 0.5); c = mixc(c, pal[3], Math.max(0, n2 - 0.6) * 1.2);
     } else if (st.kind === 'pine') {
@@ -301,7 +304,8 @@ function terrainMesh(W) {
 
 function roadMeshes(W) {
   const { T, TR, st } = W; const V = visOf(st);
-  const hw = T.hw, n = T.n;
+  // a circuit's road runs on into the next lap (core.js streetRoad); that part is already drawn once
+  const hw = T.hw, n = T.lap ? Math.min(T.n, Math.ceil((T.lap + 2) / 2) + 1) : T.n;
   // road ribbon (3 columns so u spans -1..1)
   const P = [], Cc = [], U = [];
   for (let i = 0; i < n; i++) {
@@ -1605,7 +1609,7 @@ function streetMesh(W) {
   const buckets = new Map(), B = 64;
   const geoAt = (x, z) => { const k = Math.floor(x / B) + ',' + Math.floor(z / B); let g = buckets.get(k); if (!g) buckets.set(k, g = new Geo()); return g; };
   const Ks = new Float64Array(N); for (let s = 0; s < N; s++) { let a = 0; for (let q = -6; q <= 6; q++) a += LP.K[(s + q + N) % N]; Ks[s] = a / 13; }
-  const reach = (s, sd) => { const k = Ks[s] * -sd; return k > 0 ? Math.min(X.line, 0.85 / k) : X.line; }; // lat > 0 is right; a left turn's inside is the left
+  const reach = (s, sd) => { const k = Ks[s] * -sd, e = streetEdge(LP, s, sd), w = e.oy != null && e.oy < LP.Y[s] + X.slab - 0.7 ? e.w : X.line; return k > 0 ? Math.min(w, 0.85 / k) : w; }; // lat > 0 is right; a left turn's inside is the left
   for (const sd of [-1, 1]) for (let s = 0; s < N; s += 2) {
     const s2 = (s + 2) % N, r1 = reach(s, sd), r2 = reach(s2, sd);
     const k1 = C.loopSide(LP, s, sd * X.kerb), k2 = C.loopSide(LP, s2, sd * X.kerb), o1 = C.loopSide(LP, s, sd * Math.max(X.kerb + 0.3, r1)), o2 = C.loopSide(LP, s2, sd * Math.max(X.kerb + 0.3, r2));
@@ -1617,7 +1621,7 @@ function streetMesh(W) {
   for (const b of O.bldgs) {
     const sty = b.classic ? RIVIERA[3] : RIVIERA[rivieraFor(b.floors, R())];
     const tint = scalec(lin(sty.tints[(R() * sty.tints.length) | 0]), 0.92 + R() * 0.12);
-    buildingGeo(geoAt(b.pts[0][0], b.pts[0][1]), b.pts, b.base, b.low, b.floors, ['front', 'party', 'back', 'party'], sty, tint, R, roofC);
+    buildingGeo(geoAt(b.pts[0][0], b.pts[0][1]), b.pts, b.base, b.low, b.floors, b.open ? ['front', 'front', 'front', 'front'] : ['front', 'party', 'back', 'party'], sty, tint, R, roofC);
   }
   if (O.lms) landmarkWalls(W, geoAt);
   const p = [], nn = [], cc = [], uu = [], chunks = [];
@@ -1661,6 +1665,17 @@ function streetFurniture(W) {
   for (const sd of [-1, 1]) for (let s = 0; s < N; s += 2) {
     if (inT(s) || inT(s + 2)) continue;
     const ya = LP.Y[s] + X.slab, yb = LP.Y[(s + 2) % N] + X.slab;
+    // another, lower street right below (the Fairmont hairpin's legs): the wall stands where this sidewalk ends
+    const ea = streetEdge(LP, s, sd), eb = streetEdge(LP, s + 2, sd);
+    if (ea.oy != null || eb.oy != null) {
+      const oy = Math.min(ea.oy != null ? ea.oy : ya, eb.oy != null ? eb.oy : yb);
+      if (oy > Math.min(ya, yb) - 0.7) continue;
+      const a = C.loopSide(LP, s, sd * ea.w), b = C.loopSide(LP, s + 2, sd * eb.w), road = C.loopSide(LP, s, 0), lo = oy - 0.4;
+      g.quad([a[0], lo, a[1]], [b[0], lo, b[1]], [b[0], yb + 0.25, b[1]], [a[0], ya + 0.25, a[1]], scalec(stone, 0.9 + 0.2 * ((s * 7919) % 13) / 13), 0.03, [road[0], ya - 2, road[1]]);
+      const a2 = C.loopSide(LP, s, sd * (ea.w - 0.45)), b2 = C.loopSide(LP, s + 2, sd * (eb.w - 0.45));
+      g.quad([a[0], ya + 0.25, a[1]], [b[0], yb + 0.25, b[1]], [b2[0], yb + 0.25, b2[1]], [a2[0], ya + 0.25, a2[1]], cope, 0.03, [a[0], ya - 5, a[1]]);
+      continue;
+    }
     const a = C.loopSide(LP, s, sd * X.line), b = C.loopSide(LP, s + 2, sd * X.line), ta0 = C.loopSide(LP, s, sd * (X.line + 3)), tb0 = C.loopSide(LP, s + 2, sd * (X.line + 3));
     const ta = C.terrainH(TR, ta0[0], ta0[1]), tb = C.terrainH(TR, tb0[0], tb0[1]);
     if (Math.abs(ta - ya) < 0.7 && Math.abs(tb - yb) < 0.7) continue;
@@ -1726,6 +1741,17 @@ function streetFurniture(W) {
     g.quad([a[0], -2, a[1]], [b[0], -2, b[1]], [b[0], tb, b[1]], [a[0], ta, a[1]], qc, 0.03, [a[0] + lx * 3, 0, a[1] + lz * 3]);
   }
   return { g, fence, lights, kerbs };
+}
+// Where two parts of the lap run close at different heights (the Fairmont hairpin's legs), a sidewalk reaches into the
+// other street's: { w } the lateral offset where this street's sidewalk ends (X.line normally) and { oy } the other
+// street's sidewalk height when there is one
+function streetEdge(LP, s, sd) {
+  const X = C.STREET, a = C.loopSide(LP, s, sd * X.line), n = C.loopNear(LP, a[0], a[1], X.line);
+  s = ((s % LP.N) + LP.N) % LP.N;
+  if (n.d >= X.line - 0.5) return { w: X.line };
+  const ds = Math.abs(n.s - s); if (Math.min(ds, LP.N - ds) < 60) return { w: X.line };
+  const D = Math.hypot(LP.X[s] - LP.X[n.s], LP.Z[s] - LP.Z[n.s]);
+  return { w: Math.max(X.kerb + 0.6, Math.min(X.line, D - X.kerb - 0.5)), oy: LP.Y[n.s] + X.slab };
 }
 // the catch fence: a diamond mesh of wire
 function fenceCanvas() {
@@ -2103,12 +2129,11 @@ function landmarkDeco(W) {
       const ox = le.mx - le.nx * (wid / 2 + 3) + ux * t0, oz = le.mz - le.nz * (wid / 2 + 3) + uz * t0, P = (u, v, yy) => [ox + ux * u - uz * v, yy, oz + uz * u + ux * v], hl = len / 2, hw = wid / 2;
       const C4 = [P(-hl, -hw, 0), P(hl, -hw, 0), P(hl, hw, 0), P(-hl, hw, 0)].map(p => [p[0], p[2]]);
       if (!C4.every(([x, z]) => padIn(PL, x, z) && C.loopNear(LP, x, z, 9).d > 8.6)) continue;
-      const yw = y - 0.22, yb = y - dep;
-      water.quad(P(-hl, -hw, yw), P(hl, -hw, yw), P(hl, hw, yw), P(-hl, hw, yw), lin('#3fb0c4'), 0.9, P(0, 0, yw - 5));
-      const S = [[-hl, -hw], [hl, -hw], [hl, hw], [-hl, hw]];
-      for (let i = 0; i < 4; i++) { const [u0, v0] = S[i], [u1, v1] = S[(i + 1) % 4]; g.quad(P(u0, v0, yb), P(u1, v1, yb), P(u1, v1, y), P(u0, v0, y), tile, 0.2, P(0, 0, y)); }
-      g.quad(P(-hl, -hw, yb), P(hl, -hw, yb), P(hl, hw, yb), P(-hl, hw, yb), tile, 0.1, P(0, 0, yb + 5));
-      if (len === 50) for (let k = 1; k < 8; k++) { const v = -hw + k * wid / 8; for (let u = -hl; u < hl; u += 2) { const p = P(u + 1, v, yw + 0.04); obox(g, p[0], p[1], p[2], ux, uz, 1.9, 0.08, 0.1, lane[(u / 2 + 50) & 1], 0.2); } }
+      // the water sits just over the deck (the deck is one slab), with a white coping round it
+      const yw = y + 0.025;
+      water.quad(P(-hl, -hw, yw), P(hl, -hw, yw), P(hl, hw, yw), P(-hl, hw, yw), lin('#3aa9bf'), 0.9, P(0, 0, yw - 5));
+      for (const [u, v, a, bq] of [[0, -hw - 0.3, len + 1.2, 0.6], [0, hw + 0.3, len + 1.2, 0.6], [-hl - 0.3, 0, 0.6, wid], [hl + 0.3, 0, 0.6, wid]]) { const c = P(u, v, y + 0.06); obox(g, c[0], c[1], c[2], ux, uz, a, 0.12, bq, lin('#f2f0ea'), 0.1); }
+      if (len === 50) for (let k = 1; k < 8; k++) { const v = -hw + k * wid / 8; for (let u = -hl; u < hl; u += 2) { const p = P(u + 1, v, yw + 0.03); obox(g, p[0], p[1], p[2], ux, uz, 1.9, 0.06, 0.1, lane[(u / 2 + 50) & 1], 0.2); } }
       else { // diving boards and the platform
         const p = P(hl + 1.5, 0, y);
         obox(g, p[0], y + 5, p[2], ux, uz, 3, 10, 2.5, deck, 0.05);
