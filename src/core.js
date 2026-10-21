@@ -197,6 +197,12 @@ const RADIUS = { 6: 190, 5: 125, 4: 82, 3: 54, 2: 35, 1: 23, H: 12.5, Q: 9 };
 // pontoons (packed: decimetre steps, game axes x east, z south), and the climbs (fraction of the lap, metres)
 const MONACO = {"path": "0,0;-4,-40;-3,-40;-3,-40;-3,-39;-3,-40;-3,-40;-3,-40;-4,-40;-3,-40;-4,-40;-3,-40;-2,-40;-2,-39;-2,-40;-2,-40;-1,-40;-1,-40;0,-40;1,-40;1,-40;2,-40;2,-40;2,-40;3,-40;3,-40;3,-40;4,-40;5,-39;5,-40;6,-40;6,-39;8,-39;8,-40;8,-39;10,-39;10,-38;11,-39;11,-38;12,-38;12,-38;12,-39;12,-38;11,-38;9,-39;8,-39;6,-40;6,-40;6,-39;6,-40;7,-39;8,-39;13,-38;18,-35;27,-30;34,-21;38,-13;39,-8;40,-6;39,-5;40,-5;40,-5;39,-6;40,-5;40,-5;39,-5;40,-6;39,-5;40,-6;40,-5;39,-6;40,-5;40,-6;39,-6;40,-6;39,-6;40,-7;39,-7;39,-8;40,-7;39,-9;39,-8;39,-10;38,-10;39,-10;39,-10;38,-11;39,-11;38,-11;38,-11;39,-12;38,-11;39,-11;38,-12;38,-11;39,-12;38,-11;38,-12;39,-11;38,-11;39,-11;38,-11;39,-10;38,-11;39,-11;38,-10;39,-11;39,-10;39,-9;39,-8;39,-8;39,-6;40,-6;40,-5;40,-4;39,-5;40,-4;40,-5;40,-4;39,-4;40,-4;40,-4;40,-5;39,-8;39,-10;38,-12;37,-14;37,-15;36,-17;37,-17;36,-17;36,-18;36,-17;36,-17;36,-18;36,-17;36,-17;36,-18;36,-17;36,-18;36,-17;36,-17;37,-17;36,-16;37,-15;38,-13;38,-13;38,-12;39,-11;38,-10;39,-10;39,-10;38,-11;39,-11;38,-11;38,-12;39,-12;38,-12;38,-12;38,-11;40,-7;40,-2;39,-2;38,10;40,1;40,-3;40,-5;39,-7;39,-7;40,-8;38,-10;38,-12;38,-14;37,-15;36,-17;36,-18;34,-21;34,-21;32,-24;32,-24;31,-25;30,-26;30,-28;28,-28;27,-30;25,-31;25,-31;22,-33;21,-34;18,-36;15,-37;10,-39;7,-39;4,-40;0,-40;-2,-40;-4,-40;-5,-39;-7,-40;-8,-39;-9,-39;-12,-38;-13,-38;-15,-37;-15,-37;-17,-36;-17,-36;-19,-36;-23,-33;-27,-29;-30,-26;-31,-26;-30,-26;-30,-27;-30,-26;-30,-27;-29,-27;-29,-27;-28,-29;-26,-31;-22,-33;-19,-35;-15,-37;-10,-39;-5,-40;2,-40;6,-39;11,-38;14,-38;17,-36;18,-36;21,-34;22,-34;23,-33;23,-32;24,-32;23,-33;24,-32;23,-32;24,-32;24,-33;24,-32;23,-32;24,-32;24,-32;23,-33;24,-32;23,-33;23,-32;24,-33;23,-32;24,-32;24,-32;25,-32;24,-32;24,-31;25,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;24,-32;25,-31;25,-32;26,-29;32,-25;36,-16;40,-5;39,5;38,12;36,19;31,24;28,29;24,32;18,36;12,38;8,39;4,40;2,40;3,40;5,39;9,40;13,37;17,37;19,35;22,33;22,33;23,33;23,33;23,33;23,33;22,33;20,35;18,35;17,36;18,36;23,33;31,25;38,10;39,-7;34,-21;23,-33;8,-39;-7,-39;-18,-35;-25,-31;-28,-30;-27,-28;-28,-29;-26,-31;-24,-31;-25,-32;-24,-32;-23,-32;-24,-33;-23,-32;-20,-35;-15,-37;-7,-39;4,-40;14,-37;23,-33;31,-25;35,-20;36,-16;38,-13;38,-11;39,-10;39,-11;38,-12;37,-15;37,-14;37,-16;38,-14;37,-13;38,-13;39,-10;39,-8;40,-5;40,0;39,6;37,15;29,27;18,35;8,40;1,40;-1,40;-1,40;-2,40;-2,40;-2,40;-1,39;-2,40;-2,40;-2,40;-2,40;-2,40;-2,40;-1,40;-2,40;-2,40;-2,40;-2,40;-3,40;-2,40;-3,40;-4,40;-4,39;-5,40;-5,40;-5,39;-6,40;-7,39;-7,40;-7,39;-8,39;-9,39;-9,39;-9,39;-10,39;-10,39;-11,38;-11,39;-12,38;-12,38;-13,38;-13,38;-14,37;-14,38;-15,37;-15,37;-15,37;-16,37;-16,36;-17,36;-18,36;-17,36;-18,36;-19,35;-19,36;-19,35;-20,34;-20,35;-21,34;-21,34;-22,34;-22,33;-22,33;-23,33;-23,33;-23,32;-24,32;-25,32;-24,32;-26,31;-25,31;-26,30;-26,30;-27,30;-27,30;-27,29;-28,29;-28,28;-28,29;-29,28;-28,27;-30,27;-29,27;-30,27;-31,26;-30,26;-31,25;-32,25;-31,24;-32,25;-32,23;-33,24;-32,23;-33,23;-34,22;-33,22;-34,21;-34,21;-34,21;-35,20;-35,20;-35,19;-35,19;-35,18;-36,19;-36,18;-35,18;-36,18;-36,18;-35,18;-36,18;-36,18;-36,18;-35,18;-36,18;-35,19;-36,18;-36,18;-35,18;-36,18;-36,18;-36,16;-38,15;-37,14;-38,12;-38,13;-38,13;-38,13;-38,12;-38,13;-38,12;-38,12;-39,10;-38,11;-39,9;-39,10;-39,10;-39,9;-39,9;-39,7;-39,7;-40,7;-39,7;-40,6;-39,7;-40,7;-39,7;-39,7;-40,7;-39,7;-39,7;-40,7;-39,7;-40,7;-39,7;-40,6;-39,7;-39,8;-38,12;-33,22;-19,35;-7,39;-3,40;-8,39;-20,34;-33,22;-39,11;-39,6;-40,2;-40,-5;-38,-12;-36,-17;-37,-16;-38,-11;-40,-3;-40,3;-40,5;-39,6;-40,6;-39,5;-40,6;-40,5;-39,6;-40,5;-40,5;-39,6;-40,5;-39,5;-40,6;-40,5;-39,6;-40,5;-40,5;-39,6;-40,5;-40,5;-39,6;-40,5;-40,6;-39,5;-40,5;-39,6;-40,5;-40,6;-39,5;-40,6;-40,5;-39,6;-40,6;-39,7;-39,7;-40,7;-39,7;-40,6;-39,6;-40,5;-40,5;-39,5;-40,5;-40,5;-39,5;-40,6;-40,5;-40,5;-39,5;-40,5;-40,5;-39,7;-39,10;-36,17;-32,24;-27,29;-23,33;-20,34;-20,35;-18,36;-18,35;-18,36;-17,36;-17,37;-16,36;-15,37;-14,38;-13,38;-12,38;-12,38;-11,39;-11,38;-10,39;-9,39;-8,39;-7,39;-7,40;-5,39;-5,40;-4,40;-2,40;-2,40;0,40;0,40;0,40;1,40;2,40;3,40;5,39;8,40;10,38;12,38;14,38;19,35;24,32;29,28;30,26;32,24;32,24;31,25;30,26;27,30;22,33;16,37;9,39;6,40;5,39;5,40;7,39;7,40;7,39;7,39;8,40;7,39;7,39;8,40;7,39;7,39;8,40;7,39;7,39;7,40;8,39;7,39;7,40;8,39;7,39;8,40;9,39;9,38;10,39;8,40;4,39;-3,40;-15,37;-24,32;-30,26;-33,23;-34,21;-31,26;-22,33;-9,38;1,40;6,40;9,39;11,38;12,38;12,38;14,38;13,38;14,37;14,38;15,37;15,37;17,36;17,37;17,36;17,36;18,35;19,36;19,35;20,34;21,34;22,34;23,32;25,32;25,31;26,31;26,30;28,29;28,28;30,27;31,25;31,25;33,23;34,21;35,20;35,18;36,18;36,17;37,17;35,17;36,20;33,21;31,26;24,32;16,37;7,39;-4,39;-16,37;-27,29;-34,21;-37,15;-38,12;-39,11;-38,11;-39,11;-38,11;-39,10;-39,10;-39,8;-40,6;-39,6;-40,4;-40,3;-40,1;-40,-2;-40,-4;-38,-10;-37,-17;-31,-24;-25,-32;-16,-36;-9,-39;-7,-39;-8,-40;-11,-38;-13,-38;-16,-36;-19,-35;-22,-34;-23,-33;-25,-31;-25,-31;-25,-32;-23,-32;-23,-33;-22,-34;-21,-33;-21,-34;-22,-34;-21,-34;-21,-34;-21,-34;-20,-35;-19,-35;-18,-36;-18,-36;-16,-36;-14,-38;-13,-38;-11,-38;-12,-38;-10,-39;-11,-38;-10,-39;-11,-38;-11,-39;-12,-38;-12,-38;-12,-39;-11,-38;-11,-38;-12,-39;-11,-38;-11,-38;-11,-39;-11,-38;-11,-39;-11,-38;-11,-39;-11,-38;-10,-39;-11,-39;-10,-38;-10,-39;-10,-39;-9,-39;-8,-39;-8,-39;-8,-39;-7,-40;-7,-39;-6,-40;-7,-39;-6,-40;-6,-39;-7,-40;-6,-39;-6,-40;-6,-39;-6,-40;-5,-39;-5,-40;-4,-40;-5,-40;-5,-39;-4,-40", "sea": "-26104,17285;212,150;238,-72;1205,-749;2382,-300;-62,193;262,322;1073,15;-134,391;224,164;364,-279;949,188;332,-437;802,165;-107,342;516,437;71,-454;307,-195;103,-546;-114,-276;277,-247;150,-508;513,-222;552,16;1238,314;176,432;1199,577;266,760;733,547;347,-92;354,-430;-262,-364;-516,-21;-22,-471;480,-176;188,-369;352,-217;-61,-199;873,-210;184,-267;1347,-265;354,-348;511,-687;133,-589;551,-395;-82,-156;-311,188;-182,-168;-94,-259;169,-416;1226,-1028;336,-31;146,360;778,50;1159,768;206,-282;-160,28;-1303,-838;101,-174;-181,-48;190,-7;-178,-68;34,-247;909,-687;2172,1522;-1191,1342;-1149,59;13,219;1202,-121;1942,-1965;164,-165;59,60;69,14;22,-8;63,-62;1,-88;-62,-66;856,-853;49,49;89,7;63,-64;8,-27;-14,-68;-49,-47;279,-275;2398,-1552;-120,-182;-404,254;-19,-33;-519,346;11,22;-138,78;-89,-16;-103,-69;-265,-223;-165,-203;-67,-125;-62,-138;-112,-315;37,-136;78,4;-17,-247;-79,6;-11,92;-1711,117;-39,-488;-491,28;-73,-1042;451,-62;-14,-85;-1117,159;-41,-92;-44,26;3,-61;19,-9;-91,-194;797,-702;30,31;25,-22;34,31;46,-44;113,52;67,-15;70,24;16,45;112,40;39,-23;65,22;26,34;59,36;59,-22;65,71;111,160;94,32;71,115;70,189;47,-6;39,54;13,128;106,103;94,131;126,23;144,-48;75,14;60,-119;59,14;37,-91;96,-38;43,16;5,-80;78,-60;204,42;118,98;80,29;50,235;-36,52;-3,117;38,32;95,18;53,107;185,132;88,-95;93,-13;117,55;-46,1117;234,13;9,-150;-61,-13;37,-883;55,10;6,13;104,-8;57,12;106,-22;-14,18;6,6;36,-21;59,-2;53,8;13,38;21,2;142,-53;56,-2;185,5;36,34;48,10;21,-34;25,-10;138,-14;50,-45;36,-78;219,-273;82,9;63,-39;130,-3;33,-42;15,-215;127,-83;68,-97;125,-105;93,-40;92,-84;194,-59;30,-47;35,-151;44,-48;110,-8;71,45;46,59;265,75;102,6;66,-39;335,-352;318,-407;-28,-163;58,-273;43,-31;19,4;57,-45;-13,-52;2,-55;133,-143;58,-112;25,-25;71,-28;74,6;27,-11;-4,-16;-60,-27;-13,-35;19,-32;-13,-27;-40,-13;-7,-41;60,-75;-53,-48;5,-77;34,-49;32,-362;961,-1158;-101,-79;8,-18;1063,-1297;1146,-1427;-215,-160;-2241,2701;-115,-95;-408,68;-445,-363;-118,-606;-385,74;70,345;117,-19;222,1139;-1442,401;-35,0;-99,29;3,13;-931,273;-219,-719;157,-48;36,-35;-14,-47;-58,-31;-363,104;-36,52;10,47;54,22;143,-41;219,715;-814,230;-109,-367;-151,-82;-118,-90;-56,-56;-94,-129;-58,-111;-50,-128;-96,-498;22,-140;-77,-390;141,-25;115,563;55,-8;-113,-566;387,-75;128,605;104,-19;-282,-1444;-107,19;108,569;-21,4;7,39;-374,75;-100,-570;-53,9;104,569;-166,33;-151,-760;-70,-89;-100,-42;-117,11;-11,-213;9,-195;31,-207;90,-313;193,-366;2135,-311;139,98;455,-62;-16,-115;883,-118;244,1227;-117,22;69,352;386,-66;-283,-1481;845,-220;764,-226;543,1330;184,-69;38,-45;-541,-1315;65,-25;64,-82;-39,-29;65,-73;10,-52;371,-474;-158,-357;325,-448;-70,-181;226,-280;-78,-181;175,-221;-82,-176;105,-148;-113,-249;-47,-78;41,-480;196,2;125,-290;450,187;-294,732;-68,-28;-29,56;70,28;-63,142;67,27;-130,309;248,102;126,-308;289,117;658,-1598;160,-192;496,-331;209,-260;127,-314;26,-329;-75,-336;-595,-1061;111,-40;-212,-387;2,-124;79,-119;272,-177;188,-280;18,-85;-96,-41;-52,12;-43,54;44,40;-141,171;-132,20;-67,-153;-64,-247;32,-280;111,-343;93,-155;306,-347;235,-188;544,-363;398,-163;143,-41;172,-17;123,22;335,119;63,2;-89,169;-201,134;-39,-53;-27,-9;-26,14;-22,31;-4,32;42,70;38,23;76,-9;195,-103;56,-57;57,-100;66,-159;42,-59;189,-180;5,-33;-12,-42;-26,-32;-44,-14;-41,13;-20,20;37,49;-154,120;-212,-263;70,-242;72,-114;101,-98;101,-75;112,-57;133,-27;98,3;348,657;305,494;128,167;161,127;172,61;151,35;199,16;304,-46;248,-77;517,-443;-636,-2827;82,-143;1345,-916;508,-566;1184,-338;652,19;346,262;1,453;277,-42;148,196;-216,538;481,-268;340,-859;17,-505;559,-476;287,-734;553,-718;626,-471;377,-795;781,-484;557,-669;552,-1028;313,-181;74,-936;365,-680;490,-474;1508,-794;1251,-199;1811,-27;-278,-488;455,-350;1470,-237;1517,-486;134,235;356,145;9,322;117,-76;218,532;513,210;87,249;492,254;1414,1637;241,-48;209,-348;652,400;408,71;19,330;442,386;6,661;556,961;774,262;-28,157;603,606;364,745;121,-64;486,699;182,15;-58,307;452,395;271,-175;-26,238;317,294;225,-62;451,181;77,767;721,112;44,213;627,300;445,-165;237,137;115,328;297,75;-14,135;638,-63;169,368;401,-106;237,213;278,-228;654,439;291,-94;917,412;1550,-348;661,4;182,201;351,-204;518,192;488,540;30000,60000;-78756,62675;-50000,-30000", "piers": ["1026,-300;0,0", "4851,1642;0,0", "-2950,5347;0,0", "-1724,5477;0,0", "-385,6963;0,0", "193,6828;0,0", "1050,6406;0,0", "1771,1011;0,0", "1292,1061;0,0", "4468,1594;0,0", "4206,1827;0,0", "3707,1954;0,0", "3232,2110;0,0", "4567,-974;0,0", "5424,-2514;0,0", "5555,-2543;0,0", "5858,-2629;0,0", "1959,2472;0,0", "2276,2384;0,0", "1490,-433;0,0", "2663,-2139;0,0", "6443,-2462;0,0", "-197,5567;0,0", "-2182,4550;0,0", "2609,2288;0,0", "3235,-2101;0,0", "4958,1614;0,0", "5024,1596;0,0", "5128,1266;0,0", "7639,-5798;0,0"], "elev": [[0.0, 6], [0.06081, 7], [0.08817, 9], [0.14594, 25], [0.19155, 37], [0.23107, 43], [0.27364, 47], [0.30404, 45], [0.33566, 41], [0.38005, 33], [0.4059, 26], [0.43022, 17], [0.46215, 12], [0.57768, 6], [0.62633, 4], [0.71146, 3], [0.82092, 3], [0.87565, 3.5], [0.90909, 4], [1.0, 6]]};
 
+// Landmarks round the lap, footprints from OpenStreetMap (© OpenStreetMap contributors, ODbL) in the same axes and
+// decimetre steps: the Casino (with the Opéra behind it), the Hôtel de Paris, the Café de Paris, the Hôtel Hermitage,
+// the Fairmont over the tunnel, the Stade Nautique (the swimming pool), the Boulingrins and Petite Afrique gardens and
+// the fountain in the Place du Casino
+MONACO.lm = {"casino":"6218,-5545;258,193;-21,92;-214,336;44,73;-175,230;-80,-25;-86,114;22,42;-29,38;28,20;-52,69;20,15;-195,256;-19,-14;-55,72;-132,-98;-41,16;-59,-44;-33,11;-93,-105;30,-40;-84,-64;44,-129;220,-261;42,31;623,-822","hdp":"5167,-3930;-43,102;-63,56;-137,27;-121,-53;-98,129;-84,-63;17,-22;-535,-401;435,-607;35,-8;32,39;43,-26;203,142;-19,46;26,20;19,-25;125,93;-24,32;138,103;-19,25;65,49;-96,127;87,104","cafe":"5057,-5386;279,-372;140,55;85,-34;62,53;-9,75;105,85;59,107;7,136;27,25;-292,377;-354,-251;22,-27;-38,-29;-44,12;6,-42;-32,-27;26,-30;-60,-45","fairmont":"6602,-5384;85,-122;224,20;362,-438;118,44;132,283;-105,147;82,176;-175,221;78,181;-226,280;70,181;-325,449;-457,-28;-133,-273;109,-147;82,211;222,27;198,-257;-61,-152;-345,-43;80,-188;-117,-239;55,-243;62,-69","hermitage":"3600,-3889;332,127;-106,296;-69,13;-16,44;-34,-16;92,-244;-146,-51;-186,477;-278,127;-343,-171;-15,30;-66,-31;67,-140;395,188;160,-102","pool":"701,36;-23,-39;-284,50;35,201;-55,15;111,492;53,-10;39,203;290,-55","garden":"3560,-5772;-47,-33;16,-119;37,-41;104,-12;1101,783;-20,108;-54,71;-103,42","afrique":"3633,-6118;221,-450;229,134;107,-114;287,275;506,329;73,101;24,100;-53,173;-226,297;-56,-14","fountain":"5021,-4854;-14,38;12,25;26,12;27,-6;18,-22;-6,-40;-36,-17"};
+
 const STAGES = [
   { id: 'pine', kind: 'pine', name: 'Pine Ridge', region: 'Lakeland Forest', surface: 'Gravel', tag: 'Fast forest gravel with big jumps',
     grip: 0.92, offGrip: 0.62, offDrag: 1.4, tyreB: 8, hw: 4.3, h0: 0.0, seed: 1201, blend: 24, rival: 'Tommi Mäkinon',
@@ -246,7 +252,7 @@ const STAGES = [
   { id: 'monaco', kind: 'city', name: 'Monaco', region: 'Monte Carlo', surface: 'Tarmac', tag: 'Casino, the hairpin and the tunnel',
     grip: 1.15, offGrip: 1.05, offDrag: 0.3, tyreB: 11, hw: 4.5, h0: 0, seed: 5501, blend: 22, rival: 'Ott Tänakk',
     tarmac: true, town: true, elev: { a1: 0, l1: 100, p1: 0, a2: 0, l2: 100, p2: 0 },
-    street: { gap: 50, path: MONACO.path, sea: MONACO.sea, piers: MONACO.piers, elev: MONACO.elev,
+    street: { gap: 50, path: MONACO.path, sea: MONACO.sea, piers: MONACO.piers, elev: MONACO.elev, lm: MONACO.lm,
       at: { tunnel0: 0.46215, tunnel1: 0.57768, casino: 0.27364 }, stands: [[0.73579, 0.86652, 1], [0.92429, 0.05473, 1]] } },
 ];
 
@@ -391,7 +397,8 @@ const hkey = (cx, cz) => (cx + 4096) + (cz + 4096) * 8192;
 function buildTrack(st) {
   const k = [], notesRaw = [], ev = [], grades = [];
   let L, px, pz, ph, py, ks;
-  if (st.street) ({ L, px, pz, ph, py, ks } = streetRoad(st, notesRaw));
+  let Lst, lap = 0;
+  if (st.street) ({ L, px, pz, ph, py, ks, Lst, lap } = streetRoad(st, notesRaw));
   else {
   let s = 0;
   for (const seg of st.segs) {
@@ -407,7 +414,7 @@ function buildTrack(st) {
     else if (t === 'J' || t === 'C') ev.push({ type: t, s, h: seg[1] });
     else if (t === 'G') grades.push({ s, g: seg[1] });
   }
-  L = k.length;
+  L = Lst = k.length;
   ks = blur(blur(k, st.kBlur || 6), st.kBlur || 6);
   px = new Float64Array(L + 1); pz = new Float64Array(L + 1); ph = new Float64Array(L + 1); py = new Float64Array(L + 1);
   let x = 0, z = 0, h = st.h0 || 0;
@@ -475,8 +482,8 @@ function buildTrack(st) {
     nt.dist = (nx && gap > 95) ? Math.min(500, Math.round(gap / 50) * 50) : 0;
   }
   const T = { st, L, n, X, Z, Y, H, K, hash, notes, hw: st.hw, events: evs,
-    bbox: { minX, maxX, minZ, maxZ }, spawnS: 14, startS: 22, finishS: L - 45,
-    splits: [Math.round(L * 0.34), Math.round(L * 0.67)] };
+    bbox: { minX, maxX, minZ, maxZ }, spawnS: 14, startS: 22, finishS: Lst - 45,
+    splits: [Math.round(Lst * 0.34), Math.round(Lst * 0.67)], lap };
   T.walls = walls;
   return T;
 }
@@ -614,10 +621,14 @@ function loopNear(LP, x, z, r) {
 }
 // the stage's share of the lap, and pace notes read off the curvature: a run over 1/150 (carried on while over 1/300),
 // rated by its tightest radius ('Q' a tight corner, 'H' a tight one that turns back on itself)
+// The road goes on past the stage's end, round the gap and LAP_RUN metres into the next lap (before the start for a
+// reversed run, which the flip turns into after its end), so a run can go round lap after lap (game.js lap mode
+// moves the car back one lap as it passes); `Lst` is the stage's own length, which its start, splits and finish use.
+const LAP_RUN = 400;
 function streetRoad(st, notesRaw) {
-  const LP = streetLoop(st), L = LP.N - st.street.gap;
+  const LP = streetLoop(st), N = LP.N, Lst = N - st.street.gap, A = st.rev ? -(st.street.gap + LAP_RUN) : 0, L = Lst + st.street.gap + LAP_RUN;
   const px = new Float64Array(L + 1), pz = new Float64Array(L + 1), ph = new Float64Array(L + 1), py = new Float64Array(L + 1);
-  for (let i = 0; i <= L; i++) { px[i] = LP.X[i]; pz[i] = LP.Z[i]; py[i] = LP.Y[i]; ph[i] = i ? ph[i - 1] + wrapA(LP.H[i] - LP.H[i - 1]) : LP.H[0]; }
+  for (let i = 0; i <= L; i++) { const q = ((i + A) % N + N) % N; px[i] = LP.X[q]; pz[i] = LP.Z[q]; py[i] = LP.Y[q]; ph[i] = i ? ph[i - 1] + wrapA(LP.H[q] - LP.H[((q - 1) % N + N) % N]) : LP.H[q]; }
   const k = new Float64Array(L); for (let i = 0; i < L; i++) k[i] = ph[i + 1] - ph[i];
   const ks = blur(k, 3);
   for (let i = 0; i < L;) {
@@ -632,7 +643,7 @@ function streetRoad(st, notesRaw) {
     }
     i = j;
   }
-  return { L, px, pz, ph, py, ks };
+  return { L, px, pz, ph, py, ks, Lst, lap: N };
 }
 // Water (harbour and sea) on a grid: W[cell] = 1 under water, D = metres from a dry cell to the water (for the
 // hillside). `ext` metres round the loop, `cell` metres a cell; the outline is filled row by row.
@@ -678,6 +689,34 @@ function shoreDist(wm, x, z) {
   let fx = clamp((x - wm.x0) / wm.cell, 0, wm.nx - 1.001), fz = clamp((z - wm.z0) / wm.cell, 0, wm.nz - 1.001);
   const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, k = j * wm.nx + i;
   return lerp(lerp(wm.D[k], wm.D[k + 1], u), lerp(wm.D[k + wm.nx], wm.D[k + wm.nx + 1], u), v);
+}
+// level pads in the hillside (st.street.lm): the casino square (26 m round the fountain) and the swimming pool, at the
+// height of their street's sidewalk. padDist: metres outside the polygon (0 inside)
+function streetPads(st, LP) {
+  const lm = st.street.lm; if (!lm) return [];
+  const out = [], mk = P => {
+    let cx = 0, cz = 0; for (const [x, z] of P) { cx += x; cz += z; } cx /= P.length; cz /= P.length;
+    const n = loopNear(LP, cx, cz, 120), b = [1e9, -1e9, 1e9, -1e9];
+    for (const [x, z] of P) { b[0] = Math.min(b[0], x); b[1] = Math.max(b[1], x); b[2] = Math.min(b[2], z); b[3] = Math.max(b[3], z); }
+    out.push({ P, b, y: LP.Y[n.s] + STREET.slab - 0.03 });
+  };
+  if (lm.fountain) {
+    const F = unpackPts(lm.fountain); let fx = 0, fz = 0; for (const [x, z] of F) { fx += x; fz += z; } fx /= F.length; fz /= F.length;
+    const P = []; for (let i = 0; i < 16; i++) P.push([fx + Math.cos(i / 16 * 2 * PI) * 26, fz + Math.sin(i / 16 * 2 * PI) * 26]);
+    mk(P);
+  }
+  if (lm.pool) mk(unpackPts(lm.pool));
+  return out;
+}
+function padDist(P, x, z) {
+  let c = 0, d = 1e9;
+  for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+    const a = P[i], b = P[j];
+    if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) c ^= 1;
+    const ex = b[0] - a[0], ez = b[1] - a[1], t = clamp(((x - a[0]) * ex + (z - a[1]) * ez) / (ex * ex + ez * ez || 1), 0, 1);
+    d = Math.min(d, Math.hypot(x - a[0] - ex * t, z - a[1] - ez * t));
+  }
+  return c ? 0 : d;
 }
 // the land away from the streets: Monaco climbs about 13 m in every 100 m from the shore, steeper further up, with
 // spurs and gullies; the quays stand 2.5 m over the water
@@ -745,6 +784,7 @@ function buildTerrain(T, nz) {
   const hw = T.hw, flat = hw + 1.6;
   const LP = st.street && streetLoop(st), wm = st.street && waterMask(st, 640, 4);
   const W_CUT = 1 / (185 * 185 + 900), N_CUT = 1 / ((46 * 46 + 1) * (46 * 46 + 1));
+  const pads = st.street ? streetPads(st, LP) : [];
   for (let j = 0; j < nzc; j++) {
     const z = z0 + j * cell;
     for (let i = 0; i < nx; i++) {
@@ -788,6 +828,11 @@ function buildTerrain(T, nz) {
           // the hillside, but never more than a 30 % slope away from the streets (it is built up, not cliffs)
           const dd = Math.min(ln.d, d) - STREET.line, base = nearB - 0.06;
           hgt = lerp(base, clamp(hillAt(nz, shoreDist(wm, x, z), x, z), base - 0.3 * dd, base + 0.3 * dd), sstep(0, 60, dd));
+          // the casino square and the swimming pool are level with their streets
+          for (const p of pads) {
+            if (x < p.b[0] - 12 || x > p.b[1] + 12 || z < p.b[2] - 12 || z > p.b[3] + 12) continue;
+            hgt = lerp(p.y, hgt, sstep(0, 12, padDist(p.P, x, z)));
+          }
         }
       }
       else if (d < flat) hgt = roadY - 0.18;
@@ -1006,6 +1051,45 @@ function placeStreet(T, TR, st, nz, out, R, addCol, addSeg) {
     return smp.every(([x, z]) => loopNear(LP, x, z, min + 1).d >= min - 0.05 && !wetAt(wm, x, z));
   };
   const keep = pts => { for (const k of cellsOf(pts)) { let a = grid.get(k); if (!a) grid.set(k, a = []); a.push(pts); } };
+  // ---- landmarks (SP.lm, real footprints): kept off the sidewalks (but the Fairmont, which stands over the tunnel);
+  // the town keeps clear of them (as their convex hulls) and of the square round the casino's fountain ----
+  const pip = (P, x, z) => { let c = 0; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const a = P[i], b = P[j]; if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) c ^= 1; } return c; };
+  const hull = P => {
+    const q = P.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]), cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [], up = [];
+    for (const p of q) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+    for (const p of q.reverse()) { while (up.length > 1 && cr(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+    return lo.slice(0, -1).concat(up.slice(0, -1));
+  };
+  out.lms = {}; out.gardens = []; out.beds = [];
+  if (SP.lm) {
+    for (const [k, str] of Object.entries(SP.lm)) {
+      const pts = unpackPts(str).map(([x, z]) => {
+        const n = k === 'fairmont' ? { d: 1e9 } : loopNear(LP, x, z, line + 1);
+        if (n.d >= line + 0.6) return [x, z];
+        const lat = -(x - LP.X[n.s]) * Math.cos(LP.H[n.s]) + (z - LP.Z[n.s]) * Math.sin(LP.H[n.s]);
+        return loopSide(LP, n.s, (lat < 0 ? -1 : 1) * (line + 0.6));
+      });
+      out.lms[k] = pts;
+      if (k === 'garden' || k === 'afrique') { out.gardens.push(pts); continue; }
+      if (k !== 'fountain') keep(hull(pts));
+      // the fronts by the road are walls for the cameras, like the town's
+      if (k !== 'fairmont') for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        if (loopNear(LP, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, 14).d < 13) addSeg(a[0], a[1], b[0], b[1], 'wall');
+      }
+    }
+    const F = out.lms.fountain;
+    if (F) {
+      let fx = 0, fz = 0; for (const [x, z] of F) { fx += x; fz += z; } fx /= F.length; fz /= F.length;
+      const n = loopNear(LP, fx, fz, 60), sq = [];
+      for (let i = 0; i < 16; i++) sq.push([fx + Math.cos(i / 16 * 2 * PI) * 24, fz + Math.sin(i / 16 * 2 * PI) * 24]);
+      keep(sq);
+      out.square = { x: fx, z: fz, r: 24, y: LP.Y[n.s] + STREET.slab };
+    }
+    // the gardens stay open: lawns, flower beds and palms
+    for (const G of out.gardens) keep(hull(G));
+  }
   const rows = [{ off: 0, dep: [12, 24], fl: [3, 10] }, { off: 30, dep: [14, 26], fl: [6, 15] }, { off: 62, dep: [16, 30], fl: [8, 21] }, { off: 98, dep: [16, 30], fl: [8, 24] }];
   for (const sd of [-1, 1]) rows.forEach((row, ri) => {
     for (let s = 0; s < N;) {
@@ -1068,6 +1152,26 @@ function placeStreet(T, TR, st, nz, out, R, addCol, addSeg) {
       out.palms.push({ x, z, y: LP.Y[s] + STREET.slab, rot: R() * 6.28, s: 0.85 + R() * 0.35, c: R() });
     }
   }
+  // the gardens: palms among lawns and flower beds; a ring of palms round the casino square
+  const GR = rng(st.seed + 77);
+  for (const G of out.gardens) {
+    let a = 1e9, b = -1e9, c = 1e9, d = -1e9; for (const [x, z] of G) { a = Math.min(a, x); b = Math.max(b, x); c = Math.min(c, z); d = Math.max(d, z); }
+    for (let z = c + 4; z < d; z += 9) for (let x = a + 4; x < b; x += 9) {
+      const px = x + (GR() - 0.5) * 6, pz = z + (GR() - 0.5) * 6;
+      if (!pip(G, px, pz) || loopNear(LP, px, pz, line + 3).d < line + 2.5) continue;
+      const y = terrainH(TR, px, pz);
+      if (GR() < 0.45) out.palms.push({ x: px, z: pz, y, rot: GR() * 6.28, s: 0.8 + GR() * 0.45, c: GR() });
+      else if (GR() < 0.6) out.beds.push({ x: px, z: pz, y, rot: GR() * PI, s: 1.6 + GR() * 1.6, c: GR() });
+    }
+  }
+  if (out.square) {
+    const q = out.square;
+    for (let i = 0; i < 12; i++) {
+      const a = (i + 0.5) / 12 * 2 * PI, x = q.x + Math.cos(a) * 16.5, z = q.z + Math.sin(a) * 16.5;
+      if (loopNear(LP, x, z, line + 2).d < line + 1.5) continue;
+      out.palms.push({ x, z, y: q.y, rot: GR() * 6.28, s: 0.95 + GR() * 0.3, c: GR() });
+    }
+  }
   for (let s = 10, k = 0; s < N; s += 31, k++) {
     if (inTunnel(s)) continue;
     const sd = k % 2 ? 1 : -1, [x, z] = loopSide(LP, s, sd * 6.1), [rx, rz] = loopSide(LP, s, 0);
@@ -1125,6 +1229,13 @@ function locate(T, c) {
   c.idx = bi;
   projectRoad(T, bi, c.x, c.z, c.rd);
   c.s = c.rd.s; c.lat = c.rd.lat;
+}
+
+// lap mode on a closed circuit (T.lap metres round): once the car is well into the next lap it is moved back one lap
+// along the road, to the same place in the world, so nothing on screen moves. True when it was.
+function lapWrap(W, c) {
+  const T = W.T; if (!T.lap || c.s < T.startS + T.lap + 150) return false;
+  c.idx = Math.max(0, c.idx - Math.round(T.lap / 2)); locate(T, c); return true;
 }
 
 function groundAt(W, c, x, z) {
@@ -1595,8 +1706,8 @@ function measureCar(P) {
 }
 CARS.forEach(measureCar);
 
-return { TUNE, CARS, STAGES, CONDS, stageDef, stageKey, stageTitle, condName, dailyKey, selfClearance, RADIUS, RW, carStats, torqueAt, engineCurve, measureCar, buildWorld, buildTrack, makeNoise, rng, sampleAt, roadYAt, terrainH, nearest, project,
+return { TUNE, CARS, STAGES, CONDS, stageDef, stageKey, stageTitle, condName, dailyKey, selfClearance, RADIUS, RW, carStats, torqueAt, engineCurve, measureCar, buildWorld, buildTrack, lapWrap, makeNoise, rng, sampleAt, roadYAt, terrainH, nearest, project,
   makeCar, resetCar, stepCar, locate, groundAt, simulateRun, prepAI, aiDrive, clamp, lerp, sstep, wrapA, hkey, CELL,
-  STREET, streetLoop, loopSide, loopNear, waterMask, wetAt, shoreDist, hillAt, unpackPts, rayWalls };
+  STREET, streetLoop, streetPads, loopSide, loopNear, waterMask, wetAt, shoreDist, hillAt, unpackPts, rayWalls };
 })();
 if (typeof module !== 'undefined') module.exports = RallyCore;

@@ -84,6 +84,29 @@ let loadedKey = '', mode = 'boot', prevMode = 'race';
 let rally = store.get('rally', null);
 const rallyOn = () => !!(rally && !rally.done && rally.playing);
 let raceT = 0, cdT = 0, cdShown = -1, finishT = 0, doneT = 0, splitsHit = [], ghostRec = [], ghostTimer = 0;
+// Endless laps (settings.laps) on a closed circuit (W.T.lap, Monaco): no finish, the clock runs per lap from the line,
+// the best lap per road and car is kept (store 'lap.<key>.<car>': time and where the car was every 0.05 s, for the
+// delta). Laps stay on this browser: no board, no medals, no challenge links. Never in rallies or online rooms.
+const lap = { n: 0, t0: 0, next: 0, best: null, last: null, rec: [], list: [] };
+const lapsOn = () => !!(settings.laps && W && W.T.lap && !rallyOn() && !netRun());
+const lapKey = (key, car) => `lap.${key}.${car}`;
+function lapBest(key, car) {
+  const b = store.get(lapKey(key, car), null);
+  return b && b.t > 0 && Array.isArray(b.s) ? { t: b.t, sArr: Float32Array.from(b.s, v => v / 10) } : null;
+}
+function onLap() {
+  const t = raceT - lap.t0, old = lap.best, isBest = !old || t < old.t;
+  lap.n++; lap.last = t; lap.t0 = raceT; lap.list.push(t);
+  if (isBest && lap.rec.length > 20) {
+    lap.best = { t, sArr: Float32Array.from(lap.rec) };
+    store.set(lapKey(W.st.key, P.id), { t, s: lap.rec.map(v => Math.round(v * 10)), at: Date.now() });
+  }
+  lap.rec = [];
+  const d = old ? fmtD(t - old.t) : '';
+  center(`<div class="mid yel">Lap ${lap.n}${isBest ? ' · best' : ''}</div><div class="sub ${!old || t <= old.t ? 'ahead' : 'behind'}">${fmt(t)}${d ? ` <span style="font-size:.6em;color:var(--mute)">${d}</span>` : ''}</div>`, 2.8);
+  sfx.beep(990, 0.09); if (isBest) setTimeout(() => sfx.beep(1320, 0.18), 120);
+  if (isBest && old) say('Best lap.');
+}
 let noteIdx = 0, called = [], offT = 0, stuckT = 0, wrongT = 0, time = 0, acc = 0, alpha = 0;
 let resultsShown = false, lastMedal = 0;
 // headlights: on by themselves for night and dusk stages, off by day; L (or the pad's d-pad up, or the touch
@@ -154,6 +177,10 @@ function renderStageList() {
   const kind = fixed ? C.STAGES[settings.stage].kind : 'pine';
   for (const b of $('optCond').children) { b.setAttribute('aria-pressed', String(b.dataset.v === settings.cond)); b.disabled = !fixed; b.textContent = C.condName({ kind }, b.dataset.v); }
   $('varNote').hidden = fixed;
+  // closed circuits (Monaco) can be driven lap after lap
+  const circuit = fixed && !!C.STAGES[settings.stage].street;
+  $('optLaps').hidden = !circuit;
+  for (const b of $('optLaps').children) b.setAttribute('aria-pressed', String((b.dataset.v === 'laps') === !!settings.laps));
   updateSummary();
 }
 function renderStageInfo() { renderStageList(); renderRallyPane(); renderTimes(); }
@@ -176,8 +203,9 @@ function updateSummary() {
     $('selSummary').textContent = `${it.name} · ${(r ? carById(r.car) : C.CARS[settings.car]).name}`;
     $('startBtn').firstChild.textContent = r ? `Continue rally · SS${r.idx + 1} ` : 'Start rally ';
   } else {
-    $('selSummary').textContent = `${C.stageTitle(C.stageDef(curKeyMenu()))} · ${C.CARS[settings.car].name}`;
-    $('startBtn').firstChild.textContent = 'Start stage ';
+    const laps = settings.laps && settings.stage !== 'daily' && C.STAGES[settings.stage].street, lb = laps && lapBest(curKeyMenu(), C.CARS[settings.car].id);
+    $('selSummary').textContent = `${C.stageTitle(C.stageDef(curKeyMenu()))} · ${C.CARS[settings.car].name}${laps ? ' · endless laps' + (lb ? ', best ' + fmt(lb.t) : '') : ''}`;
+    $('startBtn').firstChild.textContent = laps ? 'Start laps ' : 'Start stage ';
   }
 }
 // the stage the menu has selected (a rally in progress doesn't change what the Stage tab shows)
@@ -195,9 +223,9 @@ function renderCarList() {
         : lead ? `🔒 Only the No. 1 on ${road} drives it (${lead.n} right now)` : `🔒 Set the fastest time on ${road} to unlock it`));
       for (const [x, y, d] of [[2, 10, 0], [97, 18, 0.6], [52, 86, 1.1], [92, 84, 0.3], [30, 4, 1.4]]) { const sp = el('span', 'spark', '✦'); sp.style.left = x + '%'; sp.style.top = y + '%'; sp.style.animationDelay = d + 's'; b.append(sp); }
     } else if (c.only) {
-      const ok = !inRoom() && fitsRoad(c, curKeyMenu()), road = C.stageDef(c.only).name;
+      const ok = fitsRoad(c, curKeyMenu()), road = C.stageDef(c.only).name;
       b.classList.add('only'); if (!ok) b.classList.add('locked');
-      t.append(el('small', ok ? null : 'lock', inRoom() ? '🔒 Not in online races: those are run in the rally cars' : ok ? `${c.era} · ${c.engine.layout} · its times are a class of their own` : `🔒 ${road} only`));
+      t.append(el('small', ok ? null : 'lock', ok ? `${c.era} · ${c.engine.layout} · its times are a class of their own` : `🔒 ${road} only`));
     } else t.append(el('small', null, `${c.era} · ${c.engine.layout} turbo`));
     const hp = el('span', 'hp'); hp.append(`${Math.round(c.peak.hp)} hp`); hp.append(el('small', null, `0–100 ${c.spec.t100.toFixed(1)} s`));
     b.append(sw, t, hp);
@@ -222,9 +250,10 @@ const plainCar = () => { const i = settings.lastCar | 0; return C.CARS[i] && !ap
 function keepCarAllowed(key) {
   const c = C.CARS[settings.car];
   if (c.only) {
-    if (!inRoom() && fitsRoad(c, key || curKeyMenu())) return false;
+    if (fitsRoad(c, key || curKeyMenu())) return false;
     settings.car = plainCar(); saveSettings();
     toast(`The ${shortCar(c.id)} only runs at ${C.stageDef(c.only).name}: back in the ${C.CARS[settings.car].name}.`);
+    if (inRoom()) netTrack();
     return true;
   }
   if (!isBonus(c) || (!inRoom() && bonusOK(key || curKeyMenu()))) return false;
@@ -381,6 +410,7 @@ function selectStage(i) {
 }
 for (const b of $('optDir').children) b.addEventListener('click', () => { settings.rev = b.dataset.v === 'rev'; selectStage(settings.stage); });
 for (const b of $('optCond').children) b.addEventListener('click', () => { settings.cond = b.dataset.v; selectStage(settings.stage); });
+for (const b of $('optLaps').children) b.addEventListener('click', () => { settings.laps = b.dataset.v === 'laps'; saveSettings(); renderStageList(); });
 // per-car customisation (sound only): what the turbo does on a lift, and the exhaust
 function getTune(id) {
   const V = VOICES[id] || VOICES.foca, t = (settings.tune || {})[id] || {};
@@ -413,9 +443,9 @@ for (const b of $('tuneMusic').children) b.addEventListener('click', () => setTu
 function selectCar(i, btn) {
   if (mode === 'loading') return;
   const c = C.CARS[i];
-  if (c.only && (inRoom() || !fitsRoad(c, curKeyMenu()))) {
+  if (c.only && !fitsRoad(c, curKeyMenu())) {
     if (btn) { btn.classList.remove('shake'); void btn.offsetWidth; btn.classList.add('shake'); }
-    toast(inRoom() ? `Online races are run in the rally cars: the ${shortCar(c.id)} waits outside.` : `The ${shortCar(c.id)} is built for ${C.stageDef(c.only).name}: pick that stage first.`);
+    toast(`The ${shortCar(c.id)} is built for ${C.stageDef(c.only).name}: pick that stage first.`);
     return;
   }
   if (isBonus(c) && inRoom()) {
@@ -1042,7 +1072,7 @@ const myMeta = () => ({ i: netId, n: cleanName(driverName()), c: C.CARS[settings
 function cleanPeer(m) {
   if (!m || typeof m.i !== 'string' || !/^[a-z0-9]{4,12}$/.test(m.i)) return null;
   const c = carById(m.c);
-  return { i: m.i, n: cleanName(m.n), c: c && !apart(c) ? c.id : 'foca', v: m.v | 0, j: +m.j || 0 };
+  return { i: m.i, n: cleanName(m.n), c: c && !c.bonus ? c.id : 'foca', v: m.v | 0, j: +m.j || 0 };
 }
 // the room in join order: it gives the colours and the next host
 function peerList() { return [...net.peers.values()].sort((a, b) => a.j - b.j || (a.i < b.i ? -1 : 1)); }
@@ -1057,7 +1087,7 @@ function netJoin(code, create) {
   if (!settings.name) { net.pending = (create ? '+' : '') + code; showWelcome(false); return; }
   if (net.ch) { if (net.code === code) return; netLeave(true); }
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
-  if (apart(C.CARS[settings.car])) {
+  if (isBonus(C.CARS[settings.car])) {
     settings.car = plainCar(); saveSettings(); renderCarList(); if (W && mode === 'menu') setupCar();
     toast(`Online races are run in the rally cars: you're in the ${C.CARS[settings.car].name}.`);
   }
@@ -1196,6 +1226,8 @@ function netFollowStage(k) {
   if (st.daily) { settings.stage = 'daily'; settings.dailyKey = k; }
   else { const i = C.STAGES.findIndex(b => b.id === st.id); if (i < 0) return; settings.stage = i; settings.rev = st.rev; settings.cond = st.cond; }
   saveSettings(); timesStage = null; renderStageList(); renderTimes();
+  if (keepCarAllowed() && W && mode === 'menu' && curKey() === loadedKey) setupCar();
+  renderCarList();
   clearTimeout(net.preT);
   net.preT = setTimeout(() => { if (inRoom() && mode === 'menu' && curKeyMenu() === k && loadedKey !== k && !(net.room && net.room.ph !== 'lobby')) loadStage(k); }, 1500);
 }
@@ -1206,7 +1238,7 @@ function netStart() {
   if (!room || !isHost() || net.status !== 'online' || room.ph !== 'lobby' || mode !== 'menu') return;
   const k = curKeyMenu(); if (!C.stageDef(k)) return;
   net.peers.set(netId, myMeta());
-  const grid = peerList().filter(p => p.v === NET_V).slice(0, ROOM_MAX).map(p => ({ i: p.i, n: p.n, c: p.c }));
+  const grid = peerList().filter(p => p.v === NET_V).slice(0, ROOM_MAX).map(p => ({ i: p.i, n: p.n, c: fitsRoad(carById(p.c), k) ? p.c : 'foca' }));
   room.k = k; room.ph = 'load'; room.race = { id: Math.random().toString(36).slice(2, 9), k, grid, fin: {}, at: 0, close: 0, done: false };
   net.loadT = nowMs();
   hostCommit();
@@ -1270,7 +1302,7 @@ function netLoadRace(race) {
     return;
   }
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
-  if (apart(C.CARS[settings.car])) { settings.car = plainCar(); saveSettings(); renderCarList(); }
+  { const c = C.CARS[settings.car]; if (isBonus(c) || !fitsRoad(c, race.k)) { settings.car = plainCar(); saveSettings(); renderCarList(); } }
   netClearRun();
   const nr = net.race = { id: race.id, k: race.k, at: race.at || 0, greenL: 0, green: false, grid: race.grid.map(g => Object.assign({}, g)), others: new Map(), fin: Object.assign({}, race.fin),
     hist: [], buf: [], lastS: -1e9, lastSend: -1e9, cut: false, inRun: true, done: false, close: 0, col: PCOL[0] };
@@ -1474,7 +1506,8 @@ function netDrawOpaque(E) {
       for (let i = 0; i < 4; i++) R.drawLit(m.caliper, { model: netWheel(o, i, true), dirt: dirt * 0.5, carY: y, dirtCol: dcol });
     }
     R.drawLit(m.lightF, { model: o.mat, mode: 4, tint: lit ? (E.night ? [2.6, 2.6, 2.6] : [1.9, 1.9, 1.9]) : [0.3, 0.3, 0.3] });
-    R.drawLit(m.lightR, { model: o.mat, mode: 4, tint: brk ? [3.2, 3.2, 3.2] : lit ? [0.85, 0.85, 0.85] : [0.55, 0.55, 0.55] });
+    const rainL = m.shape.kind === 'f1' ? (W.st.cond === 'rain' || E.night ? [2.6, 2.6, 2.6] : [0.2, 0.2, 0.2]) : null;
+    R.drawLit(m.lightR, { model: o.mat, mode: 4, tint: rainL || (brk ? [3.2, 3.2, 3.2] : lit ? [0.85, 0.85, 0.85] : [0.55, 0.55, 0.55]) });
   }
 }
 // in the transparent pass with the polygon offset of the contact shadows already set
@@ -1697,13 +1730,15 @@ function startRace() {
   initAudio(); warmSpeech();
   C.resetCar(W, car, W.T.spawnS); snapVis(); resetEffects();
   raceT = 0; cdT = 0; cdShown = -1; finishT = 0; doneT = 0; splitsHit = []; ghostRec = []; ghostTimer = 0;
+  Object.assign(lap, { n: 0, t0: 0, next: W.T.startS + (W.T.lap || 0), best: lapsOn() ? lapBest(W.st.key, P.id) : null, last: null, rec: [], list: [] });
   noteIdx = 0; called = []; offT = 0; stuckT = 0; wrongT = 0; resultsShown = false; acc = 0;
   $('hStage').textContent = (rallyOn() ? `SS${rally.idx + 1} · ` : netRun() ? 'Online · ' : '') + W.st.name + (W.st.rev ? ' ⇄' : '');
-  net.pause = false; $('pTitle').textContent = 'Paused'; $('pNote').hidden = true;
+  net.pause = false; $('pTitle').textContent = 'Paused'; $('pNote').hidden = true; $('pLaps').hidden = true;
   $('hSurf').textContent = W.st.surface + (W.st.cond !== 'day' ? ' · ' + C.condName(W.st) : '');
   const span = W.T.finishS - W.T.startS;
   $('hS1').style.left = ((W.T.splits[0] - W.T.startS) / span * 100) + '%';
   $('hS2').style.left = ((W.T.splits[1] - W.T.startS) / span * 100) + '%';
+  $('hS1').hidden = $('hS2').hidden = lapsOn();
   $('hPB').hidden = !pb; $('hChal').hidden = !chal;
   $('notes').innerHTML = ''; noteKey = '';
   $('hint').hidden = true;
@@ -1814,6 +1849,10 @@ function togglePause() {
     prevMode = mode; mode = 'paused'; setScreen('pause');
     $('pRestart').hidden = rallyOn();
     $('pMenu').textContent = rallyOn() ? 'Leave rally' : 'Menu';
+    // lap mode: every lap so far, the best one marked
+    const pl = $('pLaps'), bl = lap.list.length ? Math.min(...lap.list) : 0;
+    pl.hidden = !(lapsOn() && lap.list.length);
+    if (!pl.hidden) pl.innerHTML = lap.list.map((t, i) => [t, i]).slice(-10).map(([t, i]) => `${t === bl ? '<b class="yel">' : ''}Lap ${i + 1} · ${fmt(t)}${t === bl ? '</b>' : ''}`).join('<br>') + (lap.best ? `<br><small>Best ever in the ${escapeHTML(shortCar(P.id))}: ${fmt(lap.best.t)}</small>` : '');
     if ('speechSynthesis' in window) speechSynthesis.cancel();
   }
 }
@@ -3062,7 +3101,8 @@ function updateCamera(dt) {
   if (dbgCam) {
     const c = Math.cos(vis.h), sn = Math.sin(vis.h);
     const tw = (o) => [vis.x + o[0] * c + o[2] * sn, vis.y + o[1], vis.z - o[0] * sn + o[2] * c];
-    cam.pos = tw(dbgCam.p); cam.look = tw(dbgCam.l); cam.fov = dbgCam.fov || 40; return;
+    // (world: true puts the camera at world coordinates instead of round the car)
+    cam.pos = dbgCam.world ? dbgCam.p.slice() : tw(dbgCam.p); cam.look = dbgCam.world ? dbgCam.l.slice() : tw(dbgCam.l); cam.fov = dbgCam.fov || 40; return;
   }
   const fx = Math.sin(vis.h), fz = Math.cos(vis.h);
   const spd = Math.hypot(car.vx, car.vz);
@@ -3422,7 +3462,7 @@ function drawMinimap() {
   if (!mmBase) return;
   mm.clearRect(0, 0, 300, 300); mm.drawImage(mmBase, 0, 0);
   const dot = (x, z, col, r, ring) => { const [a, b] = mmT(x, z); mm.beginPath(); mm.arc(a, b, r, 0, 7); if (ring) { mm.strokeStyle = col; mm.lineWidth = 3; mm.stroke(); } else { mm.fillStyle = col; mm.fill(); } };
-  if (settings.ghost && (mode === 'race' || mode === 'done')) {
+  if (settings.ghost && !lapsOn() && (mode === 'race' || mode === 'done')) {
     ghostPose(rival.ghost, raceT, gp); dot(gp.x, gp.z, '#b8d3ff', 7, true);
     if (pb) { ghostPose(pb.ghost, raceT, gp); dot(gp.x, gp.z, '#ffd23a', 7, true); }
     if (chal) { ghostPose(chal.ghost, raceT, gp); dot(gp.x, gp.z, '#ff6b8a', 7, true); }
@@ -3482,25 +3522,31 @@ function drawGauge() {
 let deltaT = 0;
 function updateHUD(dt) {
   const T = W.T;
-  const t = mode === 'done' ? finishT : mode === 'countdown' ? 0 : raceT;
+  const laps = lapsOn();
+  const t = mode === 'done' ? finishT : mode === 'countdown' ? 0 : raceT - (laps ? lap.t0 : 0);
   $('hTime').textContent = fmt(t);
-  const span = T.finishS - T.startS;
-  const prog = clamp((car.s - T.startS) / span, 0, 1);
+  const span = laps ? T.lap : T.finishS - T.startS;
+  const prog = clamp((car.s - (laps ? lap.next - T.lap : T.startS)) / span, 0, 1);
   $('hProg').style.width = (prog * 100) + '%';
-  if (settings.ghost && (mode === 'race' || mode === 'done')) {
+  if (settings.ghost && !laps && (mode === 'race' || mode === 'done')) {
     const rs = rival.sArr[clamp(Math.floor(raceT / 0.05) - 1, 0, rival.sArr.length - 1)];
     $('hRival').style.left = clamp((rs - T.startS) / span, 0, 1) * 100 + '%'; $('hRival').hidden = false;
     if (pb) { const bs = pb.sArr[clamp(Math.floor(raceT / 0.05) - 1, 0, pb.sArr.length - 1)]; $('hPB').style.left = clamp((bs - T.startS) / span, 0, 1) * 100 + '%'; }
     if (chal) { const cs = chal.sArr[clamp(Math.floor(raceT / 0.05) - 1, 0, chal.sArr.length - 1)]; $('hChal').style.left = clamp((cs - T.startS) / span, 0, 1) * 100 + '%'; }
   } else { $('hRival').hidden = true; $('hPB').hidden = true; $('hChal').hidden = true; }
-  const showLead = settings.leadGhost && lead && (mode === 'race' || mode === 'done');
+  const showLead = settings.leadGhost && lead && !laps && (mode === 'race' || mode === 'done');
   $('hLead').hidden = !showLead;
   if (showLead) { const ls = lead.sArr[clamp(Math.floor(raceT / 0.05) - 1, 0, lead.sArr.length - 1)]; $('hLead').style.left = clamp((ls - T.startS) / span, 0, 1) * 100 + '%'; }
   deltaT -= dt;
   if (deltaT <= 0) {
     deltaT = 0.1;
     const dEl = $('hDelta');
-    if (mode === 'race' && car.s > T.startS + 30) {
+    if (laps) {
+      // lap n + 1 under way: the gap to the best lap at this point of the lap, or the last lap's time
+      const ls = car.s - (lap.next - T.lap), lb = lap.best, info = `Lap ${lap.n + 1}${lb ? ' · best ' + fmt(lb.t) : ''}`;
+      if (mode === 'race' && lb && lap.n > 0 && ls > 30) { const d = t - refTimeAt(lb.sArr, ls); dEl.className = 'd ' + (d <= 0 ? 'ahead' : 'behind'); dEl.innerHTML = `<small>${info}</small>${fmtD(d)}`; }
+      else { dEl.className = 'd'; dEl.innerHTML = `<small>${info}</small>${lap.last != null ? 'last ' + fmt(lap.last) : lb ? fmt(lb.t) : '–'}`; }
+    } else if (mode === 'race' && car.s > T.startS + 30) {
       const ref = chal || pb || rival;
       const d = raceT - refTimeAt(ref.sArr, car.s);
       dEl.className = 'd ' + (d <= 0 ? 'ahead' : 'behind');
@@ -3619,8 +3665,16 @@ function tick(dt, doRender) {
       if (mode === 'race') {
         raceT += STEP; ghostTimer += STEP;
         if (ghostTimer >= 0.05) { ghostTimer -= 0.05; ghostRec.push(car.x, car.y, car.z, car.h); }
+        if (lapsOn()) {
+          // the line is the stage's start; once well into the next lap the car is moved back a lap (same place)
+          if (ghostRec.length > 4000) ghostRec = [];
+          if (lap.rec.length < Math.floor((raceT - lap.t0) / 0.05)) lap.rec.push(car.s - (lap.next - W.T.lap));
+          if (car.s >= lap.next) { onLap(); lap.next += W.T.lap; }
+          if (C.lapWrap(W, car)) { lap.next -= W.T.lap; noteIdx = W.T.notes.findIndex(n => n.s > car.s); if (noteIdx < 0) noteIdx = W.T.notes.length; snapVis(true); }
+        } else {
         if (splitsHit.length < W.T.splits.length && car.s >= W.T.splits[splitsHit.length]) { splitsHit.push(raceT); onSplit(splitsHit.length - 1); }
         if (car.s >= W.T.finishS && splitsHit.length >= W.T.splits.length) { finish(); }
+        }
       }
     }
     if (steps >= 12) acc = 0;
@@ -3762,7 +3816,7 @@ function render() {
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   gl.disable(gl.POLYGON_OFFSET_FILL);
   let leadPos = null;
-  if ((settings.ghost || (settings.leadGhost && lead)) && (mode === 'race' || mode === 'done')) {
+  if ((settings.ghost || (settings.leadGhost && lead)) && !lapsOn() && (mode === 'race' || mode === 'done')) {
     R.setLitFrame(E);
     const drawGhost = (g, tint, amax) => {
       ghostPose(g, raceT, ghostP);
@@ -3849,7 +3903,7 @@ if (location.protocol === 'file:') window.__rally = {
   resume() { paused_dbg = false; last = performance.now(); },
   setCam(c) { settings.cam = c; },
   auto(v) { dbgAuto = v; },
-  view(p, l, fov) { dbgCam = p ? { p, l, fov } : null; },
+  view(p, l, fov, world) { dbgCam = p ? { p, l, fov, world } : null; },
   pickCar(i) { selectCar(i); },
   audio: () => ({ A, sfx, getTune }),
   setDirt(v) { dirt = v; }, get mode() { return mode; }, get dbg() { return { dirt, hitFlash, dust: dust.n, chips: chips.n, hitK: S.E.hitK, shake: cam.shake, evt: Object.assign({}, evt) }; }, get car() { return car; }, get W() { return W; }, startRace, settings, keys, toMenu, get raceT() { return raceT; }, net, netJoin, netCreate, netStart, netLeave, netRows: () => (netRun() ? netRows() : null) };

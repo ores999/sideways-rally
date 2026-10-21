@@ -346,11 +346,12 @@ void main(){
       float cn = vnoise(vec2(m.x * 1.3, m.y * 0.09) + vec2(vnoise(wq), vnoise(wq + 4.0)) * 0.6);
       float crack = (1.0 - smoothstep(0.0, 0.005 + fw*0.5, abs(cn - 0.5))) * smoothstep(0.6, 0.8, vnoise(m * vec2(0.25, 0.04) + 3.0)) * mid;
       c = mix(c, u_r2 * 0.5, crack * 0.75);
-      c = mix(c, u_verge, smoothstep(0.78, 1.02, au + (n1 - 0.5)*0.16) * 0.3); // sand blown onto the edges
+      c = mix(c, u_verge, smoothstep(0.78, 1.02, au + (n1 - 0.5)*0.16) * (u_lines > 1.5 ? 0.1 : 0.3)); // sand blown onto the edges
       c *= 0.9 + 0.2*n3;
       float e = smoothstep(0.855, 0.87, au) * (1.0 - smoothstep(0.905, 0.92, au));
       c = mix(c, vec3(0.75), e * 0.9 * (0.65 + 0.35*n1));
-      float cl = (1.0 - smoothstep(0.012, 0.025, au)) * step(0.5, fract(v/9.0));
+      // (a circuit, u_lines 2, has no centre line)
+      float cl = (1.0 - smoothstep(0.012, 0.025, au)) * step(0.5, fract(v/9.0)) * step(u_lines, 1.5);
       c = mix(c, vec3(0.7,0.62,0.25), cl*0.8);
       spec = 0.1 + crack * 0.15 + box * 0.04 + (e + cl) * 0.1;
       bh = (agg * fine * 0.7 - crack * 0.6) * (1.0 - e); bk = 0.006;
@@ -1485,7 +1486,7 @@ function createRenderer(canvas) {
     gl.uniform1f(u.u_shOn, E.shadows ? 1 : 0);
     gl.uniform2f(u.u_shTex, 1 / (2 * SHADOW), 1 / SHADOW);
     gl.uniform3fv(u.u_r1, E.r1); gl.uniform3fv(u.u_r2, E.r2); gl.uniform3fv(u.u_r3, E.r3);
-    gl.uniform1f(u.u_lines, E.lines ? 1 : 0); gl.uniform1f(u.u_icy, E.icy || 0);
+    gl.uniform1f(u.u_lines, E.lines === 2 ? 2 : E.lines ? 1 : 0); gl.uniform1f(u.u_icy, E.icy || 0);
     gl.uniform3fv(u.u_verge, E.verge || E.r3); gl.uniform3fv(u.u_tt, E.tt || [1, 1, 1]);
     gl.uniform1f(u.u_gbump, E.gbump == null ? 0.05 : E.gbump);
     gl.uniform3fv(u.u_glw, E.glow ? [E.glow[0] * 0.35, E.glow[1] * 0.35, E.glow[2] * 0.35] : [0, 0, 0]); gl.uniform1f(u.u_cld, E.clouds || 0);
