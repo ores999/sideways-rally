@@ -1134,8 +1134,10 @@ function farGeo(W) {
 // the building's colour). The variants of a floor share its structure and differ in what is behind the windows; the
 // shader picks one per tile and floor. Rows go bottom-up, since an array upload can't be flipped.
 const FAC_W = 6.6, MAT = { wall: 255, trim: 191, glass: 128, tglass: 64 };
-const SHOPS = ['CAFE', 'BAR', 'PHARMACY', 'BAKERY', 'BOOKS', 'PIZZA', 'HOTEL', 'DELI', 'SHOES', 'MARKET', 'OPTICIAN', 'FLOWERS',
-  'KIOSK', 'BANK', 'TAILOR', 'BIKES', 'HARDWARE', 'GRILL', 'LAUNDRY', 'MUSIC', 'TOYS', 'WINES', 'BARBER', 'TOBACCO'];
+// (the facades are Monaco's now: its shop fronts are French)
+const SHOPS = ['CAFÉ', 'BRASSERIE', 'PHARMACIE', 'BOULANGERIE', 'LIBRAIRIE', 'PIZZERIA', 'HÔTEL', 'TRAITEUR', 'JOAILLERIE', 'PRIMEUR',
+  'OPTICIEN', 'FLEURISTE', 'TABAC PRESSE', 'BANQUE', 'HORLOGERIE', 'PARFUMERIE', 'GALERIE', 'RESTAURANT', 'GLACIER', 'IMMOBILIER',
+  'CAVE À VINS', 'COIFFEUR', 'PÂTISSERIE', 'MAROQUINERIE'];
 const SIGNS = [[[150, 32, 30], [246, 236, 214]], [[28, 74, 52], [236, 222, 170]], [[24, 40, 78], [240, 240, 236]], [[22, 22, 24], [228, 196, 110]],
   [[232, 226, 210], [40, 40, 44]], [[214, 168, 40], [30, 30, 30]], [[30, 96, 104], [244, 244, 240]], [[96, 30, 44], [240, 220, 180]]];
 const FABRIC = [[236, 232, 220], [222, 214, 196], [205, 205, 200], [228, 220, 205], [190, 196, 204], [214, 200, 180], [200, 184, 170]];
@@ -1447,7 +1449,7 @@ function facadeLayers() {
       const fc = pick([[40, 42, 46], [168, 170, 174], [222, 220, 212], [36, 70, 52], [92, 34, 36], [104, 72, 46]], R);
       box(x0, 0, x1, 2.96, fc, MAT.trim);
       box(x0, 0, x1, 0.32, [70, 68, 66], MAT.trim);
-      const shut = R() < 0.13, dl = R() < 0.5, dx0 = dl ? x0 + 0.1 : x1 - 1.05, dx1 = dx0 + 0.95;
+      const shut = R() < 0.05, dl = R() < 0.5, dx0 = dl ? x0 + 0.1 : x1 - 1.05, dx1 = dx0 + 0.95;
       const gx0 = dl ? dx1 + 0.08 : x0 + 0.1, gx1 = dl ? x1 - 0.1 : dx0 - 0.08;
       // inside: a lit back wall, shelves, things on them
       box(gx0, 0.42, gx1, 2.8, jit([92, 86, 78], 0.2), MAT.glass);
@@ -1461,16 +1463,10 @@ function facadeLayers() {
       box(dx0, 0.04, dx1, 2.8, fc, MAT.trim); box(dx0 + 0.08, 0.12, dx1 - 0.08, 2.7, [70, 66, 60], MAT.glass);
       box(dx0 + 0.06, 1.1, dx0 + 0.1, 1.5, [190, 190, 186], MAT.trim);
       if (shut) {
-        // a roller shutter down over the display, and a tag on it
+        // a roller shutter down over the display (no tags: this is Monaco)
         const sc = [150, 152, 154];
         box(gx0 - 0.04, 0.32, gx1 + 0.04, 2.84, sc, MAT.trim);
         for (let y = 0.32; y < 2.84; y += 0.08) box(gx0 - 0.04, y, gx1 + 0.04, y + 0.018, dim(sc, 0.74));
-        if (R() < 0.5) {
-          g.strokeStyle = css(pick([[30, 30, 34], [180, 40, 50], [40, 90, 160]], R)); g.lineWidth = 3; g.beginPath();
-          let x = gx0 + 0.3 + R() * 0.5, y = 1.2 + R() * 0.6; g.moveTo(X(x), Y(y));
-          for (let i = 0; i < 7; i++) { x += 0.12 + R() * 0.15; g.quadraticCurveTo(X(x - 0.1), Y(y + (R() - 0.3) * 0.7), X(x), Y(y + (R() - 0.5) * 0.3)); }
-          g.stroke();
-        }
       }
     }
     if (two) { box(3.2, 0, 3.4, 3.62, [228, 223, 214]); ramp(3.34, 0, 3.4, 3.62, 0, 0.2, 'h'); }
@@ -1554,7 +1550,8 @@ const RIVIERA = [
   { f: 8, tints: ['#a9c3d6', '#a8c9bf', '#b4bcc4', '#97b1cc'], lc: '#4d5157', par: 1.2 },
   { f: 10, tints: ['#f1e8d6', '#efe0c4', '#f4ede0', '#e8d8bc'], ledge: [0.5, 0.36], par: 1.1 },
 ];
-const rivieraFor = (n, r) => n <= 5 ? (r < 0.75 ? 0 : 3) : n <= 12 ? (r < 0.45 ? 0 : r < 0.85 ? 1 : 3) : (r < 0.55 ? 1 : 2);
+// (tall ones are mostly white blocks with balconies; a glass tower now and then)
+const rivieraFor = (n, r) => n <= 5 ? (r < 0.75 ? 0 : 3) : n <= 12 ? (r < 0.5 ? 0 : r < 0.85 ? 1 : 3) : (r < 0.12 ? 0 : r < 0.88 ? 1 : 2);
 // One building as a Geo: footprint pts (world x,z, convex), from `low` (below ground) up to base + ground floor + floors.
 // kinds per edge as in cityMesh. Vertex alpha on the walls carries the base height (/200) for the facade shader.
 function buildingGeo(g, pts, base, low, nUp, kinds, sty, tint, R, roofC) {
@@ -1642,21 +1639,49 @@ function streetFurniture(W) {
   const inT = s => s >= t0 && s <= t1;
   const steel = lin('#b8bcbf'), post = lin('#8d9194'), tile = lin('#d9d4c6'), ceil = lin('#3b3d40'), conc = lin('#b5ada0');
   const prof = [[0.42, 0], [0.52, -0.07], [0.62, 0], [0.72, -0.07], [0.82, 0]];
+  // TecPro: on the outside of the tight corners, from the apex out, a row of foam blocks is the face the car meets
+  // (at the rail's line, so nothing changes for the physics); the Armco and the fence stand a block's depth behind
+  const Ks = new Float64Array(N); for (let s = 0; s < N; s++) { let a = 0; for (let q = -5; q <= 5; q++) a += LP.K[(s + q + N) % N]; Ks[s] = a / 11; }
+  const tec = [new Uint8Array(N), new Uint8Array(N)]; // [left, right]
+  for (let s = 0; s < N; s++) {
+    if (Math.abs(Ks[s]) < 1 / 24 || inT(s)) continue;
+    const out = Ks[s] > 0 ? 1 : 0; // a left turn's outside is the right
+    for (let q = -4; q <= 26; q++) tec[out][(s + q + N) % N] = 1;
+  }
+  const TD = 0.95, tecC = [lin('#2c4c7e'), lin('#9c3a3e')], strap = lin('#d9d6cc');
+  const ads = new Geo(), adN = ADS.length;
   for (const sd of [-1, 1]) for (let s = 0; s < N; s += 2) {
-    const s2 = (s + 2) % N, ya = LP.Y[s], yb = LP.Y[s2];
-    const A = l => C.loopSide(LP, s, sd * l), Bq = l => C.loopSide(LP, s2, sd * l);
+    const s2 = (s + 2) % N, ya = LP.Y[s], yb = LP.Y[s2], side = sd > 0 ? 1 : 0, ta = !inT(s) && tec[side][s], tb = !inT(s2) && tec[side][s2];
+    const oa = ta ? TD : 0, ob = tb ? TD : 0;
+    const A = l => C.loopSide(LP, s, sd * l), Bq = l => C.loopSide(LP, s2, sd * l), road = C.loopSide(LP, s, 0), out = A(X.rail + 6);
     for (let i = 0; i + 1 < prof.length; i++) {
-      const [h0, o0] = prof[i], [h1, o1] = prof[i + 1], a0 = A(X.rail + o0), a1 = A(X.rail + o1), b0 = Bq(X.rail + o0), b1 = Bq(X.rail + o1);
-      const road = C.loopSide(LP, s, 0), out = A(X.rail + 6);
+      const [h0, o0] = prof[i], [h1, o1] = prof[i + 1], a0 = A(X.rail + oa + o0), a1 = A(X.rail + oa + o1), b0 = Bq(X.rail + ob + o0), b1 = Bq(X.rail + ob + o1);
       g.quad([a0[0], ya + h0, a0[1]], [b0[0], yb + h0, b0[1]], [b1[0], yb + h1, b1[1]], [a1[0], ya + h1, a1[1]], steel, 0.55, [out[0], ya + 0.6, out[1]]);
-      const c0 = A(X.rail + 0.04), c1 = Bq(X.rail + 0.04);
+      const c0 = A(X.rail + oa + 0.04), c1 = Bq(X.rail + ob + 0.04);
       if (i === 0) g.quad([c0[0], ya + 0.42, c0[1]], [c1[0], yb + 0.42, c1[1]], [c1[0], yb + 0.82, c1[1]], [c0[0], ya + 0.82, c0[1]], steel, 0.4, [road[0], ya + 0.6, road[1]]);
     }
-    if (s % 4 === 0) { const q = A(X.rail + 0.1); g.box(q[0], ya + 0.38, q[1], 0.1, 0.76, 0.1, post, 0.3); }
+    if (s % 4 === 0) { const q = A(X.rail + oa + 0.1); g.box(q[0], ya + 0.38, q[1], 0.1, 0.76, 0.1, post, 0.3); }
+    if (ta && tb) {
+      // one 2 m block: its face on the rail's line, a strap round it
+      const m = C.loopSide(LP, s + 1, sd * (X.rail + TD / 2)), hh = LP.H[(s + 1) % N], dx = Math.sin(hh), dz = Math.cos(hh), ym = (ya + yb) / 2;
+      obox(g, m[0], ym + 0.5, m[1], dx, dz, 1.96, 1.0, TD - 0.04, tecC[(s >> 1) & 1], 0.12);
+      obox(g, m[0], ym + 0.62, m[1], dx, dz, 1.98, 0.12, TD - 0.02, strap, 0.2);
+    } else if (!inT(s) && !ta && !tb && Math.abs(Ks[s]) < 1 / 120 && (s % 12) < 10) {
+      // sponsor banners strapped to the Armco along the straights (made-up sponsors, as on the liveries)
+      const k = ((s / 12 | 0) * 7 + side * 3) % adN, c0 = A(X.rail - 0.015), c1 = Bq(X.rail - 0.015), u0 = (s % 12) / 10, u1 = ((s % 12) + 2) / 10;
+      ads.quad([c0[0], ya + 0.44, c0[1]], [c1[0], yb + 0.44, c1[1]], [c1[0], yb + 0.8, c1[1]], [c0[0], ya + 0.8, c0[1]], [1, 1, 1], 0.1, [road[0], ya + 0.6, road[1]],
+        sd < 0 ? [[u0, k / adN], [u1, k / adN], [u1, (k + 1) / adN], [u0, (k + 1) / adN]] : [[1 - u0, k / adN], [1 - u1, k / adN], [1 - u1, (k + 1) / adN], [1 - u0, (k + 1) / adN]]);
+      // and now and then a bigger one hung on the catch fence above it
+      if (((s / 12 | 0) + side) % 3 === 0) {
+        const k2 = (k + 3) % adN, f0 = A(X.rail + 0.09), f1 = Bq(X.rail + 0.09);
+        ads.quad([f0[0], ya + 1.0, f0[1]], [f1[0], yb + 1.0, f1[1]], [f1[0], yb + 1.85, f1[1]], [f0[0], ya + 1.85, f0[1]], [1, 1, 1], 0.1, [road[0], ya + 1.4, road[1]],
+          sd < 0 ? [[u0, k2 / adN], [u1, k2 / adN], [u1, (k2 + 1) / adN], [u0, (k2 + 1) / adN]] : [[1 - u0, k2 / adN], [1 - u1, k2 / adN], [1 - u1, (k2 + 1) / adN], [1 - u0, (k2 + 1) / adN]]);
+      }
+    }
     if (!inT(s)) {
-      const f0 = A(X.rail + 0.12), f1 = Bq(X.rail + 0.12);
+      const f0 = A(X.rail + oa + 0.12), f1 = Bq(X.rail + ob + 0.12);
       fence.quad([f0[0], ya + 0.85, f0[1]], [f1[0], yb + 0.85, f1[1]], [f1[0], yb + 3.6, f1[1]], [f0[0], ya + 3.6, f0[1]], [1, 1, 1], 0, null, [[s / 0.5, 0], [(s + 2) / 0.5, 0], [(s + 2) / 0.5, 5.5], [s / 0.5, 5.5]]);
-      if (s % 6 === 0) { const q = A(X.rail + 0.16); g.box(q[0], ya + 2.2, q[1], 0.07, 2.8, 0.07, post, 0.3); }
+      if (s % 6 === 0) { const q = A(X.rail + oa + 0.16); g.box(q[0], ya + 2.2, q[1], 0.07, 2.8, 0.07, post, 0.3); }
     }
   }
   // retaining walls: where the ground behind the sidewalk is well above or below it, a stone wall at the back of the
@@ -1713,7 +1738,6 @@ function streetFurniture(W) {
   // kerbs: flat red and white blocks (1 m each) over the edge line on the inside of the corners, and on the outside
   // where a tight one opens out. Drawn only; the road under them is the same.
   const kerbs = new Geo(), kr = lin('#b3202a'), kw = lin('#e8e6e0');
-  const Ks = new Float64Array(N); for (let s = 0; s < N; s++) { let a = 0; for (let q = -5; q <= 5; q++) a += LP.K[(s + q + N) % N]; Ks[s] = a / 11; }
   const want = [new Uint8Array(N), new Uint8Array(N)]; // [left, right]
   for (let s = 0; s < N; s++) {
     const k = Ks[s], ak = Math.abs(k); if (ak < 1 / 75 || inT(s)) continue;
@@ -1740,7 +1764,7 @@ function streetFurniture(W) {
     const ta = Math.max(2.6, C.terrainH(TR, a[0] + lx * 1.5, a[1] + lz * 1.5)) + 0.02, tb = Math.max(2.6, C.terrainH(TR, b[0] + lx * 1.5, b[1] + lz * 1.5)) + 0.02;
     g.quad([a[0], -2, a[1]], [b[0], -2, b[1]], [b[0], tb, b[1]], [a[0], ta, a[1]], qc, 0.03, [a[0] + lx * 3, 0, a[1] + lz * 3]);
   }
-  return { g, fence, lights, kerbs };
+  return { g, fence, lights, kerbs, ads };
 }
 // Where two parts of the lap run close at different heights (the Fairmont hairpin's legs), a sidewalk reaches into the
 // other street's: { w } the lateral offset where this street's sidewalk ends (X.line normally) and { oy } the other
@@ -1752,6 +1776,19 @@ function streetEdge(LP, s, sd) {
   const ds = Math.abs(n.s - s); if (Math.min(ds, LP.N - ds) < 60) return { w: X.line };
   const D = Math.hypot(LP.X[s] - LP.X[n.s], LP.Z[s] - LP.Z[n.s]);
   return { w: Math.max(X.kerb + 0.6, Math.min(X.line, D - X.kerb - 0.5)), oy: LP.Y[n.s] + X.slab };
+}
+// banners for the Armco: one made-up sponsor per row of the atlas, each row 10 m of banner
+const ADS = [['AZURE TYRES', '#0f2a5c', '#ffffff'], ['RIVIERA CHRONO', '#0d3b2a', '#e8d9a8'], ['TORQUE COLA', '#c8202a', '#ffffff'], ['CORNICHE ENERGY', '#14171c', '#ffd23a'],
+  ['SIDEWAYS', '#f3f1ea', '#14171c'], ['BANQUE DU PORT', '#1d2a44', '#d6b25e'], ['MISTRAL OIL', '#e8e4da', '#b3232d'], ['LIGURIA AIR', '#1f5fbf', '#ffffff']];
+function adsCanvas() {
+  return canvasTex(1024, 64 * ADS.length, (g, w, h) => {
+    ADS.forEach(([t, bg, fg], i) => {
+      const y = i * 64; g.fillStyle = bg; g.fillRect(0, y, w, 64);
+      g.fillStyle = fg; g.font = `700 44px ${FONT}`; g.textBaseline = 'middle'; g.textAlign = 'center';
+      for (const x of [w * 0.25, w * 0.75]) g.fillText(t, x, y + 33);
+      g.fillStyle = 'rgba(0,0,0,0.18)'; g.fillRect(0, y + 60, w, 4);
+    });
+  });
 }
 // the catch fence: a diamond mesh of wire
 function fenceCanvas() {
@@ -2211,6 +2248,7 @@ function buildScene(R, W) {
     add(R.mesh(sf.fence), { mode: 2, tex: R.texture(fenceCanvas(), { repeat: true }) });
     add(R.mesh(sf.lights), { mode: 4, tint: [2.6, 2.4, 2.0] });
     add(R.mesh(sf.kerbs), { mode: 0 });
+    add(R.mesh(sf.ads), { mode: 2, tex: R.texture(adsCanvas()) });
     add(R.mesh(seaGeo(W)), { mode: 13 });
     add(R.mesh(standsGeo(W)), { mode: 0 }, true);
     if (O.lms) { const lm = landmarkDeco(W); add(R.mesh(lm.g), { mode: 0 }, true); add(R.mesh(lm.water), { mode: 13 }); }
