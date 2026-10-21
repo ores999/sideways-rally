@@ -46,7 +46,7 @@ const VIS = {
   monaco: {
     zen: '#2f6cc0', fogCol: '#c4d2de', glow: '#fff0d6', sunDisc: '#fff6e4', cloudCol: '#f4f6f9', clouds: 0.3,
     sunEl: 46, sunAz: 200, sunCol: '#fff3df', sunI: 3.0, sky: '#8fb4dc', skyI: 0.82, gnd: '#7a7468', gndI: 0.5, exp: 0.96,
-    fog: [160, 1100], road: ['#4b4b4f', '#3b3b3f', '#6f6b67'], icy: 0, lines: true, tt: [1.0, 1.0, 1.0], rays: 0.3,
+    fog: [160, 1100], road: ['#4b4b4f', '#3b3b3f', '#6f6b67'], icy: 0, lines: 2, tt: [1.0, 1.0, 1.0], rays: 0.3,
     ground: ['#4a4a4d', '#454549', '#525256', '#3e3e42'], verge: '#8c877e', rock: '#8f887c', walk: '#b3a894', kerb: '#bdb5a6', roof: '#8a6f5e',
     sea: '#0f4a5e', seabed: '#2f4e50', hill: ['#8a8068', '#9a8b72', '#7a7a5c'], scrub: '#4a5a30',
     dust: [0.6, 0.6, 0.6], mark: [0.04, 0.04, 0.05, 0.55], far: '#8a96a2', skirt: '#4c4d50',
@@ -195,7 +195,7 @@ function terrainMesh(W) {
   const pal = (st.kind === 'pine' ? V.grass : st.kind === 'frost' ? V.snow : st.kind === 'city' ? V.ground : V.sand).map(lin);
   const verge = lin(V.verge), rock = lin(V.rock);
   const strata = V.strata ? V.strata.map(lin) : null;
-  const hw = T.hw;
+  const hw = T.hw, gardens = W.O && W.O.gardens && W.O.gardens.length ? W.O.gardens : null;
   for (let j = 0; j < nzc; j++) for (let i = 0; i < nx; i++) {
     const k = j * nx + i, x = TR.x0 + i * cell, z = TR.z0 + j * cell, y = H[k];
     pos[k * 3] = x; pos[k * 3 + 1] = y; pos[k * 3 + 2] = z;
@@ -215,6 +215,8 @@ function terrainMesh(W) {
       else if (d > C.STREET.line + 1) { c = mixc(lin(V.hill[0]), lin(V.hill[1]), n1); c = mixc(c, lin(V.hill[2]), Math.max(0, n2 - 0.5) * 1.4); c = mixc(c, lin(V.scrub), C.sstep(0.15, 0.4, slope) * (0.6 + 0.4 * n2)); }
       // a drop between two levels of the town is a masonry retaining wall, not a bank of asphalt or earth
       if (y >= 0.5) c = mixc(c, mixc(lin('#bfae92'), lin('#a89a82'), n2), C.sstep(0.3, 0.55, slope));
+      // the gardens (Boulingrins, Petite Afrique) are lawns
+      if (gardens && gardens.some(G => padIn(G, x, z))) c = mixc(lin('#4d6a2c'), lin('#66833a'), n2 * 0.7 + n1 * 0.3);
     } else if (st.kind === 'city') {
       c = mixc(pal[0], pal[1], n1); c = mixc(c, pal[2], n3 * 0.5); c = mixc(c, pal[3], Math.max(0, n2 - 0.6) * 1.2);
     } else if (st.kind === 'pine') {
@@ -1617,6 +1619,7 @@ function streetMesh(W) {
     const tint = scalec(lin(sty.tints[(R() * sty.tints.length) | 0]), 0.92 + R() * 0.12);
     buildingGeo(geoAt(b.pts[0][0], b.pts[0][1]), b.pts, b.base, b.low, b.floors, ['front', 'party', 'back', 'party'], sty, tint, R, roofC);
   }
+  if (O.lms) landmarkWalls(W, geoAt);
   const p = [], nn = [], cc = [], uu = [], chunks = [];
   for (const g of buckets.values()) {
     const v0 = p.length / 3; p.push(...g.p); nn.push(...g.n); cc.push(...g.c); uu.push(...g.u);
@@ -1692,6 +1695,26 @@ function streetFurniture(W) {
     const a = C.loopSide(LP, s, -TW), b = C.loopSide(LP, s, TW);
     g.quad([a[0], y + TH, a[1]], [b[0], y + TH, b[1]], [b[0], y + TH + 4, b[1]], [a[0], y + TH + 4, a[1]], conc, 0.03, [a[0] - fx, y, a[1] - fz]);
   }
+  // kerbs: flat red and white blocks (1 m each) over the edge line on the inside of the corners, and on the outside
+  // where a tight one opens out. Drawn only; the road under them is the same.
+  const kerbs = new Geo(), kr = lin('#b3202a'), kw = lin('#e8e6e0');
+  const Ks = new Float64Array(N); for (let s = 0; s < N; s++) { let a = 0; for (let q = -5; q <= 5; q++) a += LP.K[(s + q + N) % N]; Ks[s] = a / 11; }
+  const want = [new Uint8Array(N), new Uint8Array(N)]; // [left, right]
+  for (let s = 0; s < N; s++) {
+    const k = Ks[s], ak = Math.abs(k); if (ak < 1 / 75 || inT(s)) continue;
+    const inside = k > 0 ? 0 : 1; // a left turn (K > 0) has its inside on the left
+    for (let q = -9; q <= 9; q++) want[inside][(s + q + N) % N] = 1;
+    if (ak > 1 / 30) for (let q = 4; q <= 26; q++) want[1 - inside][(s + q) % N] = 1;
+  }
+  for (let side = 0; side < 2; side++) for (let s = 0; s < N; s++) {
+    if (!want[side][s] || inT(s)) continue;
+    const sd = side ? 1 : -1, s2 = (s + 1) % N, ya = LP.Y[s], yb = LP.Y[s2];
+    const a0 = C.loopSide(LP, s, sd * 3.95), a1 = C.loopSide(LP, s, sd * 4.9), b0 = C.loopSide(LP, s2, sd * 3.95), b1 = C.loopSide(LP, s2, sd * 4.9);
+    const c = s & 1 ? kw : kr;
+    kerbs.quad([a0[0], ya + 0.012, a0[1]], [b0[0], yb + 0.012, b0[1]], [b1[0], yb + 0.035, b1[1]], [a1[0], ya + 0.035, a1[1]], c, 0.12, [a0[0], ya - 5, a0[1]]);
+    const c0 = C.loopSide(LP, s, sd * 5.0), c1 = C.loopSide(LP, s2, sd * 5.0);
+    kerbs.quad([a1[0], ya + 0.035, a1[1]], [b1[0], yb + 0.035, b1[1]], [c1[0], yb - 0.01, c1[1]], [c0[0], ya - 0.01, c0[1]], scalec(c, 0.85), 0.1, [a0[0], ya - 5, a0[1]]);
+  }
   // quay walls: the harbour's edge as a vertical face down into the water
   const ring = C.unpackPts(st.street.sea), qc = lin('#a9a296');
   for (let i = 0; i + 1 < ring.length; i++) {
@@ -1702,7 +1725,7 @@ function streetFurniture(W) {
     const ta = Math.max(2.6, C.terrainH(TR, a[0] + lx * 1.5, a[1] + lz * 1.5)) + 0.02, tb = Math.max(2.6, C.terrainH(TR, b[0] + lx * 1.5, b[1] + lz * 1.5)) + 0.02;
     g.quad([a[0], -2, a[1]], [b[0], -2, b[1]], [b[0], tb, b[1]], [a[0], ta, a[1]], qc, 0.03, [a[0] + lx * 3, 0, a[1] + lz * 3]);
   }
-  return { g, fence, lights };
+  return { g, fence, lights, kerbs };
 }
 // the catch fence: a diamond mesh of wire
 function fenceCanvas() {
@@ -1769,8 +1792,11 @@ function standsGeo(W) {
     Q(X.line, -0.3, X.line, 0.55, conc, 0.03);
     for (let t = 0; t < 5; t++) {
       const l0 = L0 + t * 1.25, h = 0.55 + t * 0.62;
-      Q(l0, h, l0 + 1.25, h, t % 2 ? seat : scalec(seat, 0.85), 0.2);
-      Q(l0 + 1.25, h, l0 + 1.25, h + 0.62, conc, 0.03);
+      // from the track you see the seat backs: each riser carries a row of blue seats
+      Q(l0, h, l0 + 1.25, h, conc, 0.03);
+      Q(l0 + 0.95, h, l0 + 0.95, h + 0.5, t % 2 ? seat : scalec(seat, 0.85), 0.25);
+      Q(l0 + 0.95, h + 0.5, l0 + 1.25, h + 0.5, scalec(seat, 0.7), 0.2);
+      Q(l0 + 1.25, h, l0 + 1.25, h + 0.62, scalec(conc, 0.8), 0.03);
     }
     Q(L0 + 6.25, 3.65, L0 + 6.25, 5.6, conc, 0.03);
     Q(X.line + 0.2, 5.4, L0 + 6.4, 5.7, roof, 0.1);
@@ -1830,6 +1856,269 @@ function seaGeo(W) {
   }
   return g;
 }
+
+// ---------- Monaco's landmarks ----------
+// Real footprints (O.lms, from OpenStreetMap): each building gets facade walls in the town's shader (streetMesh) and a
+// mode-0 Geo of its own details: cornices, mansard roofs with dormers, the Casino's towers and clock, the Hôtel de
+// Paris' rotunda, the Café de Paris' awnings, the Fairmont's terraces. Plus the square's paving and fountain, the
+// gardens' flower beds and the swimming pool. Heights follow the streets they stand on.
+const polyArea = P => { let a = 0; for (let i = 0, j = P.length - 1; i < P.length; j = i++) a += P[j][0] * P[i][1] - P[i][0] * P[j][1]; return a / 2; };
+function polyEdges(P) {
+  const s = polyArea(P) > 0 ? 1 : -1;
+  return P.map((a, i) => {
+    const b = P[(i + 1) % P.length], l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1e-6, dx = (b[0] - a[0]) / l, dz = (b[1] - a[1]) / l;
+    return { a, b, l, dx, dz, nx: s * dz, nz: -s * dx, mx: (a[0] + b[0]) / 2, mz: (a[1] + b[1]) / 2 }; // n: outward
+  });
+}
+// the outline pulled in by d (mitred at each corner)
+const insetPoly = (E, d) => E.map((e, i) => { const p = E[(i + E.length - 1) % E.length], k = d / Math.max(0.35, 1 + p.nx * e.nx + p.nz * e.nz); return [e.a[0] - (p.nx + e.nx) * k, e.a[1] - (p.nz + e.nz) * k]; });
+// a box turned about y: sx along (dx, dz), sz across it
+function obox(g, cx, cy, cz, dx, dz, sx, sy, sz, col, spec) {
+  const nx = dz, nz = -dx, hx = sx / 2, hz = sz / 2, y0 = cy - sy / 2, y1 = cy + sy / 2, ref = [cx, cy, cz];
+  const P = (u, v, y) => [cx + dx * u + nx * v, y, cz + dz * u + nz * v], q = (a, b, c, d) => g.quad(a, b, c, d, col, spec, ref);
+  q(P(-hx, -hz, y0), P(hx, -hz, y0), P(hx, -hz, y1), P(-hx, -hz, y1)); q(P(-hx, hz, y0), P(hx, hz, y0), P(hx, hz, y1), P(-hx, hz, y1));
+  q(P(-hx, -hz, y0), P(-hx, hz, y0), P(-hx, hz, y1), P(-hx, -hz, y1)); q(P(hx, -hz, y0), P(hx, hz, y0), P(hx, hz, y1), P(hx, -hz, y1));
+  q(P(-hx, -hz, y1), P(hx, -hz, y1), P(hx, hz, y1), P(-hx, hz, y1));
+}
+// a square roof rising to a point, its sides bowed out (k > 0) like the casino's pavilions
+function pavilion(g, cx, y0, cz, dx, dz, w, h, col, k) {
+  const nx = dz, nz = -dx, ref = [cx, y0 - 5, cz], st = 4;
+  const ring = (t) => { const r = w / 2 * (1 - t) * (1 + k * Math.sin(Math.PI * t)), y = y0 + h * t; return [[-r, -r], [r, -r], [r, r], [-r, r]].map(([u, v]) => [cx + dx * u + nx * v, y, cz + dz * u + nz * v]); };
+  for (let i = 0; i < st; i++) {
+    const A = ring(i / st), B = ring((i + 1) / st);
+    for (let j = 0; j < 4; j++) g.quad(A[j], A[(j + 1) % 4], B[(j + 1) % 4], B[j], col, 0.35, ref);
+  }
+}
+// a vertical disc facing (nx, nz)
+function vdisc(g, cx, cy, cz, nx, nz, r, col, spec, seg) {
+  const tx = -nz, tz = nx, c = [cx, cy, cz], ref = [cx - nx, cy, cz - nz];
+  for (let i = 0; i < seg; i++) {
+    const a0 = i / seg * Math.PI * 2, a1 = (i + 1) / seg * Math.PI * 2;
+    g.tri(c, [cx + tx * Math.cos(a0) * r, cy + Math.sin(a0) * r, cz + tz * Math.cos(a0) * r], [cx + tx * Math.cos(a1) * r, cy + Math.sin(a1) * r, cz + tz * Math.cos(a1) * r], col, spec, ref);
+  }
+}
+// heights and styles of each landmark, worked out once per world
+function lmPlan(W) {
+  if (W.lmPlan) return W.lmPlan;
+  const { O, TR } = W, LP = O.street, X = C.STREET, L = O.lms, plan = [];
+  const roadY = (x, z) => { const n = C.loopNear(LP, x, z, 400); return n.s >= 0 ? LP.Y[n.s] + X.slab : C.terrainH(TR, x, z); };
+  const tmin = e => Math.min(C.terrainH(TR, e.a[0], e.a[1]), C.terrainH(TR, e.b[0], e.b[1]), C.terrainH(TR, e.mx, e.mz));
+  const byRoad = (e, r) => C.loopNear(LP, e.mx + e.nx * 2, e.mz + e.nz * 2, r + 1).d < r;
+  const sq = O.square;
+  const add = (k, o) => { if (!L[k]) return; const E = polyEdges(L[k]); plan.push(Object.assign({ k, E, P: L[k] }, o(E))); };
+  // the Casino: its front on the square, the Opéra's side stepping down the terraces to the sea
+  add('casino', E => {
+    const y = sq ? sq.y : roadY(E[0].a[0], E[0].a[1]);
+    const front = e => sq && Math.hypot(e.mx - sq.x, e.mz - sq.z) < 46 && (sq.x - e.mx) * e.nx + (sq.z - e.mz) * e.nz > 0;
+    return { tint: '#ecdcbc', f: 10, top: y + 15, base: e => front(e) ? y : Math.min(y, tmin(e)), front, roof: 'mansard', rc: '#5b7f70', mh: 4, md: 2.6 };
+  });
+  add('hdp', E => {
+    const y = roadY(...E[0].a);
+    return { tint: '#efe2c8', f: 10, top: y + 19, base: e => Math.min(y, tmin(e)), front: e => byRoad(e, 14), roof: 'mansard', rc: '#5a6166', mh: 3.6, md: 2.2 };
+  });
+  add('cafe', E => {
+    const y = roadY(...E[0].a);
+    return { tint: '#f3ede2', f: 10, top: y + 11, base: e => Math.min(y, tmin(e)), front: e => byRoad(e, 13), roof: 'flat', rc: '#9b8d7e', awn: true };
+  });
+  add('hermitage', E => {
+    let hi = -1e9; for (const e of E) hi = Math.max(hi, tmin(e));
+    return { tint: '#f0d9c8', f: 10, top: hi + 22, base: e => tmin(e), front: () => true, roof: 'mansard', rc: '#5d6468', mh: 3.4, md: 2.2 };
+  });
+  // the Fairmont stands over the tunnel: one floor line from the slab up, its walls down to the ground or the water
+  // away from the road, none over the road itself
+  add('fairmont', E => {
+    let y = -1e9; for (const e of E) for (const t of [0, 0.5, 1]) { const x = e.a[0] + (e.b[0] - e.a[0]) * t, z = e.a[1] + (e.b[1] - e.a[1]) * t, n = C.loopNear(LP, x, z, 12); if (n.d < 11) y = Math.max(y, LP.Y[n.s] + 8.4); }
+    if (y < -1e8) y = roadY(...E[0].a);
+    return { tint: '#d8ccb8', f: 6, top: y + 22, base: () => y, low: e => [0, 0.25, 0.5, 0.75, 1].some(t => C.loopNear(LP, e.a[0] + (e.b[0] - e.a[0]) * t, e.a[1] + (e.b[1] - e.a[1]) * t, 12).d < 11) ? y : Math.max(-1, tmin(e) - 1.5), front: () => true, roof: 'garden', rc: '#9b9283', soffit: true };
+  });
+  // the casino's front: two towers at its ends and a projecting centre, worked out from the edges facing the square
+  const cb = plan.find(b => b.k === 'casino'), fr = cb ? cb.E.filter(cb.front) : [];
+  if (fr.length) {
+    let ux = 0, uz = 0, nx = 0, nz = 0; for (const e of fr) { ux += e.dx * e.l; uz += e.dz * e.l; nx += e.nx * e.l; nz += e.nz * e.l; }
+    const ul = Math.hypot(ux, uz), nl = Math.hypot(nx, nz); ux /= ul; uz /= ul; nx /= nl; nz /= nl;
+    let mn = 1e9, mx = -1e9, off = -1e9; const ox = fr[0].a[0], oz = fr[0].a[1];
+    for (const e of fr) for (const p of [e.a, e.b]) { const t = (p[0] - ox) * ux + (p[1] - oz) * uz; mn = Math.min(mn, t); mx = Math.max(mx, t); off = Math.max(off, (p[0] - ox) * nx + (p[1] - oz) * nz); }
+    const at = (t, o) => [ox + ux * t + nx * (off + o), oz + uz * t + nz * (off + o)];
+    // boxes: [centre, width along the front, depth, top]
+    const y0 = cb.base(fr[0]), tc = (mn + mx) / 2;
+    cb.parts = { ux, uz, nx, nz, y0, c: at(tc, 0.9), boxes: [[at(mn + 4, -3.2), 7.2, 7.2, cb.top + 8], [at(mx - 4, -3.2), 7.2, 7.2, cb.top + 8], [at(tc, -1.5), 15, 6.6, cb.top + 3]] };
+  }
+  return W.lmPlan = plan;
+}
+// four facade walls round a box (the casino's towers)
+function boxWalls(g, [x, z], ux, uz, w, d, y0, top, tint, f, R) {
+  const nx = uz, nz = -ux, P = [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]].map(([u, v]) => [x + ux * u + nx * v, z + uz * u + nz * v]);
+  for (const e of polyEdges(P)) {
+    const nUp = Math.max(0, Math.round((top - y0 - 4) / 3)), sd = nUp + 0.05 + R() * 0.9, code = f * 64, nt = Math.max(1, Math.round(e.l / 3.3)) / 2;
+    const lr = (e.b[0] - e.a[0]) * e.nz - (e.b[1] - e.a[1]) * e.nx > 0, ua = code + (lr ? 0 : nt), ub = code + (lr ? nt : 0);
+    g.quad([e.a[0], y0 - 1, e.a[1]], [e.b[0], y0 - 1, e.b[1]], [e.b[0], top, e.b[1]], [e.a[0], top, e.a[1]], tint, y0 / 200, [x, (y0 + top) / 2, z], [[ua, sd], [ub, sd], [ub, sd], [ua, sd]]);
+  }
+}
+function landmarkWalls(W, geoAt) {
+  const R = C.rng(4242);
+  for (const b of lmPlan(W)) {
+    const tint = lin(b.tint), g = geoAt(b.P[0][0], b.P[0][1]);
+    for (const e of b.E) {
+      const base = b.base(e), low = Math.min(base, b.low ? b.low(e) : C.terrainH(W.TR, e.mx, e.mz) - 1.5);
+      const nUp = Math.max(0, Math.round((b.top - base - 4) / 3)), sd = nUp + 0.05 + R() * 0.9, code = b.f * 64, nt = Math.max(1, Math.round(e.l / FAC_W));
+      const lr = (e.b[0] - e.a[0]) * e.nz - (e.b[1] - e.a[1]) * e.nx > 0, ua = code + (lr ? 0 : nt), ub = code + (lr ? nt : 0);
+      // (the Fairmont's piers below its first floor are plain concrete, drawn with the details)
+      const y0 = b.soffit ? base : low;
+      g.quad([e.a[0], y0, e.a[1]], [e.b[0], y0, e.b[1]], [e.b[0], b.top, e.b[1]], [e.a[0], b.top, e.a[1]], tint, base / 200, [e.mx - e.nx * 3, (low + b.top) / 2, e.mz - e.nz * 3], [[ua, sd], [ub, sd], [ub, sd], [ua, sd]]);
+    }
+    if (b.parts) for (const [c, w, d, top] of b.parts.boxes) boxWalls(g, c, b.parts.ux, b.parts.uz, w, d, b.parts.y0, top, scalec(tint, 1.03), b.f, R);
+  }
+  // the casino square: paving round the fountain, level with the sidewalks (just under them)
+  const q = W.O.square;
+  if (q) {
+    const g = geoAt(q.x, q.z), ring = [];
+    for (let i = 0; i < 32; i++) ring.push([q.x + Math.cos(i / 32 * 2 * Math.PI) * q.r, q.z + Math.sin(i / 32 * 2 * Math.PI) * q.r]);
+    const tr = earcut(ring), pv = ([x, z]) => [96 + (x - q.x) / 2.4, (z - q.z) / 1.2], y = q.y - 0.02, walk = lin(visOf(W.st).walk);
+    for (let i = 0; i < tr.length; i += 3) { const a = ring[tr[i]], b = ring[tr[i + 1]], c = ring[tr[i + 2]]; g.tri([a[0], y, a[1]], [b[0], y, b[1]], [c[0], y, c[1]], walk, 0.03, [a[0], y - 10, a[1]], pv(a), pv(b), pv(c)); }
+  }
+}
+function landmarkDeco(W) {
+  const g = new Geo(), water = new Geo(), R = C.rng(4243), TR = W.TR;
+  const dark = lin('#26292c'), gold = lin('#c9a24a'), glassC = lin('#3a4650');
+  for (const b of lmPlan(W)) {
+    const tint = lin(b.tint), lc = scalec(tint, 1.06), rc = lin(b.rc), E = b.E, top = b.top;
+    // a cornice round the top
+    for (const e of E) {
+      const o = 0.5, a0 = [e.a[0] + e.nx * o, e.a[1] + e.nz * o], b0 = [e.b[0] + e.nx * o, e.b[1] + e.nz * o], ref = [e.mx - e.nx * 3, top - 0.4, e.mz - e.nz * 3];
+      g.quad([e.a[0], top - 0.9, e.a[1]], [e.b[0], top - 0.9, e.b[1]], [b0[0], top - 0.3, b0[1]], [a0[0], top - 0.3, a0[1]], lc, 0.04, ref);
+      g.quad([a0[0], top - 0.3, a0[1]], [b0[0], top - 0.3, b0[1]], [b0[0], top, b0[1]], [a0[0], top, a0[1]], lc, 0.04, ref);
+      g.quad([a0[0], top, a0[1]], [b0[0], top, b0[1]], [e.b[0], top, e.b[1]], [e.a[0], top, e.a[1]], lc, 0.04, [e.mx, top - 5, e.mz]);
+      if (b.soffit) {
+        // the hotel's underside where it bridges the road
+        const y = b.base(e);
+        const lo = Math.min(y - 0.6, b.low(e)), pc = lin('#a59e92');
+        g.quad([e.a[0], lo, e.a[1]], [e.b[0], lo, e.b[1]], [e.b[0], y, e.b[1]], [e.a[0], y, e.a[1]], y - lo > 1 ? pc : scalec(tint, 0.8), 0.03, [e.mx - e.nx * 3, y, e.mz - e.nz * 3]);
+        // its piers: dark arches between them along the water and the hillside
+        if (y - lo > 3) for (let t = 3; t < e.l - 2; t += 7.5) {
+          const x = e.a[0] + e.dx * t + e.nx * 0.03, z = e.a[1] + e.dz * t + e.nz * 0.03, hh = Math.min(y - lo - 1.2, 7);
+          obox(g, x, y - 1.2 - hh / 2, z, e.dx, e.dz, 4.6, hh, 0.04, lin('#3d3b38'), 0.05);
+        }
+      }
+    }
+    if (b.soffit) { const tr = earcut(b.P), y = b.base(E[0]) - 0.6; for (let i = 0; i < tr.length; i += 3) { const p = [b.P[tr[i]], b.P[tr[i + 1]], b.P[tr[i + 2]]]; g.tri([p[0][0], y, p[0][1]], [p[1][0], y, p[1][1]], [p[2][0], y, p[2][1]], scalec(tint, 0.55), 0.02, [p[0][0], y + 10, p[0][1]]); } }
+    // roofs: mansards (copper on the casino, slate elsewhere) with dormers, or a flat roof
+    let flat = b.P, fy = top;
+    if (b.roof === 'mansard') {
+      const I = insetPoly(E, b.md);
+      E.forEach((e, i) => {
+        const a1 = I[i], b1 = I[(i + 1) % I.length];
+        g.quad([e.a[0], top, e.a[1]], [e.b[0], top, e.b[1]], [b1[0], top + b.mh, b1[1]], [a1[0], top + b.mh, a1[1]], rc, 0.3, [e.mx - e.nx * 6, top - 2, e.mz - e.nz * 6]);
+        if (e.l < 4.5) return;
+        for (let t = 2.2; t < e.l - 1.8; t += 3.3) {
+          const x = e.a[0] + e.dx * t - e.nx * b.md * 0.42, z = e.a[1] + e.dz * t - e.nz * b.md * 0.42;
+          obox(g, x, top + b.mh * 0.42, z, e.dx, e.dz, 1.15, b.mh * 0.62, 1.1, lc, 0.05);
+          obox(g, x + e.nx * 0.56, top + b.mh * 0.38, z + e.nz * 0.56, e.dx, e.dz, 0.7, b.mh * 0.4, 0.04, glassC, 0.6);
+          pavilion(g, x, top + b.mh * 0.73, z, e.dx, e.dz, 1.25, 0.55, rc, 0);
+        }
+      });
+      flat = I; fy = top + b.mh;
+    } else if (b.roof === 'garden') {
+      // the Fairmont's roof: a parapet, then planted terraces
+      flat = insetPoly(E, 0.3); fy = top + 0.05;
+    }
+    const tr = earcut(flat), fc = b.roof === 'garden' ? lin('#5a6a44') : b.roof === 'mansard' ? scalec(rc, 0.8) : rc;
+    for (let i = 0; i < tr.length; i += 3) { const p = [flat[tr[i]], flat[tr[i + 1]], flat[tr[i + 2]]]; g.tri([p[0][0], fy, p[0][1]], [p[1][0], fy, p[1][1]], [p[2][0], fy, p[2][1]], fc, 0.03, [p[0][0], fy - 10, p[0][1]]); }
+    // awnings over the café's terrace
+    if (b.awn) for (const e of E) {
+      if (!b.front(e) || e.l < 3) continue;
+      const y = b.base(e) + 3.3, o = 2.2, red = lin('#9e1f27');
+      const a1 = [e.a[0] + e.nx * o, e.a[1] + e.nz * o], b1 = [e.b[0] + e.nx * o, e.b[1] + e.nz * o];
+      g.quad([e.a[0], y + 0.6, e.a[1]], [e.b[0], y + 0.6, e.b[1]], [b1[0], y, b1[1]], [a1[0], y, a1[1]], red, 0.1, [e.mx, y - 5, e.mz]);
+      g.quad([a1[0], y, a1[1]], [b1[0], y, b1[1]], [b1[0], y - 0.35, b1[1]], [a1[0], y - 0.35, a1[1]], scalec(red, 0.9), 0.1, [e.mx, y, e.mz]);
+    }
+    // the casino: pavilion roofs and arched windows on its towers, a pediment with a clock over the centre
+    if (b.parts) {
+      const { ux, uz, nx, nz, boxes } = b.parts, [[t1, , , ht], [t2], [cc, , , hc]] = boxes;
+      for (const [x, z] of [t1, t2]) {
+        obox(g, x, ht + 0.25, z, ux, uz, 7.8, 0.5, 7.8, lc, 0.04);
+        for (const [fx, fz] of [[nx, nz], [-nx, -nz], [ux, uz], [-ux, -uz]]) {
+          obox(g, x + fx * 3.62, top + 3.3, z + fz * 3.62, -fz, fx, 1.6, 2.8, 0.05, dark, 0.4);
+          vdisc(g, x + fx * 3.63, top + 4.7, z + fz * 3.63, fx, fz, 0.8, dark, 0.4, 8);
+        }
+        pavilion(g, x, ht + 0.5, z, ux, uz, 7.4, 6.5, rc, 0.32);
+        g.cyl(x, ht + 6.6, z, 0.28, 0.12, 2.4, 6, gold, 0.8, 'y', true);
+      }
+      const [cx, cz] = b.parts.c, f = [cx + nx * 0.9, cz + nz * 0.9];
+      obox(g, cc[0], hc + 0.2, cc[1], ux, uz, 15.6, 0.4, 7.2, lc, 0.04);
+      const pa = [f[0] - ux * 7.5, hc + 0.4, f[1] - uz * 7.5], pb = [f[0] + ux * 7.5, hc + 0.4, f[1] + uz * 7.5], pc = [f[0], hc + 4, f[1]];
+      g.tri(pa, pb, pc, lc, 0.04, [f[0] - nx * 5, hc, f[1] - nz * 5]);
+      const back = p => [p[0] - nx * 6.6, p[1], p[2] - nz * 6.6];
+      g.quad(pa, pc, back(pc), back(pa), rc, 0.3, [f[0] - nx * 3, hc - 5, f[1] - nz * 3]); g.quad(pc, pb, back(pb), back(pc), rc, 0.3, [f[0] - nx * 3, hc - 5, f[1] - nz * 3]);
+      vdisc(g, f[0] + nx * 0.03, hc + 1.75, f[1] + nz * 0.03, nx, nz, 1.05, gold, 0.7, 16);
+      vdisc(g, f[0] + nx * 0.06, hc + 1.75, f[1] + nz * 0.06, nx, nz, 0.85, lin('#f3efe4'), 0.2, 16);
+      for (const t of [-7.3, 7.3]) g.cyl(f[0] + ux * t - nx * 0.4, hc + 0.4, f[1] + uz * t - nz * 0.4, 0.35, 0.22, 2.2, 6, gold, 0.75, 'y', true);
+    }
+    // the Hôtel de Paris' rotunda: on its corner nearest the square, a round tower and a dome
+    if (b.k === 'hdp' && W.O.square) {
+      const q = W.O.square; let bi = 0, bd = 1e9;
+      E.forEach((e, i) => { const d = Math.hypot(e.a[0] - q.x, e.a[1] - q.z); if (d < bd) { bd = d; bi = i; } });
+      const e = E[bi], p = E[(bi + E.length - 1) % E.length], vx = -(e.nx + p.nx), vz = -(e.nz + p.nz), vl = Math.hypot(vx, vz) || 1;
+      const x = e.a[0] + vx / vl * 3.6, z = e.a[1] + vz / vl * 3.6, y0 = b.base(e), r = 6, h = top + 1.2;
+      g.cyl(x, y0, z, r, r, h - y0, 24, tint, 0.04, 'y', false);
+      for (let fl = 0; fl < 6; fl++) for (let i = 0; i < 12; i++) {
+        const a = (i + 0.5) / 12 * Math.PI * 2, cx = x + Math.cos(a) * (r + 0.02), cz = z + Math.sin(a) * (r + 0.02), wy = y0 + (fl ? 4 + fl * 3 - 1.4 : 1.6);
+        obox(g, cx, wy, cz, -Math.sin(a), Math.cos(a), 1.2, fl ? 1.9 : 2.6, 0.04, dark, 0.45);
+      }
+      g.cyl(x, h - 0.4, z, r + 0.45, r + 0.45, 0.6, 24, lc, 0.04, 'y', true);
+      for (let i = 0; i < 6; i++) { const a0 = i / 6 * Math.PI / 2, a1 = (i + 1) / 6 * Math.PI / 2; g.cyl(x, h + 0.2 + Math.sin(a0) * 5, z, r * Math.cos(a0), r * Math.cos(a1), (Math.sin(a1) - Math.sin(a0)) * 5, 24, rc, 0.35, 'y', i === 5); }
+      g.cyl(x, h + 5, z, 0.9, 0.7, 1.8, 10, lc, 0.04, 'y', true);
+      pavilion(g, x, h + 6.8, z, 1, 0, 1.6, 1.4, rc, 0.2);
+    }
+  }
+  // the middle of the square: the round lawn (the "camembert") edged with flowers, the fountain in its middle
+  const q = W.O.square;
+  if (q) {
+    const stone = lin('#d6ccb9'), flw = [lin('#a8222f'), lin('#c79a2a'), lin('#b8466f'), lin('#e9e4d8')];
+    g.cyl(q.x, q.y - 0.08, q.z, 13.4, 13.4, 0.26, 48, stone, 0.04, 'y', false);
+    g.cyl(q.x, q.y + 0.17, q.z, 13.2, 13.2, 0.01, 48, lin('#4c6a2e'), 0.03, 'y', true);
+    for (let i = 0; i < 64; i++) { const a = i / 64 * Math.PI * 2; obox(g, q.x + Math.cos(a) * 12.4, q.y + 0.24, q.z + Math.sin(a) * 12.4, -Math.sin(a), Math.cos(a), 1.25, 0.14, 1.1, scalec(flw[(i >> 1) % 4], 0.85), 0.05); }
+    g.cyl(q.x, q.y - 0.05, q.z, 3.8, 3.8, 0.7, 32, stone, 0.05, 'y', true, 0, stone);
+    water.cyl(q.x, q.y + 0.6, q.z, 3.45, 3.45, 0.01, 28, lin('#2d8ea0'), 0.9, 'y', true);
+    g.cyl(q.x, q.y, q.z, 0.8, 0.5, 1.5, 12, stone, 0.05, 'y', true);
+    g.cyl(q.x, q.y + 1.5, q.z, 1.5, 1.35, 0.22, 16, stone, 0.05, 'y', true);
+    g.cyl(q.x, q.y + 1.72, q.z, 0.16, 0.04, 1.8, 8, lin('#e8f2f5'), 0.6, 'y', false);
+  }
+  // flower beds in the gardens: low kerbed ovals of colour
+  for (const f of W.O.beds || []) {
+    const fc = [lin('#c3283a'), lin('#e3b52c'), lin('#d9508a'), lin('#7f5bb0')][(f.c * 4) | 0];
+    g.cyl(f.x, f.y - 0.1, f.z, f.s, f.s * 0.95, 0.38, 16, lin('#cfc5b2'), 0.04, 'y', true, 0, scalec(fc, 0.9));
+  }
+  // the swimming pool (Stade Nautique Rainier III): a white deck, a 50 m pool with lanes and a diving pool
+  const PL = W.O.lms && W.O.lms.pool;
+  if (PL) {
+    const LP = W.O.street, E = polyEdges(PL);
+    let cx = 0, cz = 0; for (const [x, z] of PL) { cx += x; cz += z; } cx /= PL.length; cz /= PL.length;
+    const y = C.terrainH(TR, cx, cz) + 0.03, deck = lin('#e2ddd2'), tile = lin('#7fc4d1'), lane = [lin('#c22a2a'), lin('#f3f3f0')];
+    const tr = earcut(PL);
+    for (let i = 0; i < tr.length; i += 3) { const p = [PL[tr[i]], PL[tr[i + 1]], PL[tr[i + 2]]]; g.tri([p[0][0], y, p[0][1]], [p[1][0], y, p[1][1]], [p[2][0], y, p[2][1]], deck, 0.05, [p[0][0], y - 10, p[0][1]]); }
+    let le = E[0]; for (const e of E) if (e.l > le.l) le = e;
+    const ux = le.dx, uz = le.dz;
+    for (const [len, wid, t0, dep] of [[50, 21, -14, 1.8], [18, 15, 26, 4]]) {
+      // laid along the longest side, a few metres in from it
+      const ox = le.mx - le.nx * (wid / 2 + 3) + ux * t0, oz = le.mz - le.nz * (wid / 2 + 3) + uz * t0, P = (u, v, yy) => [ox + ux * u - uz * v, yy, oz + uz * u + ux * v], hl = len / 2, hw = wid / 2;
+      const C4 = [P(-hl, -hw, 0), P(hl, -hw, 0), P(hl, hw, 0), P(-hl, hw, 0)].map(p => [p[0], p[2]]);
+      if (!C4.every(([x, z]) => padIn(PL, x, z) && C.loopNear(LP, x, z, 9).d > 8.6)) continue;
+      const yw = y - 0.22, yb = y - dep;
+      water.quad(P(-hl, -hw, yw), P(hl, -hw, yw), P(hl, hw, yw), P(-hl, hw, yw), lin('#3fb0c4'), 0.9, P(0, 0, yw - 5));
+      const S = [[-hl, -hw], [hl, -hw], [hl, hw], [-hl, hw]];
+      for (let i = 0; i < 4; i++) { const [u0, v0] = S[i], [u1, v1] = S[(i + 1) % 4]; g.quad(P(u0, v0, yb), P(u1, v1, yb), P(u1, v1, y), P(u0, v0, y), tile, 0.2, P(0, 0, y)); }
+      g.quad(P(-hl, -hw, yb), P(hl, -hw, yb), P(hl, hw, yb), P(-hl, hw, yb), tile, 0.1, P(0, 0, yb + 5));
+      if (len === 50) for (let k = 1; k < 8; k++) { const v = -hw + k * wid / 8; for (let u = -hl; u < hl; u += 2) { const p = P(u + 1, v, yw + 0.04); obox(g, p[0], p[1], p[2], ux, uz, 1.9, 0.08, 0.1, lane[(u / 2 + 50) & 1], 0.2); } }
+      else { // diving boards and the platform
+        const p = P(hl + 1.5, 0, y);
+        obox(g, p[0], y + 5, p[2], ux, uz, 3, 10, 2.5, deck, 0.05);
+        for (const [hh, ext] of [[3, 4], [5, 4], [7.5, 5], [10, 5.5]]) { const q2 = P(hl + 1.5 - ext / 2, (hh % 2 ? -1 : 1) * 2, y); obox(g, q2[0], y + hh, q2[2], ux, uz, ext + 1, 0.25, 2, deck, 0.05); }
+      }
+    }
+  }
+  return { g, water };
+}
+const padIn = (P, x, z) => { let c = 0; for (let i = 0, j = P.length - 1; i < P.length; j = i++) { const a = P[i], b = P[j]; if ((a[1] > z) !== (b[1] > z) && x < (b[0] - a[0]) * (z - a[1]) / (b[1] - a[1]) + a[0]) c ^= 1; } return c; };
 
 // ---------- build stage scene ----------
 const LOD_NEAR = 130, LOD_MID = 280;
@@ -1896,8 +2185,10 @@ function buildScene(R, W) {
     add(R.mesh(sf.g), { mode: 0 }, true);
     add(R.mesh(sf.fence), { mode: 2, tex: R.texture(fenceCanvas(), { repeat: true }) });
     add(R.mesh(sf.lights), { mode: 4, tint: [2.6, 2.4, 2.0] });
+    add(R.mesh(sf.kerbs), { mode: 0 });
     add(R.mesh(seaGeo(W)), { mode: 13 });
     add(R.mesh(standsGeo(W)), { mode: 0 }, true);
+    if (O.lms) { const lm = landmarkDeco(W); add(R.mesh(lm.g), { mode: 0 }, true); add(R.mesh(lm.water), { mode: 13 }); }
     const one = o => [o.x, o.y, o.z, o.rot, 1, 1, 0, 0, 1, 1, 1];
     if (O.boats.length) add(R.mesh(yachtGeo(), instData(O.boats, o => { const k = 0.9 + o.c * 0.12; return [o.x, -0.02 * o.len, o.z, o.rot, o.len, o.len, 0, 0, k, k, k]; }), cull), { mode: 0 }, true);
     if (O.palms.length) add(R.mesh(smoothGeo(palmGeo(), 40), instData(O.palms, o => { const k = 0.85 + o.c * 0.3; return [o.x, o.y, o.z, o.rot, o.s, o.s, 0, 0, k, k, k]; }), cull), { mode: 0, sway: 0.5 }, true);

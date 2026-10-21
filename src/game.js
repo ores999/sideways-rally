@@ -3062,7 +3062,8 @@ function updateCamera(dt) {
   if (dbgCam) {
     const c = Math.cos(vis.h), sn = Math.sin(vis.h);
     const tw = (o) => [vis.x + o[0] * c + o[2] * sn, vis.y + o[1], vis.z - o[0] * sn + o[2] * c];
-    cam.pos = tw(dbgCam.p); cam.look = tw(dbgCam.l); cam.fov = dbgCam.fov || 40; return;
+    // (world: true puts the camera at world coordinates instead of round the car)
+    cam.pos = dbgCam.world ? dbgCam.p.slice() : tw(dbgCam.p); cam.look = dbgCam.world ? dbgCam.l.slice() : tw(dbgCam.l); cam.fov = dbgCam.fov || 40; return;
   }
   const fx = Math.sin(vis.h), fz = Math.cos(vis.h);
   const spd = Math.hypot(car.vx, car.vz);
@@ -3849,7 +3850,7 @@ if (location.protocol === 'file:') window.__rally = {
   resume() { paused_dbg = false; last = performance.now(); },
   setCam(c) { settings.cam = c; },
   auto(v) { dbgAuto = v; },
-  view(p, l, fov) { dbgCam = p ? { p, l, fov } : null; },
+  view(p, l, fov, world) { dbgCam = p ? { p, l, fov, world } : null; },
   pickCar(i) { selectCar(i); },
   audio: () => ({ A, sfx, getTune }),
   setDirt(v) { dirt = v; }, get mode() { return mode; }, get dbg() { return { dirt, hitFlash, dust: dust.n, chips: chips.n, hitK: S.E.hitK, shake: cam.shake, evt: Object.assign({}, evt) }; }, get car() { return car; }, get W() { return W; }, startRace, settings, keys, toMenu, get raceT() { return raceT; }, net, netJoin, netCreate, netStart, netLeave, netRows: () => (netRun() ? netRows() : null) };
