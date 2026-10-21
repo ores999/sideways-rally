@@ -66,7 +66,7 @@ function loadPB(key, car) {
   try { r.ghost = r.q ? unpackGhost(b64d(r.q)).g : r.g ? dec(r.g) : null; } catch (e) { return null; }
   return r.ghost ? r : null;
 }
-function stageBest(key) { let best = null; for (const c of C.CARS) { if (c.bonus) continue; const r = store.get(pbKey(key, c.id), null); if (r && (!best || r.t < best.t)) best = { t: r.t, car: c.id }; } return best; }
+function stageBest(key) { let best = null; for (const c of C.CARS) { if (c.bonus || c.only) continue; const r = store.get(pbKey(key, c.id), null); if (r && (!best || r.t < best.t)) best = { t: r.t, car: c.id }; } return best; }
 // earlier versions kept one best per stage (whatever the car): it becomes that car's best
 for (const st of C.STAGES) { const r = store.get('pb.' + st.id, null); if (r && r.t) { if (r.car && !store.get(pbKey(st.id, r.car), null)) store.set(pbKey(st.id, r.car), r); store.del('pb.' + st.id); } }
 const carById = id => C.CARS.find(c => c.id === id);
@@ -121,7 +121,7 @@ function drawThumb(cv, T, st) {
   g.fillStyle = '#efece4'; g.fillRect(px(T.n - 1) - 4, pz(T.n - 1) - 4, 8, 8);
 }
 const MEDALS = ['', 'Bronze', 'Silver', 'Gold'];
-const SHORT = { foca: 'Focus', impressa: 'Impreza', lancha: 'Lancer Evo', delta: 'Delta', pejo: '205 T16', kwattro: 'Quattro S1', selica: 'Celica', saveiro: 'Saveiro' };
+const SHORT = { f1: 'F2008', foca: 'Focus', impressa: 'Impreza', lancha: 'Lancer Evo', delta: 'Delta', pejo: '205 T16', kwattro: 'Quattro S1', selica: 'Celica', saveiro: 'Saveiro' };
 const shortCar = id => SHORT[id] || (carById(id) || { name: id }).name;
 function stageRow(key, selected, onClick, extraTitle) {
   const st = C.stageDef(key), T = trackFor(key);
@@ -194,6 +194,10 @@ function renderCarList() {
       t.append(el('small', ok ? null : 'lock', inRoom() ? '🔒 Not in online races: those are run in the rally cars' : ok ? `You're No. 1 on ${road}: the keys are yours · its times don't count`
         : lead ? `🔒 Only the No. 1 on ${road} drives it (${lead.n} right now)` : `🔒 Set the fastest time on ${road} to unlock it`));
       for (const [x, y, d] of [[2, 10, 0], [97, 18, 0.6], [52, 86, 1.1], [92, 84, 0.3], [30, 4, 1.4]]) { const sp = el('span', 'spark', '✦'); sp.style.left = x + '%'; sp.style.top = y + '%'; sp.style.animationDelay = d + 's'; b.append(sp); }
+    } else if (c.only) {
+      const ok = !inRoom() && fitsRoad(c, curKeyMenu()), road = C.stageDef(c.only).name;
+      b.classList.add('only'); if (!ok) b.classList.add('locked');
+      t.append(el('small', ok ? null : 'lock', inRoom() ? '🔒 Not in online races: those are run in the rally cars' : ok ? `${c.era} · ${c.engine.layout} · its times are a class of their own` : `🔒 ${road} only`));
     } else t.append(el('small', null, `${c.era} · ${c.engine.layout} turbo`));
     const hp = el('span', 'hp'); hp.append(`${Math.round(c.peak.hp)} hp`); hp.append(el('small', null, `0–100 ${c.spec.t100.toFixed(1)} s`));
     b.append(sw, t, hp);
@@ -204,16 +208,26 @@ function renderCarList() {
 }
 // ---- the bonus car: whoever holds No. 1 on a road (any car, any conditions) may take the Saveiro there ----
 const isBonus = c => !!(c && c.bonus);
+// cars kept apart from the rally cars' times: the bonus Saveiro and the cars built for one road (the F1 at Monaco)
+const apart = c => !!(c && (c.bonus || c.only));
+const fitsRoad = (c, key) => !c.only || C.stageDef(key).id === c.only;
 function leaderOf(key) {
   const m = mapKey(key), oc = online.on ? online.cache.get(m) : null; let best = null;
-  for (const e of [...boardAll().filter(x => mapKey(x.k) === m), ...(oc ? oc.rows : [])]) if (!isBonus(carById(e.c)) && (!best || e.t < best.t)) best = e;
+  for (const e of [...boardAll().filter(x => mapKey(x.k) === m), ...(oc ? oc.rows : [])]) if (!apart(carById(e.c)) && (!best || e.t < best.t)) best = e;
   return best;
 }
 const bonusOK = key => { const b = leaderOf(key); return !!(b && settings.name && b.n.toLowerCase() === settings.name.toLowerCase()); };
-const plainCar = () => { const i = settings.lastCar | 0; return C.CARS[i] && !isBonus(C.CARS[i]) ? i : 0; };
+const plainCar = () => { const i = settings.lastCar | 0; return C.CARS[i] && !apart(C.CARS[i]) ? i : 0; };
 // hand the keys back when the road, the name or the board says the Saveiro isn't yours here (or a rally starts)
 function keepCarAllowed(key) {
-  if (!isBonus(C.CARS[settings.car]) || (!inRoom() && bonusOK(key || curKeyMenu()))) return false;
+  const c = C.CARS[settings.car];
+  if (c.only) {
+    if (!inRoom() && fitsRoad(c, key || curKeyMenu())) return false;
+    settings.car = plainCar(); saveSettings();
+    toast(`The ${shortCar(c.id)} only runs at ${C.stageDef(c.only).name}: back in the ${C.CARS[settings.car].name}.`);
+    return true;
+  }
+  if (!isBonus(c) || (!inRoom() && bonusOK(key || curKeyMenu()))) return false;
   settings.car = plainCar(); saveSettings();
   toast(`The Saveiro stays with the No. 1 of each road: back in the ${C.CARS[settings.car].name}.`);
   return true;
@@ -222,7 +236,7 @@ function specRows(c) {
   const E = c.engine, pk = c.peak;
   return [
     ['Engine', `${E.code} · ${(E.disp / 1000).toFixed(1)} L ${E.layout.toLowerCase()}`],
-    ['Aspiration', `${E.asp} · ${E.boostBar.toFixed(1)} bar`],
+    ['Aspiration', E.boostBar ? `${E.asp} · ${E.boostBar.toFixed(1)} bar` : E.asp],
     ['Power', `${nf(pk.hp)} hp <em>@ ${nf(pk.hpRpm)} rpm</em>`],
     ['Torque', `${nf(pk.nm)} Nm <em>@ ${nf(pk.nmRpm)} rpm</em>`],
     ['Redline', `${nf(E.redline)} rpm`],
@@ -233,7 +247,7 @@ function specRows(c) {
     ['Wheelbase', `${c.wb.toFixed(2)} m`],
     ['0–100 km/h', `${c.spec.t100.toFixed(2)} s <em>tarmac</em>`],
     ['0–160 km/h', `${c.spec.t160.toFixed(2)} s`],
-    ['Boost lag', `${c.spec.lag.toFixed(2)} s <em>to full boost from 60 km/h</em>`],
+    c.engine.boostBar ? ['Boost lag', `${c.spec.lag.toFixed(2)} s <em>to full boost from 60 km/h</em>`] : ['Boost lag', 'None <em>· no turbo</em>'],
     ['Top speed', `${Math.round(c.spec.vmax)} km/h <em>stage gearing</em>`],
   ];
 }
@@ -241,7 +255,7 @@ function buildSheet(box, c) {
   box.innerHTML = '';
   const s = C.carStats(c);
   const stats = el('div', 'stats');
-  for (const [k, v] of [['Speed', s.speed], ['Accel', s.accel], ['Grip', s.grip], ['Agility', s.handling], ['Turbo lag', s.lag], ['Stability', s.stability]]) {
+  for (const [k, v] of [['Speed', s.speed], ['Accel', s.accel], ['Grip', s.grip], ['Agility', s.handling], ['Turbo lag', c.engine.boostBar ? s.lag : 0], ['Stability', s.stability]]) {
     stats.append(el('span', null, k));
     const bar = el('div', 'bar'); bar.setAttribute('role', 'img'); bar.setAttribute('aria-label', `${k} ${v} of 10`);
     for (let i = 0; i < 10; i++) bar.append(el('i', i < v ? 'on' : ''));
@@ -360,7 +374,7 @@ function selectStage(i) {
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
   settings.stage = i; if (i === 'daily') settings.dailyKey = settings.dailyKey || C.dailyKey();
   timesStage = null;
-  if (keepCarAllowed()) renderCarList();
+  keepCarAllowed(); renderCarList(); // the Saveiro's and the F1's locks depend on the road
   saveSettings(); renderStageList();
   if (curKey() !== loadedKey) loadStage(curKey());
   if (inRoom()) netStageSync();
@@ -378,6 +392,7 @@ function renderTune() {
   for (const b of $('tuneDump').children) b.setAttribute('aria-pressed', String(b.dataset.v === t.dump));
   for (const b of $('tuneExh').children) b.setAttribute('aria-pressed', String(b.dataset.v === t.exhaust));
   $('tuneMusicRow').hidden = !isBonus(c);
+  $('tuneDumpRow').hidden = !c.engine.boostBar; // no turbo, nothing to release
   for (const b of $('tuneMusic').children) b.setAttribute('aria-pressed', String(b.dataset.v === t.music));
 }
 function setTune(key, v) {
@@ -398,6 +413,11 @@ for (const b of $('tuneMusic').children) b.addEventListener('click', () => setTu
 function selectCar(i, btn) {
   if (mode === 'loading') return;
   const c = C.CARS[i];
+  if (c.only && (inRoom() || !fitsRoad(c, curKeyMenu()))) {
+    if (btn) { btn.classList.remove('shake'); void btn.offsetWidth; btn.classList.add('shake'); }
+    toast(inRoom() ? `Online races are run in the rally cars: the ${shortCar(c.id)} waits outside.` : `The ${shortCar(c.id)} is built for ${C.stageDef(c.only).name}: pick that stage first.`);
+    return;
+  }
   if (isBonus(c) && inRoom()) {
     if (btn) { btn.classList.remove('shake'); void btn.offsetWidth; btn.classList.add('shake'); }
     toast('Online races are run in the rally cars: the Saveiro waits outside.');
@@ -409,7 +429,7 @@ function selectCar(i, btn) {
     toast(lead ? `Only ${lead.n} (No. 1 on ${C.stageDef(mapKey(curKeyMenu())).name}) gets the Saveiro here. Beat ${fmt(lead.t)} first.` : 'Set the fastest time on this road first: the Saveiro goes to the No. 1.');
     return;
   }
-  if (!isBonus(c)) settings.lastCar = i;
+  if (!apart(c)) settings.lastCar = i;
   const fresh = isBonus(c) && settings.car !== i;
   settings.car = i; saveSettings(); renderCarList();
   if (inRoom()) netTrack();
@@ -455,7 +475,7 @@ function loadStage(key, after) {
     if (after) after();
   }, 50);
 }
-function disposeCar(m) { if (!m) return; for (const k of ['body', 'glass', 'lens', 'lightF', 'lightR', 'flame', 'wheel', 'wheelBlur', 'caliper', 'spk']) R.disposeMesh(m[k]); if (m.tex) gl.deleteTexture(m.tex); if (m.tyreTex) gl.deleteTexture(m.tyreTex); }
+function disposeCar(m) { if (!m) return; for (const k of ['body', 'glass', 'lens', 'lightF', 'lightR', 'flame', 'wheel', 'wheelBlur', 'wheelR', 'wheelBlurR', 'caliper', 'spk']) if (m[k]) R.disposeMesh(m[k]); if (m.tex) gl.deleteTexture(m.tex); if (m.tyreTex) gl.deleteTexture(m.tyreTex); }
 function setupCar() {
   P = C.CARS[settings.car];
   disposeCar(carModel);
@@ -646,7 +666,7 @@ function newRally(it) {
 }
 function startOrContinueRally() {
   if (inRoom()) { toast('Leave the room to run a rally.'); return; }
-  if (isBonus(C.CARS[settings.car])) { settings.car = plainCar(); saveSettings(); toast('Rallies are run in the rally cars: the Saveiro waits outside.'); }
+  if (apart(C.CARS[settings.car])) { const was = C.CARS[settings.car]; settings.car = plainCar(); saveSettings(); toast(`Rallies are run in the rally cars: the ${shortCar(was.id)} waits outside.`); }
   if (!rally || rally.done) newRally(RALLIES.find(r => r.id === settings.rallyId) || RALLIES[0]);
   rally.playing = true; saveRally();
   settings.car = C.CARS.findIndex(c => c.id === rally.car); saveSettings(); renderCarList();
@@ -808,7 +828,7 @@ async function onlineSync() {
   if (!online.on || !settings.name || syncing) return;
   const sent = new Set(store.get('sent', [])), sentG = new Set(store.get('sentG', [])), me = settings.name.toLowerCase(), id = e => e.n.toLowerCase() + '|' + e.k + '|' + e.c + '|' + e.t.toFixed(3);
   const withG = !online.noGhost;
-  const all = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && ONLINE_STAGES.test(e.k) && !isBonus(carById(e.c)) && (!sent.has(id(e)) || (withG && !sentG.has(id(e)) && ownGhost(e))));
+  const all = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && ONLINE_STAGES.test(e.k) && !apart(carById(e.c)) && (!sent.has(id(e)) || (withG && !sentG.has(id(e)) && ownGhost(e))));
   const todo = all.slice(0, withG ? 25 : 200);
   if (!todo.length) { syncBonus(sent, id); return; }
   syncing = true;
@@ -859,7 +879,7 @@ async function onlineGhost(m) {
     const r = await fetch(ONLINE.url.replace(/\/$/, '') + '/rest/v1/times?select=name,stage,car,time,ghost&stage=in.(' + mapVariants(m).map(encodeURIComponent).join(',') + ')&ghost=not.is.null&order=time.asc&limit=1', { headers: onlineHeaders(false) });
     if (!r.ok) { if (r.status === 400) online.noGhost = true; return; }
     const row = (await r.json())[0];
-    if (!row || typeof row.ghost !== 'string' || !carById(row.car) || isBonus(carById(row.car)) || !(row.time > 20)) return;
+    if (!row || typeof row.ghost !== 'string' || !carById(row.car) || apart(carById(row.car)) || !(row.time > 20)) return;
     const g = await ghostDecode(row.ghost); if (!g) return;
     online.ghosts.set(m, { n: cleanName(row.name), t: +row.time, c: row.car, k: row.stage, g });
     if (W && mapKey(W.st.key) === m) loadLead();
@@ -870,7 +890,7 @@ function loadLead() {
   if (!W) return;
   const m = mapKey(W.st.key), cands = [];
   for (const k of mapVariants(m)) {
-    for (const c of C.CARS) if (!c.bonus) { const r = store.get(pbKey(k, c.id), null); if (r && r.q) cands.push({ n: driverName(), t: r.t, c: c.id, k, q: r.q }); }
+    for (const c of C.CARS) if (!c.bonus && !c.only) { const r = store.get(pbKey(k, c.id), null); if (r && r.q) cands.push({ n: driverName(), t: r.t, c: c.id, k, q: r.q }); }
     const ch = store.get('chal.' + k, null); if (ch && ch.q) cands.push({ n: ch.n, t: ch.t, c: ch.c, k, q: ch.q });
   }
   const og = online.ghosts.get(m); if (og) cands.push(og);
@@ -916,14 +936,14 @@ function renderTimes() {
     ['', 'Driver', 'Car', 'Time', 'Gap'].forEach(h => hr.append(el('th', null, h))); tb.append(hr);
     // the Saveiro's times are listed where they fall, gold and without a place: they never count, so places and gaps
     // run from the best time in a real car
-    const counted = rows.filter(e => !isBonus(carById(e.c))), lead = (counted[0] || rows[0]).t, me = driverName().toLowerCase();
+    const counted = rows.filter(e => !apart(carById(e.c))), lead = (counted[0] || rows[0]).t, me = driverName().toLowerCase();
     let place = 0;
     rows.forEach(e => {
-      const bonus = isBonus(carById(e.c));
-      const tr = el('tr', (bonus ? 'bonus ' : '') + (e.ai ? 'ai' : e.n.toLowerCase() === me ? 'me' : ''));
+      const ec = carById(e.c), bonus = apart(ec);
+      const tr = el('tr', (isBonus(ec) ? 'bonus ' : '') + (e.ai ? 'ai' : e.n.toLowerCase() === me ? 'me' : ''));
       // night and rain runs share the table with a small tag, so you can see where a time came from
       const cond = e.k && /-(night|rain)$/.test(e.k) ? C.condName(C.stageDef(e.k)) : '';
-      const carTd = el('td', null, shortCar(e.c)); if (cond) carTd.append(el('span', 'cond', cond)); if (bonus) carTd.append(el('span', 'cond nc', 'doesn\'t count'));
+      const carTd = el('td', null, shortCar(e.c)); if (cond) carTd.append(el('span', 'cond', cond)); if (bonus) carTd.append(el('span', 'cond nc', isBonus(ec) ? 'doesn\'t count' : 'own class'));
       const first = !bonus && place === 0, d = e.t - lead;
       tr.append(el('td', null, bonus ? '—' : String(++place)), el('td', null, e.n), carTd, el('td', null, fmt(e.t)), el('td', null, first ? '—' : (d < 0 ? '−' : '+') + Math.abs(d).toFixed(2)));
       tb.append(tr);
@@ -1017,7 +1037,7 @@ const myMeta = () => ({ i: netId, n: cleanName(driverName()), c: C.CARS[settings
 function cleanPeer(m) {
   if (!m || typeof m.i !== 'string' || !/^[a-z0-9]{4,12}$/.test(m.i)) return null;
   const c = carById(m.c);
-  return { i: m.i, n: cleanName(m.n), c: c && !isBonus(c) ? c.id : 'foca', v: m.v | 0, j: +m.j || 0 };
+  return { i: m.i, n: cleanName(m.n), c: c && !apart(c) ? c.id : 'foca', v: m.v | 0, j: +m.j || 0 };
 }
 // the room in join order: it gives the colours and the next host
 function peerList() { return [...net.peers.values()].sort((a, b) => a.j - b.j || (a.i < b.i ? -1 : 1)); }
@@ -1032,7 +1052,7 @@ function netJoin(code, create) {
   if (!settings.name) { net.pending = (create ? '+' : '') + code; showWelcome(false); return; }
   if (net.ch) { if (net.code === code) return; netLeave(true); }
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
-  if (isBonus(C.CARS[settings.car])) {
+  if (apart(C.CARS[settings.car])) {
     settings.car = plainCar(); saveSettings(); renderCarList(); if (W && mode === 'menu') setupCar();
     toast(`Online races are run in the rally cars: you're in the ${C.CARS[settings.car].name}.`);
   }
@@ -1245,7 +1265,7 @@ function netLoadRace(race) {
     return;
   }
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
-  if (isBonus(C.CARS[settings.car])) { settings.car = plainCar(); saveSettings(); renderCarList(); }
+  if (apart(C.CARS[settings.car])) { settings.car = plainCar(); saveSettings(); renderCarList(); }
   netClearRun();
   const nr = net.race = { id: race.id, k: race.k, at: race.at || 0, greenL: 0, green: false, grid: race.grid.map(g => Object.assign({}, g)), others: new Map(), fin: Object.assign({}, race.fin),
     hist: [], buf: [], lastS: -1e9, lastSend: -1e9, cut: false, inRun: true, done: false, close: 0, col: PCOL[0] };
@@ -1423,7 +1443,7 @@ function netUpdate(dt) {
 }
 const netWm = M4.create(), netWt = M4.create(), netSh = M4.create(), netGc = { x: 0, z: 0, s: 0, lat: 0, rd: {} };
 function netWheel(o, i, noSpin) {
-  const sh = o.model.shape, x = (i % 2 ? -1 : 1) * (sh.W / 2 - 0.13), z = i < 2 ? o.model.fz : o.model.rz;
+  const sh = o.model.shape, x = (i % 2 ? -1 : 1) * halfTrack(sh, i), z = i < 2 ? o.model.fz : o.model.rz;
   M4.trs(netWt, x, 0.335, z, i < 2 ? o.pose.steer : 0, noSpin ? 0 : o.spin, 0, 1);
   return M4.mul(netWm, o.mat, netWt);
 }
@@ -1445,7 +1465,7 @@ function netDrawOpaque(E) {
     const m = o.model, y = o.pose.y, lit = o.pose.fl & 2, brk = o.pose.fl & 1;
     R.drawLit(m.body, { model: o.mat, mode: 5, tex: m.tex, dirt: dirt * 0.8, carY: y, dirtCol: dcol });
     if (o.dc < 180) {
-      for (let i = 0; i < 4; i++) R.drawLit(m.wheel, { model: netWheel(o, i), mode: 11, tex: m.tyreTex, dirt: dirt * 0.7, carY: y, dirtCol: dcol });
+      for (let i = 0; i < 4; i++) R.drawLit(wheelMesh(m, i), { model: netWheel(o, i), mode: 11, tex: m.tyreTex, dirt: dirt * 0.7, carY: y, dirtCol: dcol });
       for (let i = 0; i < 4; i++) R.drawLit(m.caliper, { model: netWheel(o, i, true), dirt: dirt * 0.5, carY: y, dirtCol: dcol });
     }
     R.drawLit(m.lightF, { model: o.mat, mode: 4, tint: lit ? (E.night ? [2.6, 2.6, 2.6] : [1.9, 1.9, 1.9]) : [0.3, 0.3, 0.3] });
@@ -1696,7 +1716,7 @@ function finish() {
   const old = store.get(pbKey(key, P.id), null), oldBest = stageBest(key);
   const isPB = !old || finishT < old.t;
   const ghost = new Float32Array(ghostRec);
-  const bonus = isBonus(P);
+  const bonus = apart(P);
   lastRun = bonus ? null : { key, car: P.id, t: finishT, splits: splitsHit.slice(), ghost };
   // the Saveiro's times go on the board (marked, without a place) but never count: no medal, no record, no No. 1
   if (isPB) {
@@ -1712,7 +1732,7 @@ function finish() {
   const beat = chal && finishT < chal.t;
   say(rallyLeg ? (rallyLeg.pos === 1 ? 'Stop. Fastest time. Mega.' : 'Stop. Good stage.') : beat ? `Stop. We beat ${chal.n}.` : medal === 3 ? 'Stage win. Mega.' : medal ? 'Stop. Good stage.' : 'Stop. We go again.');
   buildResults(old, isPB, medal, oldBest);
-  if (bonus) { $('rPB').hidden = false; $('rPB').textContent = (isPB ? 'New best in the Saveiro' : 'Saveiro run') + ' · on the board, doesn\'t count for No. 1'; $('rShare').hidden = true; }
+  if (bonus) { $('rPB').hidden = false; $('rPB').textContent = isBonus(P) ? (isPB ? 'New best in the Saveiro' : 'Saveiro run') + ' · on the board, doesn\'t count for No. 1' : (isPB ? `New best in the ${shortCar(P.id)}` : `${shortCar(P.id)} run`) + ' · on the board in a class of its own'; $('rShare').hidden = true; }
   else loadLead();
 }
 function buildResults(old, isPB, medal, oldBest) {
@@ -1899,6 +1919,8 @@ const VOICES = {
   selica:   { orders: [[2, 'sawtooth', 0.52], [4, 'square', 0.12], [1, 'sawtooth', 0.2], [6, 'sawtooth', 0.05]], drive: 7, lp: [500, 2800], q: 3.4, am: 0.07, amRate: 2, turbo: 0.014, whine: 0.012, flutter: 0, antilag: 0.85, induct: 0.06 },
   kwattro:  { orders: [[2.5, 'sawtooth', 0.5], [5, 'square', 0.1], [1.25, 'sawtooth', 0.3], [0.5, 'sine', 0.24]], drive: 8, lp: [420, 2500], q: 3, am: 0.38, amRate: 0.5, turbo: 0.032, whine: 0, flutter: 0.3, antilag: 1.0, induct: 0.08 },
   saveiro:  { orders: [[2, 'sawtooth', 0.55], [4, 'square', 0.12], [1, 'sawtooth', 0.24], [6, 'sawtooth', 0.05]], drive: 8, lp: [470, 2700], q: 3.4, am: 0.07, amRate: 2, turbo: 0.03, whine: 0.016, flutter: 0, antilag: 1.0, induct: 0.07 },
+  // the V8 fires at order 4 (eight cylinders, a firing every 90 degrees): a scream, no turbo
+  f1:       { orders: [[4, 'sawtooth', 0.5], [8, 'square', 0.1], [2, 'sawtooth', 0.16], [12, 'sawtooth', 0.05]], drive: 5, lp: [1400, 7000], q: 2.5, am: 0.03, amRate: 4, turbo: 0, whine: 0.03, flutter: 0, antilag: 0, induct: 0.06 },
 };
 // Combustion model per car (AudioWorklet path). Pulses are shaped in crank angle, so the timbre follows the revs,
 // while the exhaust pipes add fixed resonances on top, which is what makes it read as an engine and not a synth.
@@ -1914,6 +1936,9 @@ const ENGINES = {
   kwattro:  { cyl: 5, off: [0, 0.04, -0.03, 0.05, 0], amp: [1, 0.93, 1.06, 0.9, 1.02], rasp: 0.46, sharp: 0.4, decay: 0.08, pipes: [[2.5, 0.5], [0.65, 0.3]], intake: 0.3, mech: 0.07, drive: 1.7, muf: [2400, 4350], body: [130, 4], gain: 0.61 },
   // the Saveiro: a 1.6 four with a straight-through pipe, rough and loud
   saveiro:  { cyl: 4, off: [0, 0.03, -0.02, 0.02], amp: [1, 0.94, 1.05, 0.97], rasp: 0.62, sharp: 0.5, decay: 0.055, pipes: [[1.9, 0.52], [0.5, 0.34]], intake: 0.38, mech: 0.11, drive: 2.1, muf: [3100, 5600], body: [170, 3], gain: 0.5 },
+  // the F1's flat-plane V8: even firing, short primaries straight out of the periscopes, no silencer to speak of, a
+  // loud airbox; rref is the rpm its intake roar and valvetrain are scaled to (19,000 instead of a rally car's 8,000)
+  f1:       { cyl: 8, off: [0, 0.01, -0.01, 0.005, 0, -0.005, 0.01, 0], amp: [1, 0.98, 1.02, 0.99, 1, 0.97, 1.01, 0.99], rasp: 0.3, sharp: 0.6, decay: 0.045, pipes: [[0.7, 0.45], [0.25, 0.3]], intake: 0.45, mech: 0.1, drive: 1.5, muf: [7000, 11000], body: [520, 2.5], gain: 0.5, rref: 19000 },
 };
 const AUDIO_WORKLET = `
 const TAU = 6.283185307179586;
@@ -1922,7 +1947,7 @@ const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 42
 class Engine extends AudioWorkletProcessor {
   static get parameterDescriptors() {
     const k = (name, def, max) => ({ name, defaultValue: def, minValue: 0, maxValue: max, automationRate: 'k-rate' });
-    return [k('rpm', 900, 14000), k('load', 0, 1), k('boost', 0, 2), k('cut', 0, 1), k('inside', 0, 1), k('pop', 0, 1)];
+    return [k('rpm', 900, 21000), k('load', 0, 1), k('boost', 0, 2), k('cut', 0, 1), k('inside', 0, 1), k('pop', 0, 1)];
   }
   constructor(o) {
     super();
@@ -1931,7 +1956,7 @@ class Engine extends AudioWorkletProcessor {
     this.fire = new Float64Array(n); this.amp = new Float32Array(n); this.age = new Float64Array(n).fill(9); this.a = new Float32Array(n);
     for (let k = 0; k < n; k++) { this.fire[k] = (((k + (c.off ? c.off[k] : 0)) / n) % 1 + 1) % 1; this.amp[k] = c.amp ? c.amp[k] : 1; }
     this.rasp = c.rasp == null ? 0.3 : c.rasp; this.dec = c.decay || 0.06; this.drive = c.drive || 1.6; this.sharp = c.sharp == null ? 0.4 : c.sharp;
-    this.inK = c.intake == null ? 0.3 : c.intake; this.mechK = c.mech == null ? 0.08 : c.mech; this.muf = c.muf || [1400, 2500];
+    this.rref = c.rref || 8000; this.inK = c.intake == null ? 0.3 : c.intake; this.mechK = c.mech == null ? 0.08 : c.mech; this.muf = c.muf || [1400, 2500];
     this.pipes = (c.pipes || [[2.2, 0.5], [0.6, 0.3]]).map(([L, r]) => { const len = Math.max(2, Math.round(2 * L / 343 * sampleRate)); return { b: new Float32Array(len), i: 0, len, r, z: 0 }; });
     this.th = 0; this.rpm = 900; this.load = 0; this.cut = 0;
     this.m1 = 0; this.m2 = 0; this.dcx = 0; this.dcy = 0; this.ox = 0; this.oy = 0; this.b1 = 0; this.b2 = 0; this.rl = 0; this.mk = 0;
@@ -1998,7 +2023,7 @@ class Engine extends AudioWorkletProcessor {
       this.bl += (bg - this.bl) * 0.35; // part of the bang is lit at the tailpipe, past the silencer
       // intake: the same pulses through the airbox resonance, plus a roar that grows with load and revs
       const xi = x - this.b2; const bi = bb0 * xi - ba1 * this.b1 - ba2 * this.b2; this.b2 = this.b1; this.b1 = bi;
-      const rv = this.rpm / 8000;
+      const rv = this.rpm / this.rref;
       this.rl += (nz * this.load * rv * rv - this.rl) * gr;
       // valvetrain clatter, ticking with every firing
       this.mk = nz * env * rv;
@@ -2874,7 +2899,10 @@ function snapVis(keepCam) {
   cam.snap = true;
 }
 function savePrev() { prev.x = car.x; prev.y = car.y; prev.z = car.z; prev.h = car.h; }
-function wheelLocal(i) { const sh = carModel.shape; return [(i % 2 ? -1 : 1) * (sh.W / 2 - 0.13), i < 2 ? carModel.fz : carModel.rz]; }
+// wheel centres: half the track from the body width, or per axle (the F1's tF / tR)
+const halfTrack = (sh, i) => (i < 2 ? sh.tF : sh.tR) || sh.W / 2 - 0.13;
+const wheelMesh = (m, i) => i < 2 || !m.wheelR ? m.wheel : m.wheelR;
+function wheelLocal(i) { const sh = carModel.shape; return [(i % 2 ? -1 : 1) * halfTrack(sh, i), i < 2 ? carModel.fz : carModel.rz]; }
 function surfBump(x, z, surf) {
   const sid = W.st.kind;
   const amp = surf === 0 || W.st.town ? (sid === 'pine' ? 0.026 : sid === 'frost' ? 0.016 : 0.004) : surf === 1 ? 0.03 : 0.042;
@@ -3078,7 +3106,8 @@ function updateCamera(dt) {
     rollT = car.air ? 0 : clamp(car.vF * car.w * 0.0017, -0.03, 0.03);
   } else if (cm === 2) {
     const sh = carModel.shape;
-    const p = mulPoint(carMat, 0, sh.hoodB + 0.22, sh.zW + 0.14), l = mulPoint(carMat, 0, sh.hoodB + 0.05, 14);
+    // the F1's onboard is the camera on top of its airbox, looking over the driver's helmet
+    const p = sh.cam ? mulPoint(carMat, 0, sh.cam[0], sh.cam[1]) : mulPoint(carMat, 0, sh.hoodB + 0.22, sh.zW + 0.14), l = mulPoint(carMat, 0, sh.cam ? sh.cam[2] : sh.hoodB + 0.05, 14);
     cam.pos = p; cam.look = l; fovT = 66 + clamp(spd * 0.12, 0, 8);
     rollT = susp.roll * 0.6; // onboard: the camera is bolted to the body, so it rolls with it (partly, for comfort)
   } else {
@@ -3414,7 +3443,8 @@ function drawGauge() {
   const rpm = clamp(car.rpm, 0, maxR);
   g.strokeStyle = rpm > red - 150 ? '#ff5d4f' : '#ffd23a'; g.beginPath(); g.arc(cx, cy, r, a0, ang(rpm)); g.stroke();
   g.fillStyle = 'rgba(236,232,220,0.7)'; g.font = '600 24px "Barlow Semi Condensed", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  for (let k = 0; k <= maxR / 1000; k++) {
+  const step = maxR > 12000 ? 2000 : 1000; // the F1 revs to 19,000: a figure every two thousand
+  for (let k = 0; k <= maxR / 1000; k += step / 1000) {
     const a = ang(k * 1000);
     g.strokeStyle = 'rgba(236,232,220,0.6)'; g.lineWidth = 3; g.beginPath(); g.moveTo(cx + Math.cos(a) * (r - 14), cy + Math.sin(a) * (r - 14)); g.lineTo(cx + Math.cos(a) * (r - 26), cy + Math.sin(a) * (r - 26)); g.stroke();
     g.fillText(String(k), cx + Math.cos(a) * (r - 46), cy + Math.sin(a) * (r - 46));
@@ -3437,11 +3467,12 @@ function drawGauge() {
   g.fillStyle = '#16130a'; g.font = '900 46px "Big Shoulders Display", sans-serif'; g.fillText(gear, cx, cy + 95);
   g.fillStyle = 'rgba(236,232,220,0.6)'; g.font = '700 18px "Barlow Semi Condensed", sans-serif';
   g.fillText(settings.gearbox === 'manual' ? 'MAN' : 'AUTO', cx + 62, cy + 95);
-  // boost
+  // boost (a normally aspirated engine shows the throttle instead)
+  const na = !E.boostBar, bar = na ? clamp(car.thrE || 0, 0, 1) : clamp(car.boost, 0, 1);
   g.textAlign = 'center';
   g.fillStyle = 'rgba(236,232,220,0.12)'; g.fillRect(cx - 120, cy + 128, 240, 8);
-  g.fillStyle = '#8fb6ff'; g.fillRect(cx - 120, cy + 128, 240 * clamp(car.boost, 0, 1), 8);
-  g.fillStyle = 'rgba(236,232,220,0.6)'; g.font = '700 16px "Barlow Semi Condensed", sans-serif'; g.fillText(`BOOST ${(car.boost * E.boostBar).toFixed(1)} BAR`, cx, cy + 152);
+  g.fillStyle = na ? '#49d686' : '#8fb6ff'; g.fillRect(cx - 120, cy + 128, 240 * bar, 8);
+  g.fillStyle = 'rgba(236,232,220,0.6)'; g.font = '700 16px "Barlow Semi Condensed", sans-serif'; g.fillText(na ? `THROTTLE ${Math.round(bar * 100)} %` : `BOOST ${(car.boost * E.boostBar).toFixed(1)} BAR`, cx, cy + 152);
 }
 let deltaT = 0;
 function updateHUD(dt) {
@@ -3635,7 +3666,7 @@ function render() {
   R.env.cam = cam.pos; R.env.fov = cam.fov * Math.PI / 180;
   // headlights
   const fx = Math.sin(vis.h), fz = Math.cos(vis.h);
-  if (lightsOn) { E.hlOn = E.night ? E.hlK : E.overcast ? 0.5 : 0.25; E.hlPos = [vis.x + fx * 2.3, vis.y + 0.9, vis.z + fz * 2.3]; const l = Math.hypot(fx, 0.1, fz); E.hlDir = [fx / l, -0.1 / l, fz / l]; }
+  if (lightsOn && carModel.shape.kind !== 'f1') { E.hlOn = E.night ? E.hlK : E.overcast ? 0.5 : 0.25; E.hlPos = [vis.x + fx * 2.3, vis.y + 0.9, vis.z + fz * 2.3]; const l = Math.hypot(fx, 0.1, fz); E.hlDir = [fx / l, -0.1 / l, fz / l]; }
   else E.hlOn = 0;
   // street lamps at night: the 16 nearest a point ahead of the camera light the scene, the furthest of them faded so
   // none switches on or off as the set changes
@@ -3671,7 +3702,7 @@ function render() {
       R.beginShadow(k);
       for (const c of S.shadowCasters) R.drawDepth(c.m, c.model);
       R.drawDepth(carModel.body, carMat);
-      for (let i = 0; i < 4; i++) R.drawDepth(carModel.wheel, wheelMatrix(i));
+      for (let i = 0; i < 4; i++) R.drawDepth(wheelMesh(carModel, i), wheelMatrix(i));
       netDepth();
     }
     R.endShadow();
@@ -3691,12 +3722,14 @@ function render() {
   const dcol = DIRT[W.st.kind].col, baseY = vis.y + susp.heave;
   R.drawLit(carModel.body, { model: carMat, mode: 5, tex: carModel.tex, dirt, carY: baseY, dirtCol: dcol });
   if (carModel.spk) { M4.trs(spkT, 0, 0, -spkPump(), 0, 0, 0, 1); M4.mul(spkM, carMat, spkT); R.drawLit(carModel.spk, { model: spkM, dirt: dirt * 0.4, carY: baseY, dirtCol: dcol }); }
-  for (let i = 0; i < 4; i++) R.drawLit(carModel.wheel, { model: wheelMatrix(i), mode: 11, tex: carModel.tyreTex, dirt: dirt * 0.9, carY: baseY, dirtCol: dcol });
+  for (let i = 0; i < 4; i++) R.drawLit(wheelMesh(carModel, i), { model: wheelMatrix(i), mode: 11, tex: carModel.tyreTex, dirt: dirt * 0.9, carY: baseY, dirtCol: dcol });
   for (let i = 0; i < 4; i++) R.drawLit(carModel.caliper, { model: wheelMatrix(i, true), dirt: dirt * 0.6, carY: baseY, dirtCol: dcol });
   if (!(settings.cam === 2 && (mode === 'race' || mode === 'countdown'))) R.drawLit(carModel.lightF, { model: carMat, mode: 4, tint: lightsOn ? (E.night ? [2.6, 2.6, 2.6] : [1.9, 1.9, 1.9]) : [0.3, 0.3, 0.3] });
   if (flameT > 0) R.drawLit(carModel.flame, { model: carMat, mode: 4, tint: [2.6 + Math.random(), 1.6 + Math.random() * 0.6, 0.9] });
   const braking = (mode === 'race' && input.brk > 0.1) || mode === 'done' || (mode === 'race' && input.hb);
-  R.drawLit(carModel.lightR, { model: carMat, mode: 4, tint: braking ? [3.2, 3.2, 3.2] : lightsOn ? [0.85, 0.85, 0.85] : [0.55, 0.55, 0.55] });
+  // the F1's only lamp is its rain light: on in the rain and at night, not a brake light
+  const rainL = carModel.shape.kind === 'f1' ? (W.st.cond === 'rain' || E.night ? [2.6, 2.6, 2.6] : [0.2, 0.2, 0.2]) : null;
+  R.drawLit(carModel.lightR, { model: carMat, mode: 4, tint: rainL || (braking ? [3.2, 3.2, 3.2] : lightsOn ? [0.85, 0.85, 0.85] : [0.55, 0.55, 0.55]) });
   netDrawOpaque(E);
   R.drawSky(E); // after opaque geometry: covered pixels fail the depth test and skip the sky shader
   // transparent pass
@@ -3717,7 +3750,7 @@ function render() {
   if (carModel.glass) { gl.disable(gl.POLYGON_OFFSET_FILL); R.drawLit(carModel.glass, { model: carMat, alpha: 0.8, dirt: dirt * 0.5, carY: baseY, dirtCol: dcol }); if (carModel.lens) R.drawLit(carModel.lens, { model: carMat, alpha: 0.18 }); gl.enable(gl.POLYGON_OFFSET_FILL); }
   // wheel motion blur, fading in with wheel speed
   const wb = clamp((Math.abs(car.vF) / 0.335 - 9) / 22, 0, 0.85);
-  if (wb > 0.02) { gl.disable(gl.POLYGON_OFFSET_FILL); for (let i = 0; i < 4; i++) R.drawLit(carModel.wheelBlur, { model: wheelMatrix(i), alpha: wb }); gl.enable(gl.POLYGON_OFFSET_FILL); }
+  if (wb > 0.02) { gl.disable(gl.POLYGON_OFFSET_FILL); for (let i = 0; i < 4; i++) R.drawLit(i < 2 || !carModel.wheelBlurR ? carModel.wheelBlur : carModel.wheelBlurR, { model: wheelMatrix(i), alpha: wb }); gl.enable(gl.POLYGON_OFFSET_FILL); }
   gl.polygonOffset(-2, -4);
   gl.blendFunc(gl.DST_COLOR, gl.ZERO);
   R.drawTrail(skid, E, mixLight(E), Math.min(skTotal, SK) * SKV);

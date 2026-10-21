@@ -84,6 +84,9 @@ kbd { font-family: var(--f-mono); font-size: 11px; font-weight: 500; padding: 1p
 .car-row.bonus .lock { color: var(--mute); }
 .car-row.bonus.locked { filter: saturate(.4) brightness(.82); }
 .car-row.bonus.locked::after { animation-duration: 6s; }
+.car-row.only { border-left: 3px solid #d40a14; }
+.car-row.only .lock { color: var(--mute); }
+.car-row.only.locked { filter: saturate(.4) brightness(.82); }
 .car-row.bonus.yay { animation: svBounce .65s cubic-bezier(.3, 1.6, .5, 1), svSpin 3s linear infinite; }
 .car-row.bonus.shake { animation: svShake .42s ease-in-out, svSpin 3s linear infinite; }
 @keyframes svSpin { to { --sv: 360deg; } }
@@ -459,7 +462,7 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
         <div class="pane" id="carList"></div>
         <p class="label group-label">Customise · <span id="tuneCar">Car</span></p>
         <div class="tune">
-          <div class="tune-row"><b>Turbo release</b><small>Where the boost goes when you lift: out through a valve, or back through the turbo</small>
+          <div class="tune-row" id="tuneDumpRow"><b>Turbo release</b><small>Where the boost goes when you lift: out through a valve, or back through the turbo</small>
             <div class="seg" id="tuneDump"><button data-v="bov" aria-pressed="true">Blow-off valve</button><button data-v="flutter" aria-pressed="false">Flutter</button></div></div>
           <div class="tune-row"><b>Exhaust</b><small>Sport is louder and raspier, and crackles when you come off the throttle</small>
             <div class="seg" id="tuneExh"><button data-v="stock" aria-pressed="true">Stock</button><button data-v="sport" aria-pressed="false">Sport</button></div></div>

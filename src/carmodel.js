@@ -13,6 +13,9 @@ const SHAPES = {
   // the bonus pickup: a short cab, then an open bed (floor at `bed`, side walls up to `tail`) with the tailgate at zr
   pickup:   { zf: 2.25, zr: -2.25, W: 1.8, nose: 0.68, hoodF: 0.86, hoodB: 1.0, zW: 0.86, belt: 1.04, roof: 1.56, zRoofF: 0.08, zRoofR: -0.72, zRearG: -0.8, tail: 1.03, bed: 0.7, wbOff: 0.02, archR: 0.45, kind: 'pickup', flares: true },
   coupe:    { zf: 2.15, zr: -2.1, W: 1.84, nose: 0.56, hoodF: 0.8, hoodB: 0.95, zW: 0.5, belt: 1.0, roof: 1.37, zRoofF: -0.08, zRoofR: -1.12, zRearG: -1.98, tail: 1.02, wbOff: 0.2, archR: 0.45, kind: 'fastback', boxy: true, flares: true },
+  // the F1 car (built by f1Geo, not the closed-body code): front wing tip to rear wing, wheel centres per axle (tF/tR,
+  // half track), tyre widths, and the onboard camera on top of the airbox (cam: y, z, height it looks at)
+  f1:       { zf: 2.44, zr: -2.3, W: 1.8, tF: 0.73, tR: 0.7, wF: 0.3, wR: 0.38, hoodB: 0.66, zW: 0.6, wbOff: -0.1, cam: [1.11, -0.12, 0.78], kind: 'f1' },
 };
 const WR = 0.335;
 
@@ -692,22 +695,238 @@ function carGeo(spec, night) {
   return { body: g, glass: gg, lens, lightF: lf, lightR: lr, flame: fl, spk, shape: S, fz: prof.fz, rz: prof.rz };
 }
 
+// ---------- the F1 car ----------
+// Open wheels, so none of the closed-body code applies: the nose, tub and engine cover are lofted through rounded
+// cross-sections, the airbox and the sidepods are lofts of their own, and the wings, floor, arms and driver go on top.
+// Its livery atlas: right side rows 0..400, left side 410..810 (z across, y down), top 820..1010, a white texel below.
+const F1A = { z0: -2.4, z1: 2.5, yTop: 1.1, sH: 400, lY: 410, tY: 820, tH: 190, H: 1024 };
+const F1W = [0.995, 1 - 1020 / F1A.H];
+const f1uv = {
+  side(sx, z, y) { const L = F1A.z1 - F1A.z0, u = sx > 0 ? (F1A.z1 - z) / L : (z - F1A.z0) / L; return [u, 1 - ((sx > 0 ? F1A.lY : 0) + (F1A.yTop - y) / F1A.yTop * F1A.sH) / F1A.H]; },
+  top(x, z) { return [(z - F1A.z0) / (F1A.z1 - F1A.z0), 1 - (F1A.tY + (0.95 - x) / 1.9 * F1A.tH) / F1A.H]; },
+};
+// cross-section stations: Catmull-Rom through each parameter of the key stations, one ring every `step` metres
+function stations(keys, step) {
+  const out = [];
+  for (let i = 0; i + 1 < keys.length; i++) {
+    const p0 = keys[Math.max(0, i - 1)], p1 = keys[i], p2 = keys[i + 1], p3 = keys[Math.min(keys.length - 1, i + 2)];
+    const n = Math.max(1, Math.round(Math.abs(p2[0] - p1[0]) / step));
+    for (let s = 0; s < n; s++) {
+      const t = s / n, t2 = t * t, t3 = t2 * t;
+      out.push(p1.map((_, j) => 0.5 * (2 * p1[j] + (p2[j] - p0[j]) * t + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * t2 + (3 * p1[j] - p0[j] - 3 * p2[j] + p3[j]) * t3)));
+    }
+  }
+  out.push(keys[keys.length - 1].slice());
+  return out;
+}
+// a rounded section (superellipse: e < 1 is boxier) at z, centred on cx; tw / bw narrow its top and its bottom
+function sect(z, cx, hw, yb, yt, e, tw, bw) {
+  const N = 20, pts = [], ym = (yb + yt) / 2, hh = (yt - yb) / 2;
+  for (let k = 0; k < N; k++) {
+    const a = k / N * Math.PI * 2, c = Math.cos(a), s = Math.sin(a);
+    const px = Math.sign(c) * Math.pow(Math.abs(c), e), py = Math.sign(s) * Math.pow(Math.abs(s), e);
+    pts.push([cx + px * hw * (py > 0 ? 1 + (tw - 1) * py : 1 + (bw - 1) * -py), ym + py * hh, z]);
+  }
+  return pts;
+}
+// skin through the rings; faces looking sideways take the side livery, the rest the top. Ends closed with a fan
+// (capF / capR: the colour of the front and rear caps, null to leave them open)
+function loft(g, rings, col, spec, capF, capR) {
+  const n = rings[0].length;
+  const ctr = r => r.reduce((a, p) => [a[0] + p[0] / n, a[1] + p[1] / n, a[2] + p[2] / n], [0, 0, 0]);
+  for (let i = 0; i + 1 < rings.length; i++) {
+    const A = rings[i], B = rings[i + 1], ca = ctr(A), cb = ctr(B), ref = [(ca[0] + cb[0]) / 2, (ca[1] + cb[1]) / 2, (ca[2] + cb[2]) / 2];
+    for (let k = 0; k < n; k++) {
+      const k1 = (k + 1) % n, q = [A[k], A[k1], B[k1], B[k]];
+      const m = q.reduce((a, p) => [a[0] + p[0] / 4, a[1] + p[1] / 4, a[2] + p[2] / 4], [0, 0, 0]);
+      const dx = m[0] - ref[0], dy = m[1] - ref[1], side = Math.abs(dx) > 0.6 * Math.hypot(dx, dy);
+      quadUV(g, q[0], q[1], q[2], q[3], col, spec, ref, q.map(p => side ? f1uv.side(Math.sign(m[0]) || 1, p[2], p[1]) : f1uv.top(p[0], p[2])));
+    }
+  }
+  for (const [r, c, dir] of [[rings[0], capF, 1], [rings[rings.length - 1], capR, -1]]) {
+    if (!c) continue;
+    const o = ctr(r);
+    for (let k = 0; k < n; k++) g.tri(o, r[k], r[(k + 1) % n], c, spec, [o[0], o[1], o[2] - dir * 5], F1W, F1W, F1W);
+  }
+}
+// a rod from p to q, w × h in section (wishbones, push rods)
+function rod(g, p, q, w, h, col, spec) {
+  const d = [q[0] - p[0], q[1] - p[1], q[2] - p[2]], l = Math.hypot(...d);
+  let s = [d[2] / l, 0, -d[0] / l]; const sl = Math.hypot(...s) || 1; s = s.map(v => v / sl);
+  if (sl < 0.2) s = [1, 0, 0];
+  const up = [d[1] * s[2] - d[2] * s[1], d[2] * s[0] - d[0] * s[2], d[0] * s[1] - d[1] * s[0]].map(v => v / l);
+  bar(g, p.map((v, i) => v - up[i] * h / 2), q.map((v, i) => v - up[i] * h / 2), s, up, w, h, col, spec);
+}
+// part of a sphere, between latitudes b0..b1 and longitudes a0..a1 (a = 0 faces +z): helmet shell and visor
+function shell(g, cx, cy, cz, rx, ry, rz, a0, a1, b0, b1, col, spec) {
+  const NA = 14, NB = 7, P = (a, b) => [cx + Math.cos(b) * Math.sin(a) * rx, cy + Math.sin(b) * ry, cz + Math.cos(b) * Math.cos(a) * rz];
+  for (let i = 0; i < NA; i++) for (let j = 0; j < NB; j++) {
+    const aa = a0 + (a1 - a0) * i / NA, ab = a0 + (a1 - a0) * (i + 1) / NA, ba = b0 + (b1 - b0) * j / NB, bb = b0 + (b1 - b0) * (j + 1) / NB;
+    quadUV(g, P(aa, ba), P(ab, ba), P(ab, bb), P(aa, bb), col, spec, [cx, cy, cz]);
+  }
+}
+function f1Geo(spec) {
+  const S = SHAPES.f1, col = spec.col;
+  const red = [1, 1, 1], carbon = lin('#1b1c1f'), black = lin('#0c0d0f'), metal = lin('#7d8086'), white = lin(col.stripe);
+  const redV = lin(col.base), helmet = lin(col.helmet || '#f2d21a');
+  const fz = spec.wb / 2 + S.wbOff, rz = -spec.wb / 2 + S.wbOff;
+  const g = new Geo();
+  // nose, tub, engine cover and gearbox: [z, half width, bottom, top, top narrowing, bottom narrowing]
+  const tub = stations([
+    [2.3, 0.05, 0.28, 0.35, 0.7, 0.8], [2.18, 0.085, 0.26, 0.4, 0.72, 0.82], [1.85, 0.13, 0.24, 0.48, 0.75, 0.85],
+    [1.4, 0.19, 0.2, 0.56, 0.8, 0.82], [0.98, 0.25, 0.12, 0.62, 0.82, 0.86], [0.6, 0.3, 0.06, 0.66, 0.8, 0.9],
+    [0.2, 0.33, 0.05, 0.675, 0.78, 0.95], [-0.2, 0.33, 0.05, 0.69, 0.75, 0.95], [-0.6, 0.3, 0.05, 0.66, 0.75, 0.95],
+    [-1.0, 0.22, 0.06, 0.58, 0.75, 0.9], [-1.4, 0.14, 0.08, 0.47, 0.8, 0.9], [-1.75, 0.09, 0.12, 0.38, 0.8, 0.9], [-2.02, 0.065, 0.17, 0.32, 0.8, 0.9],
+  ], 0.1);
+  loft(g, tub.map(([z, hw, yb, yt, tw, bw]) => sect(z, 0, hw, yb, yt, 0.62, tw, bw)), red, 0.55, redV, carbon);
+  // the airbox over the driver's head, running back into the engine cover
+  const box_ = stations([[-0.06, 0.14, 0.6, 0.955, 0.5, 1], [-0.26, 0.17, 0.6, 0.99, 0.55, 1], [-0.6, 0.15, 0.58, 0.92, 0.5, 1],
+    [-0.95, 0.11, 0.52, 0.78, 0.5, 1], [-1.3, 0.07, 0.45, 0.62, 0.5, 1], [-1.62, 0.03, 0.4, 0.47, 0.5, 1]], 0.08);
+  loft(g, box_.map(([z, hw, yb, yt, tw, bw]) => sect(z, 0, hw, yb, yt, 0.7, tw, bw)), red, 0.55, redV, null);
+  // its intake, a dark oval facing forward
+  for (let k = 0; k < 16; k++) {
+    const a0 = k / 16 * Math.PI * 2, a1 = (k + 1) / 16 * Math.PI * 2, P = a => [Math.cos(a) * 0.085, 0.875 + Math.sin(a) * 0.058, -0.052];
+    g.tri([0, 0.875, -0.052], P(a0), P(a1), black, 0, [0, 0.875, -5], F1W, F1W, F1W);
+  }
+  // sidepods: [z, centre, half width, bottom, top, top narrowing, bottom narrowing], the front cap is the radiator inlet
+  for (const sx of [-1, 1]) {
+    const pod = stations([[0.5, 0.53, 0.16, 0.2, 0.55, 0.8, 0.65], [0.34, 0.535, 0.2, 0.1, 0.575, 0.85, 0.8], [-0.1, 0.52, 0.21, 0.07, 0.56, 0.85, 0.85],
+      [-0.6, 0.45, 0.17, 0.07, 0.5, 0.8, 0.9], [-1.0, 0.33, 0.1, 0.08, 0.38, 0.8, 0.9], [-1.3, 0.22, 0.045, 0.1, 0.26, 0.8, 0.9]], 0.09);
+    loft(g, pod.map(([z, cx, hw, yb, yt, tw, bw]) => sect(z, sx * cx, hw, yb, yt, 0.6, tw, bw)), red, 0.55, black, redV);
+    // periscope exhausts on top of the pods, and the chimney behind them
+    cylUV(g, sx * 0.33, 0.43, -0.8, 0.052, 0.046, 0.1, 10, metal, 0.85, 'y', true, null, black);
+    // barge boards behind the front wheels and a small turning vane on the pod
+    box(g, sx * 0.43, 0.24, 0.82, 0.012, 0.36, 0.36, carbon, 0.35);
+    box(g, sx * 0.62, 0.62, -0.25, 0.01, 0.1, 0.32, carbon, 0.35);
+  }
+  // floor, with the narrower part between the rear wheels and a diffuser rising out of the back
+  prism(g, [[-0.6, 0.98], [0.6, 0.98], [0.72, 0.62], [0.72, -1.26], [-0.72, -1.26], [-0.72, 0.62]], 0.026, 0.05, carbon, 0.3);
+  prism(g, [[-0.47, -1.26], [0.47, -1.26], [0.47, -1.7], [-0.47, -1.7]], 0.026, 0.05, carbon, 0.3);
+  quadUV(g, [-0.46, 0.05, -1.7], [0.46, 0.05, -1.7], [0.46, 0.27, -2.04], [-0.46, 0.27, -2.04], carbon, 0.3, [0, 0.6, -1.6]);
+  for (const x of [-0.46, -0.16, 0.16, 0.46]) quadUV(g, [x, 0.03, -1.7], [x, 0.05, -1.7], [x, 0.27, -2.04], [x, 0.03, -2.04], carbon, 0.3, [x > 0 ? x - 1 : x + 1, 0.1, -1.9]);
+  // front wing: main plane, two flaps on each side, endplates, the pylons up to the nose
+  airfoil(g, -0.72, 0.72, 0.075, 2.44, 0.42, 0.035, 0.08, redV, 0.55);
+  for (const sx of [-1, 1]) {
+    const [xa, xb] = sx > 0 ? [0.25, 0.71] : [-0.71, -0.25];
+    airfoil(g, xa, xb, 0.12, 2.15, 0.2, 0.026, 0.42, redV, 0.55);
+    airfoil(g, xa + sx * 0.06, xb, 0.18, 2.0, 0.14, 0.02, 0.75, carbon, 0.4);
+    box(g, sx * 0.72, 0.14, 2.21, 0.012, 0.22, 0.46, redV, 0.5);
+    box(g, sx * 0.72, 0.035, 2.21, 0.02, 0.012, 0.46, carbon, 0.4);
+    box(g, sx * 0.07, 0.2, 2.18, 0.012, 0.16, 0.24, carbon, 0.4);
+  }
+  // rear wing: tall endplates, main plane and flap up top, a beam wing low down, the crash structure's pillar
+  for (const sx of [-1, 1]) box(g, sx * 0.5, 0.63, -2.06, 0.014, 0.64, 0.5, redV, 0.5);
+  airfoil(g, -0.49, 0.49, 0.8, -1.86, 0.32, 0.045, 0.24, redV, 0.55);
+  airfoil(g, -0.49, 0.49, 0.9, -2.1, 0.18, 0.026, 0.6, carbon, 0.4);
+  airfoil(g, -0.42, 0.42, 0.4, -1.86, 0.2, 0.026, 0.2, carbon, 0.4);
+  box(g, 0, 0.56, -1.98, 0.02, 0.34, 0.2, carbon, 0.4);
+  // suspension: wishbones and push rods from the tub (front) and the gearbox (rear) to the wheels, drive shafts
+  for (const sx of [-1, 1]) {
+    const X = v => [sx * v[0], v[1], v[2]];
+    rod(g, X([0.28, 0.5, fz + 0.24]), X([0.64, 0.46, fz]), 0.05, 0.016, carbon, 0.35);
+    rod(g, X([0.28, 0.5, fz - 0.24]), X([0.64, 0.46, fz]), 0.05, 0.016, carbon, 0.35);
+    rod(g, X([0.24, 0.22, fz + 0.3]), X([0.64, 0.2, fz]), 0.05, 0.016, carbon, 0.35);
+    rod(g, X([0.24, 0.22, fz - 0.28]), X([0.64, 0.2, fz]), 0.05, 0.016, carbon, 0.35);
+    rod(g, X([0.62, 0.23, fz - 0.02]), X([0.26, 0.56, fz - 0.08]), 0.024, 0.024, carbon, 0.35);
+    rod(g, X([0.26, 0.4, fz - 0.1]), X([0.64, 0.38, fz - 0.12]), 0.022, 0.016, carbon, 0.35);
+    rod(g, X([0.13, 0.47, rz + 0.22]), X([0.58, 0.47, rz]), 0.05, 0.016, carbon, 0.35);
+    rod(g, X([0.13, 0.47, rz - 0.2]), X([0.58, 0.47, rz]), 0.05, 0.016, carbon, 0.35);
+    rod(g, X([0.12, 0.18, rz + 0.26]), X([0.58, 0.19, rz]), 0.05, 0.016, carbon, 0.35);
+    rod(g, X([0.12, 0.18, rz - 0.22]), X([0.58, 0.19, rz]), 0.05, 0.016, carbon, 0.35);
+    rod(g, X([0.1, 0.335, rz]), X([0.56, 0.335, rz]), 0.05, 0.05, metal, 0.6);
+    // brake ducts inside the wheels
+    box(g, sx * 0.555, 0.37, fz, 0.05, 0.16, 0.2, carbon, 0.35);
+    box(g, sx * 0.49, 0.37, rz, 0.05, 0.2, 0.26, carbon, 0.35);
+    // mirrors on short stalks either side of the cockpit
+    rod(g, X([0.3, 0.64, 0.68]), X([0.43, 0.725, 0.64]), 0.02, 0.012, carbon, 0.35);
+    blob(g, sx * 0.47, 0.74, 0.63, 0.075, 0.034, 0.045, redV, 0.6, true);
+    ellipseQuad(g, sx * 0.47, 0.74, 0.616, 0.066, 0.027, lin('#8fa3b5'), 0.95);
+  }
+  // cockpit: the padded opening, steering wheel, the driver's helmet with a dark visor, the T-camera on the airbox
+  prism(g, rrect(-0.235, 0.235, -0.06, 0.62, 0.1), 0.6, 0.693, black, 0.1);
+  box(g, 0, 0.705, 0.44, 0.24, 0.07, 0.03, carbon, 0.4);
+  shell(g, 0, 0.83, 0.12, 0.125, 0.13, 0.14, -Math.PI, Math.PI, -0.75, Math.PI / 2, helmet, 0.85);
+  shell(g, 0, 0.83, 0.12, 0.129, 0.134, 0.144, -1.05, 1.05, -0.02, 0.36, lin('#0d1218'), 0.95);
+  box(g, 0, 1.015, -0.2, 0.11, 0.05, 0.07, lin('#ecd51e'), 0.5);
+  box(g, 0, 0.985, -0.2, 0.03, 0.02, 0.03, black, 0.2);
+  box(g, 0, 0.36, 2.33, 0.004, 0.02, 0.12, metal, 0.7); // pitot on the nose
+  smoothNormals(g, 38);
+  // no headlamps: the only light is the red rain light on the crash structure
+  const lf = new Geo(), lr = new Geo(), fl = new Geo();
+  const rl = lin('#ff2a1a');
+  lr.quad([-0.045, 0.21, -2.035], [0.045, 0.21, -2.035], [0.045, 0.27, -2.035], [-0.045, 0.27, -2.035], rl, 0, [0, 0.24, -2.035 + 5]);
+  box(g, 0, 0.24, -2.025, 0.11, 0.08, 0.02, black, 0.4);
+  // exhaust flame out of the periscopes (backfires)
+  for (const sx of [-1, 1]) for (let k = 0; k < 3; k++) {
+    const a = k * Math.PI / 3, ca = Math.cos(a) * 0.07, sa = Math.sin(a) * 0.07, x = sx * 0.33, y = 0.55, z = -0.8;
+    fl.quad([x - ca, y, z - sa], [x + ca, y, z + sa], [x + ca * 0.3, y + 0.3, z + sa * 0.3 - 0.25], [x - ca * 0.3, y + 0.3, z - sa * 0.3 - 0.25], lin('#ff9a3a'), 0, [x, y + 0.2, z + 3]);
+  }
+  return { body: g, glass: null, lens: null, lightF: lf, lightR: lr, flame: fl, spk: null, shape: S, fz, rz };
+}
+// the F2008's livery: Ferrari red with white panels on the engine cover, the number on the nose and the airbox,
+// made-up sponsors as on the rally cars
+function f1Livery(spec) {
+  const col = spec.col, cv = document.createElement('canvas'); cv.width = 2048; cv.height = F1A.H * 2;
+  const g = cv.getContext('2d'); g.scale(2, 2);
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, 1024, F1A.H);
+  const L = F1A.z1 - F1A.z0;
+  for (const sx of [1, -1]) {
+    const top = sx > 0 ? F1A.lY : 0, X = z => (sx > 0 ? (F1A.z1 - z) / L : (z - F1A.z0) / L) * 1024, Y = y => top + (F1A.yTop - y) / F1A.yTop * F1A.sH;
+    g.save(); g.beginPath(); g.rect(0, top, 1024, F1A.sH); g.clip();
+    g.fillStyle = col.base; g.fillRect(0, top, 1024, F1A.sH);
+    const poly = (pts, c) => { g.fillStyle = c; g.beginPath(); pts.forEach(([z, y], i) => i ? g.lineTo(X(z), Y(y)) : g.moveTo(X(z), Y(y))); g.closePath(); g.fill(); };
+    const text = (str, z, y, size, c, w) => {
+      g.save(); g.fillStyle = c; g.font = `${w || 800} ${size}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.translate(X(z), Y(y)); g.fillText(str, 0, 0); g.restore();
+    };
+    // carbon below the sidepods and along the floor line
+    poly([[2.6, 0], [2.6, 0.16], [0.9, 0.11], [-2.5, 0.11], [-2.5, 0]], col.lower);
+    // white on the engine cover and the top of the sidepods, sweeping down towards the gearbox
+    poly([[-0.15, 0.99], [-0.15, 0.8], [-0.7, 0.62], [-1.5, 0.43], [-1.68, 0.44], [-1.2, 0.68], [-0.6, 0.93]], col.stripe);
+    text('SIDEWAYS', -0.62, 0.8, 30, col.base);
+    text('TORQUE OIL', 0.05, 0.36, 34, '#ffffff');
+    text('FERRARI', 1.45, 0.43, 22, '#ffffff');
+    // the number on the airbox and a thin white line along the nose
+    text(String(spec.num), -0.25, 0.91, 30, '#ffffff', 900);
+    poly([[2.32, 0.315], [2.32, 0.33], [1.0, 0.525], [1.0, 0.505]], col.stripe);
+    g.restore();
+  }
+  // top: red, the white engine cover, the number near the nose tip
+  const TX = z => (z - F1A.z0) / L * 1024, TY = x => F1A.tY + (0.95 - x) / 1.9 * F1A.tH;
+  g.fillStyle = col.base; g.fillRect(0, F1A.tY, 1024, F1A.tH);
+  g.fillStyle = col.stripe; g.fillRect(TX(-1.62), TY(0.16), TX(-0.3) - TX(-1.62), TY(-0.16) - TY(0.16));
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = '#ffffff'; g.font = `900 34px ${FONT}`;
+  g.save(); g.translate(TX(2.0), TY(0)); g.rotate(Math.PI / 2); g.fillText(String(spec.num), 0, 0); g.restore();
+  g.fillStyle = '#ffffff'; g.fillRect(0, 1016, 1024, 8);
+  return cv;
+}
+
 // ---------- wheels ----------
 // tyre with rounded shoulders, a staggered gravel tread and a bulging sidewall; dished rim with thick spokes,
 // centre nut and a big vented disc behind. The caliper is a separate mesh so it doesn't spin with the wheel.
-function wheelGeo(spec) {
-  const g = new Geo();
+function wheelGeo(spec, W, ri) {
+  const g = new Geo(), f1 = spec.shape === 'f1'; W = W || 0.25; ri = ri || 0.24;
   const tire = lin('#17181a'), tread = lin('#0e0f10'), side = lin('#1c1d20'), rim = lin(spec.col.rim), barrel = lin('#3a3c41'), hub = lin('#2a2b2e');
   const disc = lin('#6d7076'), hat = lin('#46484d');
-  const N = 24, W = 0.25, r0 = 0.335, ri = 0.24, hw = W / 2, sh = 0.028;
+  const N = 24, r0 = 0.335, hw = W / 2, sh = 0.028;
   const P = (x, a, r) => [x, Math.cos(a) * r, Math.sin(a) * r];
   for (let i = 0; i < N; i++) {
     const a0 = i / N * Math.PI * 2, a1 = (i + 1) / N * Math.PI * 2, am = (a0 + a1) / 2;
     const out = [0, -Math.cos(am) * 9, -Math.sin(am) * 9];
-    // tread: two staggered rows of blocks
-    const hiL = i % 2 ? 0.009 : 0, hiR = i % 2 ? 0 : 0.009;
+    // tread: two staggered rows of blocks (the F1's slicks: four grooves round a smooth tread)
+    const hiL = f1 ? 0 : i % 2 ? 0.009 : 0, hiR = f1 ? 0 : i % 2 ? 0 : 0.009;
+    if (f1) {
+      const x0 = -hw + sh, x1 = hw - sh, gw = 0.012, at = k => x0 + (x1 - x0) * k / 5;
+      for (let k = 0; k < 5; k++) {
+        const xa = at(k) + (k ? gw / 2 : 0), xb = at(k + 1) - (k < 4 ? gw / 2 : 0);
+        g.quad(P(xa, a0, r0), P(xb, a0, r0), P(xb, a1, r0), P(xa, a1, r0), tire, 0.08, out);
+        if (k < 4) g.quad(P(xb, a0, r0 - 0.006), P(xb + gw, a0, r0 - 0.006), P(xb + gw, a1, r0 - 0.006), P(xb, a1, r0 - 0.006), tread, 0.02, out);
+      }
+    } else {
     g.quad(P(-hw + sh, a0, r0 + hiL), P(0, a0, r0 + hiL), P(0, a1, r0 + hiL), P(-hw + sh, a1, r0 + hiL), hiL ? tread : tire, 0.05, out);
     g.quad(P(0, a0, r0 + hiR), P(hw - sh, a0, r0 + hiR), P(hw - sh, a1, r0 + hiR), P(0, a1, r0 + hiR), hiR ? tread : tire, 0.05, out);
+    }
     for (const sx of [-1, 1]) {
       const hiS = sx < 0 ? hiL : hiR;
       // shoulder, sidewall (bulging out a little at mid height), rim lip, barrel
@@ -720,17 +939,18 @@ function wheelGeo(spec) {
       g.quad(P(sx * hw * 0.98, a0, ri), P(sx * hw * 0.98, a1, ri), P(sx * hw * 0.86, a1, ri - 0.025), P(sx * hw * 0.86, a0, ri - 0.025), rim, 0.85, [-sx * 20, 0, 0]);
       g.quad(P(sx * hw * 0.86, a0, ri - 0.025), P(sx * hw * 0.86, a1, ri - 0.025), P(sx * hw * 0.3, a1, ri - 0.03), P(sx * hw * 0.3, a0, ri - 0.03), barrel, 0.4, [0, 0, 0]);
       // vented disc with a darker hat, visible through the spokes
-      g.quad(P(sx * 0.3 * hw, a0, 0.08), P(sx * 0.3 * hw, a1, 0.08), P(sx * 0.3 * hw, a1, 0.2), P(sx * 0.3 * hw, a0, 0.2), i % 3 ? disc : lin('#55585e'), 0.65, [-sx * 20, 0, 0]);
+      const dR = Math.min(0.2, ri - 0.045);
+      g.quad(P(sx * 0.3 * hw, a0, 0.08), P(sx * 0.3 * hw, a1, 0.08), P(sx * 0.3 * hw, a1, dR), P(sx * 0.3 * hw, a0, dR), i % 3 ? disc : lin('#55585e'), 0.65, [-sx * 20, 0, 0]);
       g.tri([sx * 0.32 * hw, 0, 0], P(sx * 0.32 * hw, a0, 0.08), P(sx * 0.32 * hw, a1, 0.08), hat, 0.4, [-sx * 20, 0, 0]);
     }
   }
-  const spokes = spec.id === 'impressa' || spec.id === 'kwattro' ? 6 : 5;
+  const spokes = f1 ? 10 : spec.id === 'impressa' || spec.id === 'kwattro' ? 6 : 5;
   for (const sx of [-1, 1]) {
     const x = sx * W * 0.42, xb = x - sx * 0.022;
     for (let k = 0; k < spokes; k++) {
       const a = k / spokes * Math.PI * 2;
       const Q = (xx, aa, r) => [xx, Math.cos(aa) * r, Math.sin(aa) * r];
-      const c0 = Q(x, a - 0.17, 0.055), c1 = Q(x, a + 0.17, 0.055), c2 = Q(x, a + 0.1, ri - 0.03), c3 = Q(x, a - 0.1, ri - 0.03);
+      const sw = f1 ? 0.45 : 1, c0 = Q(x, a - 0.17 * sw, 0.055), c1 = Q(x, a + 0.17 * sw, 0.055), c2 = Q(x, a + 0.1 * sw, ri - 0.03), c3 = Q(x, a - 0.1 * sw, ri - 0.03);
       g.quad(c0, c1, c2, c3, rim, 0.85, [-sx * 20, 0, 0]);
       // spoke thickness: the two long edges
       for (const [p0, p1] of [[c0, c3], [c1, c2]]) g.quad(p0, p1, [xb, p1[1], p1[2]], [xb, p0[1], p0[2]], lin(spec.col.rim === '#f2f2f2' || spec.col.rim === '#f3f3f1' || spec.col.rim === '#eeeeee' ? '#b9bcc2' : '#8a7a3a'), 0.6, [0, 0, 0]);
@@ -743,7 +963,9 @@ function wheelGeo(spec) {
   return g;
 }
 // tyre texture: dark rubber with the maker's name moulded into the sidewall twice around, a thin white strip on top
-function tyreCanvas() {
+// (the F1's slicks have the name in white, as racing tyres do)
+function tyreCanvas(spec) {
+  const f1 = spec && spec.shape === 'f1', name = f1 ? 'SIDEWAYS  ·  RACING SLICK' : 'SIDEWAYS  ·  GRAVEL G4';
   const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 64;
   const g = cv.getContext('2d');
   g.fillStyle = '#1d1e21'; g.fillRect(0, 0, 1024, 64);
@@ -751,8 +973,8 @@ function tyreCanvas() {
   g.fillStyle = '#ffffff'; g.fillRect(0, 0, 1024, 2);
   g.font = `800 26px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
   for (const x of [256, 768]) {
-    g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillText('SIDEWAYS  ·  GRAVEL G4', x + 1, 34);
-    g.fillStyle = '#8e9095'; g.fillText('SIDEWAYS  ·  GRAVEL G4', x, 33);
+    g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillText(name, x + 1, 34);
+    g.fillStyle = f1 ? '#e6e6e2' : '#8e9095'; g.fillText(name, x, 33);
   }
   g.fillStyle = 'rgba(255,255,255,0.12)'; g.fillRect(0, 52, 1024, 2);
   return cv;
@@ -766,10 +988,10 @@ function caliperGeo(spec) {
 }
 
 // motion-blur discs over the spokes: faded in with wheel speed so fast wheels read as a blur instead of strobing
-function wheelBlurGeo(spec) {
+function wheelBlurGeo(spec, W, ri) {
   const g = new Geo(), rim = lin(spec.col.rim), dark = lin('#141518');
   const mix = (k) => [dark[0] + (rim[0] - dark[0]) * k, dark[1] + (rim[1] - dark[1]) * k, dark[2] + (rim[2] - dark[2]) * k];
-  const N = 20, W = 0.25, rIn = 0.06, rOut = 0.215;
+  W = W || 0.25; const N = 20, rIn = 0.06, rOut = (ri || 0.24) - 0.025;
   for (const sx of [-1, 1]) {
     const x = sx * (W * 0.42 + 0.006);
     for (let i = 0; i < N; i++) {
@@ -1050,15 +1272,19 @@ function liveryCanvas(spec) {
 }
 
 function buildCar(R, spec, night) {
-  const cg = carGeo(spec, night);
+  const f1 = spec.shape === 'f1', cg = f1 ? f1Geo(spec) : carGeo(spec, night);
+  // the F1 has narrow fronts and wide rears on small rims: its own wheel meshes per axle
+  const wheel = (W, ri) => { const w = wheelGeo(spec, W, ri); smoothNormals(w, 30); return R.mesh(w); };
+  const S = cg.shape, rf = f1 ? 0.19 : 0.24;
   return {
     spec, shape: cg.shape, fz: cg.fz, rz: cg.rz,
-    body: R.mesh(cg.body), glass: R.mesh(cg.glass), lens: R.mesh(cg.lens), lightF: R.mesh(cg.lightF), lightR: R.mesh(cg.lightR), flame: R.mesh(cg.flame),
+    body: R.mesh(cg.body), glass: cg.glass && R.mesh(cg.glass), lens: cg.lens && R.mesh(cg.lens), lightF: R.mesh(cg.lightF), lightR: R.mesh(cg.lightR), flame: R.mesh(cg.flame),
     spk: cg.spk ? R.mesh(cg.spk) : null,
-    tex: R.texture(liveryCanvas(spec)),
-    wheel: R.mesh((() => { const w = wheelGeo(spec); smoothNormals(w, 30); return w; })()), wheelBlur: R.mesh(wheelBlurGeo(spec)), caliper: R.mesh(caliperGeo(spec)),
-    tyreTex: R.texture(tyreCanvas()),
-    exhaust: [-cg.shape.W / 2 * 0.55, 0.3, cg.shape.zr - 0.08],
+    tex: R.texture(f1 ? f1Livery(spec) : liveryCanvas(spec)),
+    wheel: wheel(S.wF, rf), wheelBlur: R.mesh(wheelBlurGeo(spec, S.wF, rf)), caliper: R.mesh(caliperGeo(spec)),
+    wheelR: f1 ? wheel(S.wR, rf) : null, wheelBlurR: f1 ? R.mesh(wheelBlurGeo(spec, S.wR, rf)) : null,
+    tyreTex: R.texture(tyreCanvas(spec)),
+    exhaust: f1 ? [-0.33, 0.55, -0.8] : [-cg.shape.W / 2 * 0.55, 0.3, cg.shape.zr - 0.08],
   };
 }
 
