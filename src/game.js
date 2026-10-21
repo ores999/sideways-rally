@@ -104,7 +104,7 @@ function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.
 const nf = n => Math.round(n).toLocaleString('en-US');
 function drawThumb(cv, T, st) {
   const g = cv.getContext('2d'), w = cv.width, h = cv.height;
-  const acc = { pine: '#8cc06f', frost: '#8fb6ff', mesa: '#ff9152', forest: '#6fbf73', city: '#a9bdd8' }[st.id] || '#ffd23a';
+  const acc = { pine: '#8cc06f', frost: '#8fb6ff', mesa: '#ff9152', forest: '#6fbf73', monaco: '#e6c27a' }[st.id] || '#ffd23a';
   g.fillStyle = '#10141a'; g.fillRect(0, 0, w, h);
   g.strokeStyle = 'rgba(255,255,255,0.05)'; g.lineWidth = 1;
   for (let x = 0; x < w; x += 16) { g.beginPath(); g.moveTo(x + 0.5, 0); g.lineTo(x + 0.5, h); g.stroke(); }
@@ -803,7 +803,7 @@ async function ghostDecode(str) {
 function ownGhost(e) { const r = store.get(pbKey(e.k, e.c), null); return r && r.q && Math.abs(r.t - e.t) < 0.005 ? r.q : null; }
 // the stages the server's check takes (online/supabase.sql). Times on any other stage stay on this browser until the
 // server is migrated: one refused row fails the whole batch, and a 400 reads as "no ghost column"
-const ONLINE_STAGES = /^(pine|frost|mesa|forest|city)(-r)?(-night|-rain)?$|^daily-\d{8}$/;
+const ONLINE_STAGES = /^(pine|frost|mesa|forest|monaco)(-r)?(-night|-rain)?$|^daily-\d{8}$/;
 async function onlineSync() {
   if (!online.on || !settings.name || syncing) return;
   const sent = new Set(store.get('sent', [])), sentG = new Set(store.get('sentG', [])), me = settings.name.toLowerCase(), id = e => e.n.toLowerCase() + '|' + e.k + '|' + e.c + '|' + e.t.toFixed(3);
@@ -2642,7 +2642,7 @@ function updateAudio(dt) {
   // straight-cut gears sing loudest on the overrun, when the load comes off the teeth
   Vc.whg.gain.setTargetAtTime(active ? V.whine * clamp(spd / 22, 0, 1) * (car.gear > 0 ? 1 : 0) * (1 + 0.9 * (1 - thr)) : 0, t, 0.05);
   // surfaces (a city is paved from kerb to kerb, off the route too)
-  const sid = W.st.kind, paved = !!W.st.tarmac && (car.onRoad || !!W.st.city);
+  const sid = W.st.kind, paved = !!W.st.tarmac && (car.onRoad || !!W.st.town);
   let gv = 0, sv = 0;
   if (active && !car.air) {
     const base = paved ? 0.03 : car.onRoad ? (sid === 'pine' ? 0.22 : sid === 'frost' ? 0.12 : 0.03) : 0.26;
@@ -2677,7 +2677,7 @@ function updateAudio(dt) {
   const inGorge = W.T.walls.some(w => car.s > w.s0 - 15 && car.s < w.s1 + 15);
   A.revIn.gain.setTargetAtTime((A.revWet || 0.15) * (onboard ? 0.35 : 1), t, 0.3);
   // the city's building fronts ~8 m off the road on both sides: a slapback there and back (~47 ms)
-  const town = !!W.st.city;
+  const town = !!W.st.town;
   A.slap.delayTime.setTargetAtTime(town ? 0.047 : W.st.rows ? 0.05 : 0.042, t, 0.2);
   A.slapIn.gain.setTargetAtTime(onboard ? 0.05 : inGorge ? 0.3 : town ? 0.2 : W.st.rows ? 0.07 : 0, t, 0.25);
   const looseGround = !paved;
@@ -2877,7 +2877,7 @@ function savePrev() { prev.x = car.x; prev.y = car.y; prev.z = car.z; prev.h = c
 function wheelLocal(i) { const sh = carModel.shape; return [(i % 2 ? -1 : 1) * (sh.W / 2 - 0.13), i < 2 ? carModel.fz : carModel.rz]; }
 function surfBump(x, z, surf) {
   const sid = W.st.kind;
-  const amp = surf === 0 || W.st.city ? (sid === 'pine' ? 0.026 : sid === 'frost' ? 0.016 : 0.004) : surf === 1 ? 0.03 : 0.042;
+  const amp = surf === 0 || W.st.town ? (sid === 'pine' ? 0.026 : sid === 'frost' ? 0.016 : 0.004) : surf === 1 ? 0.03 : 0.042;
   return amp * (W.nz.n2(x * 0.9, z * 0.9) * 0.65 + W.nz.n2(x * 2.6 + 9, z * 2.6) * 0.35);
 }
 function updateVis(dt) {
@@ -2893,7 +2893,7 @@ function updateVis(dt) {
     susp.surf[i] = surf;
     const g = C.groundAt(W, car, wx, wz);
     flat += g;
-    susp.gh[i] = g + surfBump(wx, wz, surf) + (W.st.city ? C.slabAt(W, wx, wz) : 0); // the kerb only lifts the drawn car
+    susp.gh[i] = g + surfBump(wx, wz, surf);
   }
   const gh = susp.gh, fz0 = carModel.fz, rz0 = carModel.rz, hx = wheelLocal(0)[0];
   vis.gp = -Math.atan2((gh[0] + gh[1]) / 2 - (gh[2] + gh[3]) / 2, fz0 - rz0);
@@ -2985,7 +2985,7 @@ const cam = { pos: [0, 5, -10], look: [0, 0, 0], yaw: 0, y: 0, fov: 60, shake: 0
 let tvSpots = [];
 function buildTvSpots() {
   const T = W.T; tvSpots = [];
-  const cols = W.O.cols, city = !!W.st.city;
+  const cols = W.O.cols, city = !!W.st.town;
   const blocked = (ax, ay, az, bx, by, bz) => {
     if (C.rayWalls(W, ax, az, bx, bz) < 1) return true;
     const n = 14;
@@ -3098,7 +3098,7 @@ function updateCamera(dt) {
   if (asp < 1.1 && cm !== 3) fovT *= 1 + clamp(1.1 - asp, 0, 0.65) * 0.6;
   cam.fov += (fovT - cam.fov) * (cam.snap ? 1 : Math.min(1, dt * 4));
   if (evt.land > 3) cam.shake = Math.max(cam.shake, Math.min(0.5, evt.land * 0.04));
-  const rough = car.air || (!car.onRoad && !W.st.city) ? 0.03 : (W.st.kind === 'pine' ? 0.012 : W.st.kind === 'frost' ? 0.007 : 0.003);
+  const rough = car.air || (!car.onRoad && !W.st.town) ? 0.03 : (W.st.kind === 'pine' ? 0.012 : W.st.kind === 'frost' ? 0.007 : 0.003);
   const sk = cam.shake + rough * clamp(spd / 30, 0, 1.5);
   if (cm !== 3 && sk > 0.0005) {
     // smooth multi-sine shake rather than per-frame noise, so it reads as a jolt and not as jitter
@@ -3195,7 +3195,7 @@ function emitEffects(dt) {
       const drive = rear ? 1 - P.drive.front : P.drive.front;
       let rate = (spd * 0.85 + car.slip * (rear ? 3.6 : 1.4) + car.wheelspin * 6 * drive) * f.k * (rear ? 1 : 0.45);
       let smoke = 0;
-      if (W.st.tarmac && (susp.surf[i] === 0 || W.st.city) && !S.E.wet) { smoke = clamp((car.slip - 3) / 6, 0, 1) * (rear ? 1 : 0.4); rate += smoke * 24; }
+      if (W.st.tarmac && (susp.surf[i] === 0 || W.st.town) && !S.E.wet) { smoke = clamp((car.slip - 3) / 6, 0, 1) * (rear ? 1 : 0.4); rate += smoke * 24; }
       if (S.E.wet) rate *= clamp(spd / 14, 0.15, 1.4); // spray only really flies at speed
       emitAcc[i] += rate * dt;
       const w = wheelWorld(i);
@@ -3639,7 +3639,7 @@ function render() {
   else E.hlOn = 0;
   // street lamps at night: the 16 nearest a point ahead of the camera light the scene, the furthest of them faded so
   // none switches on or off as the set changes
-  if (S.lamps) {
+  if (S.lamps && S.lamps.length) {
     const dx = cam.look[0] - cam.pos[0], dz = cam.look[2] - cam.pos[2], dl = Math.hypot(dx, dz) || 1;
     const px = cam.pos[0] + dx / dl * 22, pz = cam.pos[2] + dz / dl * 22;
     const L = S.lamps, d = S.lampD || (S.lampD = new Float32Array(L.length)), ix = S.lampI || (S.lampI = L.map((_, i) => i));

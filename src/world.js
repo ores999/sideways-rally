@@ -42,16 +42,15 @@ const VIS = {
     dust: [0.72, 0.5, 0.34], mark: [0.04, 0.04, 0.05, 0.55], far: '#b8826a', skirt: '#b57a4c',
     grade: { lift: [0.018, 0.006, 0.0], gain: [1.035, 1.0, 0.94], sat: 1.08, con: 0.14, vig: 0.24, bloom: 0.06, thr: 1.2 },
   },
-  // downtown: a clear, slightly hazy afternoon over grey streets and pale concrete sidewalks (the buildings' colours are
-  // in CITY_STYLES)
-  city: {
-    zen: '#3f74b8', fogCol: '#bcc6cf', glow: '#fff0d8', sunDisc: '#fff4e0', cloudCol: '#f2f4f7', clouds: 0.45,
-    sunEl: 38, sunAz: 210, sunCol: '#fff2dc', sunI: 2.8, sky: '#95b4d6', skyI: 0.8, gnd: '#6a6862', gndI: 0.5, exp: 0.98,
-    fog: [80, 520], road: ['#4b4b4f', '#3b3b3f', '#6f6b67'], icy: 0, lines: true, tt: [1.0, 1.0, 1.0], rays: 0.3,
-    ground: ['#4a4a4d', '#454549', '#525256', '#3e3e42'], verge: '#86827b', rock: '#77756f', walk: '#a29a8d', kerb: '#aaa498', roof: '#6b6965',
-    birch: ['#4b6a2f', '#577636', '#647d3c'],
-    dust: [0.6, 0.6, 0.6], mark: [0.04, 0.04, 0.05, 0.55], far: '#7f8b98', skirt: '#4c4d50',
-    grade: { lift: [0.006, 0.008, 0.014], gain: [1.02, 1.0, 0.97], sat: 0.98, con: 0.12, vig: 0.24, bloom: 0.06, thr: 1.15 },
+  // Monaco: a bright Riviera afternoon, a deep blue sky and sea, pale stone and warm plaster
+  monaco: {
+    zen: '#2f6cc0', fogCol: '#c4d2de', glow: '#fff0d6', sunDisc: '#fff6e4', cloudCol: '#f4f6f9', clouds: 0.3,
+    sunEl: 46, sunAz: 200, sunCol: '#fff3df', sunI: 3.0, sky: '#8fb4dc', skyI: 0.82, gnd: '#7a7468', gndI: 0.5, exp: 0.96,
+    fog: [160, 1100], road: ['#4b4b4f', '#3b3b3f', '#6f6b67'], icy: 0, lines: true, tt: [1.0, 1.0, 1.0], rays: 0.3,
+    ground: ['#4a4a4d', '#454549', '#525256', '#3e3e42'], verge: '#8c877e', rock: '#8f887c', walk: '#b3a894', kerb: '#bdb5a6', roof: '#8a6f5e',
+    sea: '#0f4a5e', seabed: '#2f4e50', hill: ['#8a8068', '#9a8b72', '#7a7a5c'], scrub: '#4a5a30',
+    dust: [0.6, 0.6, 0.6], mark: [0.04, 0.04, 0.05, 0.55], far: '#8a96a2', skirt: '#4c4d50',
+    grade: { lift: [0.004, 0.008, 0.016], gain: [1.03, 1.0, 0.96], sat: 1.06, con: 0.12, vig: 0.22, bloom: 0.06, thr: 1.15 },
   },
 };
 
@@ -63,7 +62,7 @@ function nightVis(B, st) {
   return {
     zen: '#02050c', fogCol: frost ? '#0e1528' : '#0a1019', glow: '#1a2438', sunDisc: '#e6edff', cloudCol: '#121827', clouds: Math.min(B.clouds, 0.3), stars: 1.0,
     sunEl: 34, sunAz: (B.sunAz + 50) % 360, sunCol: '#8ea4dc', sunI: frost ? 0.42 : 0.34, sky: '#22314e', skyI: frost ? 0.36 : 0.28, gnd: B.gnd, gndI: 0.12, exp: 1.3,
-    fog: [22, frost ? 260 : 230], rays: 0, night: true, hl: 1.7,
+    fog: [22, frost ? 260 : B.sea ? 900 : 230], rays: 0, night: true, hl: 1.7, // (by the sea the lights carry across the water)
     grade: { lift: [0.0, 0.006, 0.022], gain: [0.97, 1.0, 1.06], sat: 0.9, con: 0.16, vig: 0.4, bloom: 0.17, thr: 0.85 },
   };
 }
@@ -92,7 +91,7 @@ function visOf(st) {
 }
 
 // what the horizon looks like in reflections: the tree line, snowy hills or the buttes, hazed towards the fog
-const SKYLINE = { pine: '#3c4a37', forest: '#2c3829', frost: '#56607a', mesa: '#9a6449', city: '#8e9298' };
+const SKYLINE = { pine: '#3c4a37', forest: '#2c3829', frost: '#56607a', mesa: '#9a6449', monaco: '#a49c92' };
 function skylineOf(V, st) {
   const base = lin(SKYLINE[st.id] || '#404840'), fog = lin(V.fogCol);
   const c = mixc(base, fog, st.cond === 'rain' ? 0.55 : 0.25);
@@ -209,8 +208,14 @@ function terrainMesh(W) {
     const n1 = nz.n2(x / 38, z / 38) * 0.5 + 0.5, n2 = nz.n2(x / 9 + 40, z / 9) * 0.5 + 0.5, n3 = nz.n2(x / 120 - 7, z / 120) * 0.5 + 0.5;
     let c;
     const d = TR.D[k];
-    if (st.kind === 'city') {
-      // the streets off the route: asphalt in a few shades, darker where it has been patched
+    if (st.street) {
+      // paving by the road, the seabed under the water, scrub and rock on the hillside
+      c = mixc(pal[0], pal[1], n1); c = mixc(c, pal[2], n3 * 0.5);
+      if (y < 0.5) c = mixc(lin(V.seabed), lin(V.sea), C.sstep(0.5, -4, y));
+      else if (d > C.STREET.line + 1) { c = mixc(lin(V.hill[0]), lin(V.hill[1]), n1); c = mixc(c, lin(V.hill[2]), Math.max(0, n2 - 0.5) * 1.4); c = mixc(c, lin(V.scrub), C.sstep(0.15, 0.4, slope) * (0.6 + 0.4 * n2)); }
+      // a drop between two levels of the town is a masonry retaining wall, not a bank of asphalt or earth
+      if (y >= 0.5) c = mixc(c, mixc(lin('#bfae92'), lin('#a89a82'), n2), C.sstep(0.3, 0.55, slope));
+    } else if (st.kind === 'city') {
       c = mixc(pal[0], pal[1], n1); c = mixc(c, pal[2], n3 * 0.5); c = mixc(c, pal[3], Math.max(0, n2 - 0.6) * 1.2);
     } else if (st.kind === 'pine') {
       c = mixc(pal[0], pal[1], n1); c = mixc(c, pal[2], n3 * 0.6); c = mixc(c, pal[3], Math.max(0, n2 - 0.6) * 1.6);
@@ -242,7 +247,7 @@ function terrainMesh(W) {
   const O = W.O;
   if (O) {
     // (the city's street trees stand on sidewalks over streets the route's road doesn't share the terrain with)
-    for (const t of st.city ? [] : O.trees || []) shade(t.x, t.z, 5.5 * (t.s || 1) * (t.type === 3 ? 1.3 : 1), st.kind === 'frost' ? 0.22 : t.type === 3 ? 0.36 : 0.3);
+    for (const t of st.town ? [] : O.trees || []) shade(t.x, t.z, 5.5 * (t.s || 1) * (t.type === 3 ? 1.3 : 1), st.kind === 'frost' ? 0.22 : t.type === 3 ? 0.36 : 0.3);
     for (const r of O.rocks || []) shade(r.x, r.z, 2.5 * (r.s || 1), 0.25);
   }
   // indices grouped in square blocks so the renderer can skip blocks outside the view. Each block also has coarser
@@ -309,7 +314,7 @@ function roadMeshes(W) {
   const verge = lin(V.verge);
   const sides = [];
   // in the city the strip is the concrete gutter out to the kerb, flat
-  const city = !!st.city, vw = city ? C.CITY_X.kerb - hw : 1.6;
+  const city = !!st.town, vw = city ? C.STREET.kerb - hw : 1.6;
   for (const side of [-1, 1]) {
     const P2 = [], C2 = [];
     for (let i = 0; i < n; i++) {
@@ -979,7 +984,7 @@ function tuftGeo() {
 }
 function placeTufts(W) {
   const { T, TR, st } = W, R = C.rng(st.seed + 555), hw = T.hw, out = [], tmp = {};
-  if (st.city) return new Float32Array(0);
+  if (st.town) return new Float32Array(0);
   const V = visOf(st);
   const per = V.tuftPer || (st.kind === 'pine' ? 5 : st.kind === 'frost' ? 2 : 3);
   const dMin = st.bank ? hw + 4.7 : hw + 1.1;
@@ -1358,7 +1363,7 @@ function facadeLayers() {
     streaks(0, FAC_W, 3, 2.5, 0.06);
   });
   layer('renderP', 3, 112, 0, () => {
-    render(0, 3, [206, 202, 194], 2.2);
+    render(0, 3, [206, 202, 194], 1.1);
     for (let i = 0; i < 4; i++) { const w = 0.5 + R() * 1.5, h = 0.3 + R() * 0.9, x = R() * (FAC_W - w), y = R() * (3 - h); box(x, y, x + w, y + h, jit([196, 192, 186], 0.08)); }
     streaks(0, FAC_W, 3, 2.8, 0.08);
   });
@@ -1509,19 +1514,7 @@ function facadeLayers() {
   return facadeData = { data, w: W, h: H, n: layers.length, at };
 }
 
-// ---------- city ----------
-// Building styles: f is the front's entry in the facade table (its party wall is f + 1), tints (sRGB) colour the walls
-// (or, on a curtain wall, the glass), ledge is the cornice (depth, height; lc its colour, else the wall's) and par
-// the parapet over the roof.
-const CITY_STYLES = [
-  { f: 2, tints: ['#ffffff', '#f4ebe4', '#e9e0da', '#fbf3ea', '#e0dad6', '#f0e2d4'], ledge: [0.22, 0.24], lc: '#d6ccbb', par: 0.8 }, // brick
-  { f: 4, tints: ['#efe4cf', '#e3c79c', '#d7ab8c', '#c5cfb9', '#cbd3dc', '#f2efe8', '#e2cfb0', '#d9c2c2'], ledge: [0.38, 0.3], par: 0.9 }, // plaster
-  { f: 6, tints: ['#e6e1d8', '#d2cdc4', '#ebe5d9', '#c4c1bb'], lc: '#b9b7b1', par: 1.0 }, // office
-  { f: 8, tints: ['#a9c3d6', '#a8c9bf', '#c4b29b', '#b4bcc4', '#97b1cc'], lc: '#4d5157', par: 1.2 }, // curtain wall
-  { f: 10, tints: ['#f1e8d6', '#e6dac2', '#ddd5c8', '#f4ede0'], ledge: [0.5, 0.36], par: 1.1 }, // classic stone
-];
-// the style of a building with n floors over the ground floor
-const styleFor = (n, r) => n <= 4 ? (r < 0.45 ? 0 : r < 0.9 ? 1 : 4) : n <= 9 ? (r < 0.1 ? 0 : r < 0.5 ? 1 : r < 0.72 ? 4 : 2) : (r < 0.1 ? 1 : r < 0.55 ? 2 : 3);
+// ---------- city facades: shared tables ----------
 // u_fac: per entry (first upper-floor layer, variants, first ground-floor layer, variants); entry 1 is the paving.
 // The ground-floor pools overlap: brick, rusticated base, shops and lobbies lie in that order in the array.
 function facTable(L) {
@@ -1533,108 +1526,6 @@ function facTable(L) {
   set(8, a.glassU, 3, a.lobby, 2); set(9, a.glassU, 3, a.glassU, 3);
   set(10, a.classicU, 3, a.base, 4); set(11, a.renderP, 1, a.renderP, 1);
   return f;
-}
-// Every block of the grid: a raised slab of paved sidewalk with quarter-circle kerb corners, and a continuous row of
-// buildings standing on its building line: a corner building on each corner with its ochava, deep lots in between,
-// the odd tower. Walls carry their style and tile count in uv.x and their number of upper floors and a seed in uv.y
-// (LIT_FS mode 12); fronts get a cornice, every wall a parapet. One mesh with a chunk per block, so a view only draws
-// the blocks it can see.
-function cityMesh(W) {
-  const P = W.O.city, V = visOf(W.st), B = P.B, X = C.CITY_X, k = X.kerb, F = B / 2 - k - X.walk, oc = X.ochava;
-  const walkC = lin(V.walk), kerbC = lin(V.kerb), roofC = lin(V.roof), S = B / 2 - k, r = P.kr, ys = X.slab;
-  const p = [], nn = [], cc = [], uu = [], chunks = [];
-  const [bi0, bi1, bj0, bj1] = P.blocks;
-  // quarter turns of the canonical side (facade along v = +F, facing +v)
-  const rot = (q, u, v) => q === 0 ? [u, v] : q === 1 ? [-v, u] : q === 2 ? [-u, -v] : [v, -u];
-  for (let bj = bj0; bj <= bj1; bj++) for (let bi = bi0; bi <= bi1; bi++) {
-    const g = new Geo(), R = C.rng(W.st.seed * 31 + (bi + 500) * 7919 + (bj + 500) * 104729);
-    const cu = (bi + 0.5) * B, cv = (bj + 0.5) * B;
-    const w = (u, v, y) => { const q = C.cityW(P, cu + u, cv + v); return [q[0], y, q[1]]; };
-    // sidewalk slab: outline, kerb face, a paved top (uv: style 1 and metres of the block, so the tiles line up with it)
-    const ring = [];
-    [[1, 1, 0], [-1, 1, 1], [-1, -1, 2], [1, -1, 3]].forEach(([su, sv, q]) => {
-      for (let a = 0; a <= 6; a++) { const th = (q + a / 6) * Math.PI / 2; ring.push([su * (S - r) + Math.cos(th) * r, sv * (S - r) + Math.sin(th) * r]); }
-    });
-    const mid = w(0, 0, ys), pv = (u, v) => [96 + u / 2.4, v / 1.2];
-    for (let q = 0; q < ring.length; q++) {
-      const a = ring[q], b = ring[(q + 1) % ring.length];
-      g.tri(mid, w(a[0], a[1], ys), w(b[0], b[1], ys), walkC, 0.03, [mid[0], ys - 10, mid[2]], pv(0, 0), pv(a[0], a[1]), pv(b[0], b[1]));
-      g.quad(w(a[0], a[1], -0.1), w(b[0], b[1], -0.1), w(b[0], b[1], ys), w(a[0], a[1], ys), kerbC, 0.05, [mid[0], 0, mid[2]]);
-    }
-    // buildings: a footprint (block coordinates, convex) pushed up to height h; kinds says which walls are drawn and
-    // as what ('front', 'back': windows; 'party': a blank medianera)
-    const tall = R() < 0.25 ? 1.6 : 1;
-    const floors = () => { const x = R(); return Math.round((x < 0.55 ? 2 + R() * 3 : x < 0.88 ? 5 + R() * 5 : 10 + R() * 9) * tall); };
-    const bldg = (fp, h, kinds) => {
-      const nUp = Math.round((h - 4) / 3), sty = CITY_STYLES[styleFor(nUp, R())], n = fp.length;
-      const tint = scalec(lin(sty.tints[(R() * sty.tints.length) | 0]), 0.92 + R() * 0.12), sd = nUp + 0.05 + R() * 0.9, top = h + sty.par;
-      const lc = sty.lc ? scalec(lin(sty.lc), 0.94 + R() * 0.1) : scalec(tint, 1.05);
-      let mu = 0, mv = 0; for (const [u, v] of fp) { mu += u; mv += v; } mu /= n; mv /= n;
-      const E = fp.map(([u0, v0], q) => {
-        const [u1, v1] = fp[(q + 1) % n], l = Math.hypot(u1 - u0, v1 - v0);
-        let nu = (v1 - v0) / l, nv = -(u1 - u0) / l;
-        if (((u0 + u1) / 2 - mu) * nu + ((v0 + v1) / 2 - mv) * nv < 0) { nu = -nu; nv = -nv; }
-        return { u0, v0, u1, v1, l, nu, nv, du: (u1 - u0) / l, dv: (v1 - v0) / l, kind: kinds[q] };
-      });
-      const ref = w(mu, mv, h / 2);
-      for (const e of E) {
-        const mu2 = (e.u0 + e.u1) / 2, mv2 = (e.v0 + e.v1) / 2;
-        if (e.kind) {
-          // the wall, up through the parapet; u counts tiles from left to right as seen from the street
-          const code = (e.kind === 'party' ? sty.f + 1 : sty.f) * 64, nt = Math.max(1, Math.round(e.l / FAC_W));
-          const a = w(e.u0, e.v0, 0), b = w(e.u1, e.v1, 0), o = w(e.u0 + e.nu, e.v0 + e.nv, 0);
-          const lr = (b[0] - a[0]) * (o[2] - a[2]) - (b[2] - a[2]) * (o[0] - a[0]) > 0;
-          const ua = code + (lr ? 0 : nt), ub = code + (lr ? nt : 0);
-          g.quad(w(e.u0, e.v0, -0.3), w(e.u1, e.v1, -0.3), w(e.u1, e.v1, top), w(e.u0, e.v0, top), tint, 0.04, ref, [[ua, sd], [ub, sd], [ub, sd], [ua, sd]]);
-        }
-        // the parapet's coping and its inner face (only ever seen from above)
-        const iu0 = e.u0 - e.nu * 0.25, iv0 = e.v0 - e.nv * 0.25, iu1 = e.u1 - e.nu * 0.25, iv1 = e.v1 - e.nv * 0.25;
-        g.quad(w(e.u0, e.v0, top), w(e.u1, e.v1, top), w(iu1, iv1, top), w(iu0, iv0, top), lc, 0.03, w(mu2, mv2, top - 10));
-        g.quad(w(iu0, iv0, h), w(iu1, iv1, h), w(iu1, iv1, top), w(iu0, iv0, top), scalec(tint, 0.8), 0.03, w(mu2 + e.nu * 5, mv2 + e.nv * 5, h));
-      }
-      const rc = w(mu, mv, h), rf = scalec(roofC, 0.85 + R() * 0.3);
-      for (let q = 0; q < n; q++) { const [ua, va] = fp[q], [ub, vb] = fp[(q + 1) % n]; g.tri(rc, w(ua, va, h), w(ub, vb, h), rf, 0.02, [rc[0], h - 10, rc[2]]); }
-      if (!sty.ledge) return;
-      // the cornice along the fronts: mitred where two fronts meet, cut square (with a cap) where a front ends
-      const [d, lh] = sty.ledge, y0 = h - lh * 0.6, y1 = h + lh * 0.4, ym = (y0 + y1) / 2;
-      const miter = (e1, e2) => { const k2 = d / (1 + e1.nu * e2.nu + e1.nv * e2.nv); return [e2.u0 + (e1.nu + e2.nu) * k2, e2.v0 + (e1.nv + e2.nv) * k2]; };
-      E.forEach((e, q) => {
-        if (e.kind !== 'front') return;
-        const pe = E[(q + n - 1) % n], ne = E[(q + 1) % n];
-        const s = pe.kind === 'front' ? miter(pe, e) : [e.u0 + e.nu * d, e.v0 + e.nv * d];
-        const t = ne.kind === 'front' ? miter(e, ne) : [e.u1 + e.nu * d, e.v1 + e.nv * d];
-        const cu2 = (e.u0 + e.u1) / 2, cv2 = (e.v0 + e.v1) / 2;
-        g.quad(w(s[0], s[1], y0), w(t[0], t[1], y0), w(t[0], t[1], y1), w(s[0], s[1], y1), lc, 0.04, w(cu2 - e.nu, cv2 - e.nv, ym));
-        g.quad(w(e.u0, e.v0, y0), w(e.u1, e.v1, y0), w(t[0], t[1], y0), w(s[0], s[1], y0), lc, 0.04, w(cu2 + e.nu * d / 2, cv2 + e.nv * d / 2, y0 + 1));
-        g.quad(w(e.u0, e.v0, y1), w(e.u1, e.v1, y1), w(t[0], t[1], y1), w(s[0], s[1], y1), lc, 0.04, w(cu2 + e.nu * d / 2, cv2 + e.nv * d / 2, y1 - 1));
-        if (pe.kind !== 'front') g.quad(w(e.u0, e.v0, y0), w(s[0], s[1], y0), w(s[0], s[1], y1), w(e.u0, e.v0, y1), lc, 0.04, w(e.u0 + e.du + e.nu * d / 2, e.v0 + e.dv + e.nv * d / 2, ym));
-        if (ne.kind !== 'front') g.quad(w(e.u1, e.v1, y0), w(t[0], t[1], y0), w(t[0], t[1], y1), w(e.u1, e.v1, y1), lc, 0.04, w(e.u1 - e.du + e.nu * d / 2, e.v1 - e.dv + e.nv * d / 2, ym));
-      });
-    };
-    const cw = [0, 1, 2, 3].map(() => 11 + R() * 5), ch = cw.map(() => 4 + floors() * 3);
-    for (let q = 0; q < 4; q++) {
-      // the corner building at this side's right-hand end, cut back at 45°
-      const c = cw[q], hc = ch[q];
-      bldg([[F - c, F - c], [F, F - c], [F, F - oc], [F - oc, F], [F - c, F]].map(([u, v]) => rot(q, u, v)), hc, ['party', 'front', 'front', 'front', 'party']);
-      // the lots along the side, each wall drawn only where it can be seen
-      const u0 = -F + cw[(q + 1) % 4], u1 = F - c, lots = [];
-      for (let u = u0; u < u1 - 0.5;) { let wd = 7 + R() * 10; if (u1 - (u + wd) < 6) wd = u1 - u; lots.push([u, u + wd]); u += wd; }
-      const hs = lots.map(() => 4 + floors() * 3), ds = lots.map(() => 14 + R() * 12);
-      lots.forEach(([a, b], i) => {
-        const h = hs[i], dp = ds[i];
-        const hl = i ? hs[i - 1] : ch[(q + 1) % 4], hr = i < lots.length - 1 ? hs[i + 1] : hc;
-        // footprint: front-right, front-left, back-left, back-right (facade, left side, back, right side)
-        bldg([[b, F], [a, F], [a, F - dp], [b, F - dp]].map(([u, v]) => rot(q, u, v)), h, ['front', h > hl && 'party', h > 12 && 'back', h > hr && 'party']);
-      });
-    }
-    const v0 = p.length / 3;
-    p.push(...g.p); nn.push(...g.n); cc.push(...g.c); uu.push(...g.u);
-    const box = [1e9, 1e9, 1e9, -1e9, -1e9, -1e9];
-    for (let i = 0; i < g.p.length; i += 3) for (let a = 0; a < 3; a++) { box[a] = Math.min(box[a], g.p[i + a]); box[a + 3] = Math.max(box[a + 3], g.p[i + a]); }
-    chunks.push({ first: v0, count: g.p.length / 3, box });
-  }
-  const idx = new Uint32Array(p.length / 3); for (let i = 0; i < idx.length; i++) idx[i] = i;
-  return { p: new Float32Array(p), n: new Float32Array(nn), c: new Float32Array(cc), u: new Float32Array(uu), idx, chunks };
 }
 // ---------- city street furniture ----------
 const FURN = lin('#3a403f');
@@ -1648,52 +1539,294 @@ function lampGeo() {
   return smoothGeo(g, 40);
 }
 function lampLensGeo() { const g = new Geo(); g.box(0, 7.448, 1.55, 0.26, 0.02, 0.52, [1, 0.94, 0.82], 0); return g; }
-// traffic lights: a pole, and a head per street facing +z (its amber lens apart, to flash)
-function signalPoleGeo() { const g = new Geo(); g.cyl(0, 0, 0, 0.09, 0.07, 3.7, 10, FURN, 0.15, 'y', true); return smoothGeo(g, 40); }
-function signalHeadGeo() {
-  const g = new Geo(), body = lin('#1c1e1f');
-  g.box(0, 3.0, 0.13, 0.08, 0.08, 0.14, FURN, 0.15);
-  g.box(0, 3.0, 0.31, 0.32, 0.98, 0.24, body, 0.2);
-  for (const y of [3.31, 3.0, 2.69]) g.box(0, y + 0.12, 0.48, 0.26, 0.025, 0.1, body, 0.2);
-  g.box(0, 3.31, 0.435, 0.2, 0.2, 0.012, lin('#3a0d0b'), 0.6);
-  g.box(0, 2.69, 0.435, 0.2, 0.2, 0.012, lin('#0b2a1a'), 0.6);
-  return g;
-}
-function signalLensGeo() { const g = new Geo(); g.box(0, 3.0, 0.437, 0.2, 0.2, 0.012, [1, 0.62, 0.12], 0); return g; }
-// paint and pits: zebra crossings over the streets out of every junction of the route (on the road or on the side
-// street's asphalt) and a square of soil round each street tree, drawn just over what they lie on
-function cityDecals(W) {
-  const { O, T, TR } = W, g = new Geo(), R = C.rng(4242), paint = lin('#e4e2da'), soil = lin('#3d342a'), rim = lin('#9a958a');
-  for (const zb of O.zebras) {
-    const i = C.nearest(T, zb.x, zb.z, 60), y = zb.road && i >= 0 ? T.Y[i] + 0.012 : C.terrainH(TR, zb.x, zb.z) + 0.015;
-    const fx = Math.sin(zb.rot), fz = Math.cos(zb.rot);
-    const P = (a, b) => [zb.x + fx * a + fz * b, y, zb.z + fz * a - fx * b];
-    for (let l = -T.hw + 0.75; l <= T.hw - 0.7; l += 1.0) g.quad(P(-1.5, l - 0.25), P(1.5, l - 0.25), P(1.5, l + 0.25), P(-1.5, l + 0.25), scalec(paint, 0.8 + R() * 0.25), 0.08, [zb.x, y - 5, zb.z]);
-  }
-  const y = C.CITY_X.slab + 0.008;
-  for (const p of O.pits) {
-    const fx = Math.sin(p.rot), fz = Math.cos(p.rot), P = (a, b) => [p.x + fx * a + fz * b, y, p.z + fz * a - fx * b], ref = [p.x, y - 5, p.z];
-    g.quad(P(-0.55, -0.55), P(0.55, -0.55), P(0.55, 0.55), P(-0.55, 0.55), scalec(soil, 0.85 + R() * 0.3), 0, ref);
-    for (const [a0, b0, a1, b1] of [[-0.62, -0.62, 0.62, -0.55], [-0.62, 0.55, 0.62, 0.62], [-0.62, -0.55, -0.55, 0.55], [0.55, -0.55, 0.62, 0.55]])
-      g.quad(P(a0, b0), P(a1, b0), P(a1, b1), P(a0, b1), rim, 0.03, ref);
-  }
-  return g;
-}
-// water-filled barriers across the closed streets: two-metre sections, red and white
-function barrierGeo(list) {
-  const g = new Geo(), red = lin('#c8302c'), white = lin('#e8e6e0');
-  for (const [x0, z0, x1, z1] of list) {
-    const len = Math.hypot(x1 - x0, z1 - z0), tx = (x1 - x0) / len, tz = (z1 - z0) / len, nx = -tz, nz = tx, n = Math.round(len / 2.05);
-    for (let i = 0; i < n; i++) {
-      const a = (i + 0.04) * len / n, b = (i + 0.96) * len / n, col = i % 2 ? white : red;
-      const P = (s, l, y) => [x0 + tx * s + nx * l, y, z0 + tz * s + nz * l];
-      const y0 = -0.06, y1 = 0.95, lo = 0.3, hi = 0.14, ref = P((a + b) / 2, 0, 0.4);
-      g.quad(P(a, -lo, y0), P(b, -lo, y0), P(b, -hi, y1), P(a, -hi, y1), col, 0.12, ref);
-      g.quad(P(a, lo, y0), P(b, lo, y0), P(b, hi, y1), P(a, hi, y1), col, 0.12, ref);
-      g.quad(P(a, -hi, y1), P(b, -hi, y1), P(b, hi, y1), P(a, hi, y1), col, 0.12, ref);
-      g.quad(P(a, -lo, y0), P(a, -hi, y1), P(a, hi, y1), P(a, lo, y0), col, 0.12, ref);
-      g.quad(P(b, -lo, y0), P(b, -hi, y1), P(b, hi, y1), P(b, lo, y0), col, 0.12, ref);
+// ---------- street circuit (Monaco) ----------
+// Building styles for the Riviera: the same facade layers (CITY_STYLES' entries), warmer colours. Plaster in salmon,
+// ochre, cream and pale yellow; white modern blocks (the office layers); glass towers; old stone round the casino.
+const RIVIERA = [
+  { f: 4, tints: ['#f3d9b8', '#eec39a', '#e8b7a0', '#f5e6c4', '#f7efe0', '#e9c98e', '#dca58a', '#f0d0c0'], ledge: [0.38, 0.3], par: 0.9 },
+  { f: 6, tints: ['#f6f3ec', '#efeae0', '#f3eee4', '#e8e4dc'], lc: '#d9d6cf', par: 1.0 },
+  { f: 8, tints: ['#a9c3d6', '#a8c9bf', '#b4bcc4', '#97b1cc'], lc: '#4d5157', par: 1.2 },
+  { f: 10, tints: ['#f1e8d6', '#efe0c4', '#f4ede0', '#e8d8bc'], ledge: [0.5, 0.36], par: 1.1 },
+];
+const rivieraFor = (n, r) => n <= 5 ? (r < 0.75 ? 0 : 3) : n <= 12 ? (r < 0.45 ? 0 : r < 0.85 ? 1 : 3) : (r < 0.55 ? 1 : 2);
+// One building as a Geo: footprint pts (world x,z, convex), from `low` (below ground) up to base + ground floor + floors.
+// kinds per edge as in cityMesh. Vertex alpha on the walls carries the base height (/200) for the facade shader.
+function buildingGeo(g, pts, base, low, nUp, kinds, sty, tint, R, roofC) {
+  const n = pts.length, h = base + 4 + nUp * 3, top = h + sty.par, sd = nUp + 0.05 + R() * 0.9, by = base / 200;
+  const lc = sty.lc ? scalec(lin(sty.lc), 0.94 + R() * 0.1) : scalec(tint, 1.05);
+  let mu = 0, mv = 0; for (const [u, v] of pts) { mu += u; mv += v; } mu /= n; mv /= n;
+  const P = (u, v, y) => [u, y, v];
+  const E = pts.map(([u0, v0], q) => {
+    const [u1, v1] = pts[(q + 1) % n], l = Math.hypot(u1 - u0, v1 - v0) || 1e-6;
+    let nu = (v1 - v0) / l, nv = -(u1 - u0) / l;
+    if (((u0 + u1) / 2 - mu) * nu + ((v0 + v1) / 2 - mv) * nv < 0) { nu = -nu; nv = -nv; }
+    return { u0, v0, u1, v1, l, nu, nv, du: (u1 - u0) / l, dv: (v1 - v0) / l, kind: kinds[q] };
+  });
+  const ref = P(mu, mv, (base + h) / 2), wallC = [tint[0], tint[1], tint[2]];
+  for (const e of E) {
+    const mu2 = (e.u0 + e.u1) / 2, mv2 = (e.v0 + e.v1) / 2;
+    if (e.kind) {
+      const code = (e.kind === 'party' ? sty.f + 1 : sty.f) * 64, nt = Math.max(1, Math.round(e.l / FAC_W));
+      // u counts tiles left to right as seen from outside
+      const lr = (e.u1 - e.u0) * e.nv - (e.v1 - e.v0) * e.nu > 0;
+      const ua = code + (lr ? 0 : nt), ub = code + (lr ? nt : 0);
+      g.quad(P(e.u0, e.v0, low), P(e.u1, e.v1, low), P(e.u1, e.v1, top), P(e.u0, e.v0, top), wallC, by, ref, [[ua, sd], [ub, sd], [ub, sd], [ua, sd]]);
     }
+    const iu0 = e.u0 - e.nu * 0.25, iv0 = e.v0 - e.nv * 0.25, iu1 = e.u1 - e.nu * 0.25, iv1 = e.v1 - e.nv * 0.25;
+    g.quad(P(e.u0, e.v0, top), P(e.u1, e.v1, top), P(iu1, iv1, top), P(iu0, iv0, top), lc, 0.03, P(mu2, mv2, top - 10));
+    g.quad(P(iu0, iv0, h), P(iu1, iv1, h), P(iu1, iv1, top), P(iu0, iv0, top), scalec(tint, 0.8), 0.03, P(mu2 + e.nu * 5, mv2 + e.nv * 5, h));
+  }
+  const rc = P(mu, mv, h), rf = scalec(roofC, 0.85 + R() * 0.3);
+  for (let q = 0; q < n; q++) g.tri(rc, P(pts[q][0], pts[q][1], h), P(pts[(q + 1) % n][0], pts[(q + 1) % n][1], h), rf, 0.02, [rc[0], h - 10, rc[2]]);
+  if (!sty.ledge) return;
+  const [d, lh] = sty.ledge, y0 = h - lh * 0.6, y1 = h + lh * 0.4, ym = (y0 + y1) / 2;
+  const miter = (e1, e2) => { const k2 = d / (1 + e1.nu * e2.nu + e1.nv * e2.nv); return [e2.u0 + (e1.nu + e2.nu) * k2, e2.v0 + (e1.nv + e2.nv) * k2]; };
+  E.forEach((e, q) => {
+    if (e.kind !== 'front') return;
+    const pe = E[(q + n - 1) % n], ne = E[(q + 1) % n];
+    const s = pe.kind === 'front' ? miter(pe, e) : [e.u0 + e.nu * d, e.v0 + e.nv * d];
+    const t = ne.kind === 'front' ? miter(e, ne) : [e.u1 + e.nu * d, e.v1 + e.nv * d];
+    const cu = (e.u0 + e.u1) / 2, cv = (e.v0 + e.v1) / 2;
+    g.quad(P(s[0], s[1], y0), P(t[0], t[1], y0), P(t[0], t[1], y1), P(s[0], s[1], y1), lc, 0.04, P(cu - e.nu, cv - e.nv, ym));
+    g.quad(P(e.u0, e.v0, y0), P(e.u1, e.v1, y0), P(t[0], t[1], y0), P(s[0], s[1], y0), lc, 0.04, P(cu + e.nu * d / 2, cv + e.nv * d / 2, y0 + 1));
+    g.quad(P(e.u0, e.v0, y1), P(e.u1, e.v1, y1), P(t[0], t[1], y1), P(s[0], s[1], y1), lc, 0.04, P(cu + e.nu * d / 2, cv + e.nv * d / 2, y1 - 1));
+    if (pe.kind !== 'front') g.quad(P(e.u0, e.v0, y0), P(s[0], s[1], y0), P(s[0], s[1], y1), P(e.u0, e.v0, y1), lc, 0.04, P(e.u0 + e.du + e.nu * d / 2, e.v0 + e.dv + e.nv * d / 2, ym));
+    if (ne.kind !== 'front') g.quad(P(e.u1, e.v1, y0), P(t[0], t[1], y0), P(t[0], t[1], y1), P(e.u1, e.v1, y1), lc, 0.04, P(e.u1 - e.du + e.nu * d / 2, e.v1 - e.dv + e.nv * d / 2, ym));
+  });
+}
+// The town: sidewalks both sides of the whole lap (paved, a kerb face; pulled in on the inside of the tight corners)
+// and every building, in chunks of about 64 m so a view draws only what it can see. Mode 12, like the facades.
+function streetMesh(W) {
+  const { O, st } = W, LP = O.street, N = LP.N, V = visOf(st), R = C.rng(st.seed * 13 + 1);
+  const walkC = lin(V.walk), kerbC = lin(V.kerb), roofC = lin(V.roof), X = C.STREET;
+  const t0 = Math.round(st.street.at.tunnel0 * N), t1 = Math.round(st.street.at.tunnel1 * N);
+  const buckets = new Map(), B = 64;
+  const geoAt = (x, z) => { const k = Math.floor(x / B) + ',' + Math.floor(z / B); let g = buckets.get(k); if (!g) buckets.set(k, g = new Geo()); return g; };
+  const Ks = new Float64Array(N); for (let s = 0; s < N; s++) { let a = 0; for (let q = -6; q <= 6; q++) a += LP.K[(s + q + N) % N]; Ks[s] = a / 13; }
+  const reach = (s, sd) => { const k = Ks[s] * -sd; return k > 0 ? Math.min(X.line, 0.85 / k) : X.line; }; // lat > 0 is right; a left turn's inside is the left
+  for (const sd of [-1, 1]) for (let s = 0; s < N; s += 2) {
+    const s2 = (s + 2) % N, r1 = reach(s, sd), r2 = reach(s2, sd);
+    const k1 = C.loopSide(LP, s, sd * X.kerb), k2 = C.loopSide(LP, s2, sd * X.kerb), o1 = C.loopSide(LP, s, sd * Math.max(X.kerb + 0.3, r1)), o2 = C.loopSide(LP, s2, sd * Math.max(X.kerb + 0.3, r2));
+    const y1 = LP.Y[s] + X.slab, y2 = LP.Y[s2] + X.slab, g = geoAt(k1[0], k1[1]);
+    const pv = (lat, ss) => [96 + lat / 2.4, ss / 1.2];
+    g.quad([k1[0], y1, k1[1]], [k2[0], y2, k2[1]], [o2[0], y2, o2[1]], [o1[0], y1, o1[1]], walkC, 0.03, [k1[0], y1 - 10, k1[1]], [pv(X.kerb, s), pv(X.kerb, s + 2), pv(r2, s + 2), pv(r1, s)]);
+    g.quad([k1[0], y1 - 0.2, k1[1]], [k2[0], y2 - 0.2, k2[1]], [k2[0], y2, k2[1]], [k1[0], y1, k1[1]], kerbC, 0.05, [o1[0], y1, o1[1]]);
+  }
+  for (const b of O.bldgs) {
+    const sty = b.classic ? RIVIERA[3] : RIVIERA[rivieraFor(b.floors, R())];
+    const tint = scalec(lin(sty.tints[(R() * sty.tints.length) | 0]), 0.92 + R() * 0.12);
+    buildingGeo(geoAt(b.pts[0][0], b.pts[0][1]), b.pts, b.base, b.low, b.floors, ['front', 'party', 'back', 'party'], sty, tint, R, roofC);
+  }
+  const p = [], nn = [], cc = [], uu = [], chunks = [];
+  for (const g of buckets.values()) {
+    const v0 = p.length / 3; p.push(...g.p); nn.push(...g.n); cc.push(...g.c); uu.push(...g.u);
+    const box = [1e9, 1e9, 1e9, -1e9, -1e9, -1e9];
+    for (let i = 0; i < g.p.length; i += 3) for (let a = 0; a < 3; a++) { box[a] = Math.min(box[a], g.p[i + a]); box[a + 3] = Math.max(box[a + 3], g.p[i + a]); }
+    chunks.push({ first: v0, count: g.p.length / 3, box });
+  }
+  const idx = new Uint32Array(p.length / 3); for (let i = 0; i < idx.length; i++) idx[i] = i;
+  return { p: new Float32Array(p), n: new Float32Array(nn), c: new Float32Array(cc), u: new Float32Array(uu), idx, chunks };
+}
+// Armco both sides of the lap (two galvanised W-beams on posts), the catch fence over it (but in the tunnel), the
+// tunnel itself (tiled walls, a dark ceiling, a slab and portals) and the quay walls of the harbour
+function streetFurniture(W) {
+  const { O, st, TR } = W, LP = O.street, N = LP.N, X = C.STREET, g = new Geo(), fence = new Geo(), lights = new Geo();
+  const t0 = Math.round(st.street.at.tunnel0 * N), t1 = Math.round(st.street.at.tunnel1 * N);
+  const inT = s => s >= t0 && s <= t1;
+  const steel = lin('#b8bcbf'), post = lin('#8d9194'), tile = lin('#d9d4c6'), ceil = lin('#3b3d40'), conc = lin('#b5ada0');
+  const prof = [[0.42, 0], [0.52, -0.07], [0.62, 0], [0.72, -0.07], [0.82, 0]];
+  for (const sd of [-1, 1]) for (let s = 0; s < N; s += 2) {
+    const s2 = (s + 2) % N, ya = LP.Y[s], yb = LP.Y[s2];
+    const A = l => C.loopSide(LP, s, sd * l), Bq = l => C.loopSide(LP, s2, sd * l);
+    for (let i = 0; i + 1 < prof.length; i++) {
+      const [h0, o0] = prof[i], [h1, o1] = prof[i + 1], a0 = A(X.rail + o0), a1 = A(X.rail + o1), b0 = Bq(X.rail + o0), b1 = Bq(X.rail + o1);
+      const road = C.loopSide(LP, s, 0), out = A(X.rail + 6);
+      g.quad([a0[0], ya + h0, a0[1]], [b0[0], yb + h0, b0[1]], [b1[0], yb + h1, b1[1]], [a1[0], ya + h1, a1[1]], steel, 0.55, [out[0], ya + 0.6, out[1]]);
+      const c0 = A(X.rail + 0.04), c1 = Bq(X.rail + 0.04);
+      if (i === 0) g.quad([c0[0], ya + 0.42, c0[1]], [c1[0], yb + 0.42, c1[1]], [c1[0], yb + 0.82, c1[1]], [c0[0], ya + 0.82, c0[1]], steel, 0.4, [road[0], ya + 0.6, road[1]]);
+    }
+    if (s % 4 === 0) { const q = A(X.rail + 0.1); g.box(q[0], ya + 0.38, q[1], 0.1, 0.76, 0.1, post, 0.3); }
+    if (!inT(s)) {
+      const f0 = A(X.rail + 0.12), f1 = Bq(X.rail + 0.12);
+      fence.quad([f0[0], ya + 0.85, f0[1]], [f1[0], yb + 0.85, f1[1]], [f1[0], yb + 3.6, f1[1]], [f0[0], ya + 3.6, f0[1]], [1, 1, 1], 0, null, [[s / 0.5, 0], [(s + 2) / 0.5, 0], [(s + 2) / 0.5, 5.5], [s / 0.5, 5.5]]);
+      if (s % 6 === 0) { const q = A(X.rail + 0.16); g.box(q[0], ya + 2.2, q[1], 0.07, 2.8, 0.07, post, 0.3); }
+    }
+  }
+  // retaining walls: where the ground behind the sidewalk is well above or below it, a stone wall at the back of the
+  // sidewalk takes up the difference (Monaco is terraces), with a coping on top
+  const stone = lin('#c2b49c'), cope = lin('#ddd3c2');
+  for (const sd of [-1, 1]) for (let s = 0; s < N; s += 2) {
+    if (inT(s) || inT(s + 2)) continue;
+    const ya = LP.Y[s] + X.slab, yb = LP.Y[(s + 2) % N] + X.slab;
+    const a = C.loopSide(LP, s, sd * X.line), b = C.loopSide(LP, s + 2, sd * X.line), ta0 = C.loopSide(LP, s, sd * (X.line + 3)), tb0 = C.loopSide(LP, s + 2, sd * (X.line + 3));
+    const ta = C.terrainH(TR, ta0[0], ta0[1]), tb = C.terrainH(TR, tb0[0], tb0[1]);
+    if (Math.abs(ta - ya) < 0.7 && Math.abs(tb - yb) < 0.7) continue;
+    if (C.loopNear(LP, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, X.line).d < X.line - 0.5) continue;
+    const lo0 = Math.min(ya, ta) - 0.3, lo1 = Math.min(yb, tb) - 0.3, hi0 = Math.max(ya, ta) + 0.25, hi1 = Math.max(yb, tb) + 0.25, road = C.loopSide(LP, s, 0);
+    g.quad([a[0], lo0, a[1]], [b[0], lo1, b[1]], [b[0], hi1, b[1]], [a[0], hi0, a[1]], scalec(stone, 0.9 + 0.2 * ((s * 7919) % 13) / 13), 0.03, [road[0], (hi0 + lo0) / 2, road[1]]);
+    const a2 = C.loopSide(LP, s, sd * (X.line + 0.45)), b2 = C.loopSide(LP, s + 2, sd * (X.line + 0.45));
+    g.quad([a[0], hi0, a[1]], [b[0], hi1, b[1]], [b2[0], hi1, b2[1]], [a2[0], hi0, a2[1]], cope, 0.03, [a[0], hi0 - 5, a[1]]);
+  }
+  // the tunnel: walls 6.4 m off the axis, a ceiling at 6.6 m with two rows of lights, the slab over it, portals
+  const TW = 6.4, TH = 6.6;
+  for (let s = t0; s < t1; s += 2) {
+    const ya = LP.Y[s], yb = LP.Y[s + 2];
+    for (const sd of [-1, 1]) {
+      const a = C.loopSide(LP, s, sd * TW), b = C.loopSide(LP, s + 2, sd * TW), road = C.loopSide(LP, s, 0);
+      const a2 = C.loopSide(LP, s, sd * (TW + 1.2)), b2 = C.loopSide(LP, s + 2, sd * (TW + 1.2));
+      g.quad([a[0], ya - 0.2, a[1]], [b[0], yb - 0.2, b[1]], [b[0], yb + TH, b[1]], [a[0], ya + TH, a[1]], tile, 0.15, [road[0], ya + 3, road[1]]);
+      g.quad([a2[0], ya - 3, a2[1]], [b2[0], yb - 3, b2[1]], [b2[0], yb + TH + 1.2, b2[1]], [a2[0], ya + TH + 1.2, a2[1]], conc, 0.03, [road[0], ya + 3, road[1]]);
+      const l0 = C.loopSide(LP, s, sd * 3.1), l1 = C.loopSide(LP, s + 2, sd * 3.1);
+      if (s % 7 === 0) lights.quad([l0[0] - 0.15, ya + TH - 0.03, l0[1] - 0.15], [l0[0] + 0.15, ya + TH - 0.03, l0[1] - 0.15], [l1[0] + 0.15, ya + TH - 0.03, l1[1] + 0.15], [l1[0] - 0.15, ya + TH - 0.03, l1[1] + 0.15], [1, 0.95, 0.82], 0, [l0[0], ya + TH + 5, l0[1]]);
+    }
+    const l = C.loopSide(LP, s, -TW - 1.2), r = C.loopSide(LP, s, TW + 1.2), l2 = C.loopSide(LP, s + 2, -TW - 1.2), r2 = C.loopSide(LP, s + 2, TW + 1.2);
+    g.quad([l[0], ya + TH, l[1]], [r[0], ya + TH, r[1]], [r2[0], yb + TH, r2[1]], [l2[0], yb + TH, l2[1]], ceil, 0.05, [l[0], ya, l[1]]);
+    g.quad([l[0], ya + TH + 1.2, l[1]], [r[0], ya + TH + 1.2, r[1]], [r2[0], yb + TH + 1.2, r2[1]], [l2[0], yb + TH + 1.2, l2[1]], conc, 0.03, [l[0], ya, l[1]]);
+  }
+  for (const [s, dir] of [[t0, -1], [t1, 1]]) {
+    const y = LP.Y[s], fx = Math.sin(LP.H[s]) * dir, fz = Math.cos(LP.H[s]) * dir;
+    for (const sd of [-1, 1]) {
+      const a = C.loopSide(LP, s, sd * TW), b = C.loopSide(LP, s, sd * 22);
+      g.quad([a[0], y - 3, a[1]], [b[0], y - 3, b[1]], [b[0], y + TH + 4, b[1]], [a[0], y + TH + 4, a[1]], conc, 0.03, [a[0] - fx, y, a[1] - fz]);
+    }
+    const a = C.loopSide(LP, s, -TW), b = C.loopSide(LP, s, TW);
+    g.quad([a[0], y + TH, a[1]], [b[0], y + TH, b[1]], [b[0], y + TH + 4, b[1]], [a[0], y + TH + 4, a[1]], conc, 0.03, [a[0] - fx, y, a[1] - fz]);
+  }
+  // quay walls: the harbour's edge as a vertical face down into the water
+  const ring = C.unpackPts(st.street.sea), qc = lin('#a9a296');
+  for (let i = 0; i + 1 < ring.length; i++) {
+    const a = ring[i], b = ring[i + 1];
+    if (C.loopNear(LP, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, 420).d > 400) continue;
+    const ex = b[0] - a[0], ez = b[1] - a[1], el = Math.hypot(ex, ez); if (el < 0.5) continue;
+    const lx = -ez / el, lz = ex / el; // land is on the left of the coast
+    const ta = Math.max(2.6, C.terrainH(TR, a[0] + lx * 1.5, a[1] + lz * 1.5)) + 0.02, tb = Math.max(2.6, C.terrainH(TR, b[0] + lx * 1.5, b[1] + lz * 1.5)) + 0.02;
+    g.quad([a[0], -2, a[1]], [b[0], -2, b[1]], [b[0], tb, b[1]], [a[0], ta, a[1]], qc, 0.03, [a[0] + lx * 3, 0, a[1] + lz * 3]);
+  }
+  return { g, fence, lights };
+}
+// the catch fence: a diamond mesh of wire
+function fenceCanvas() {
+  return canvasTex(128, 128, (g, w, h) => {
+    g.clearRect(0, 0, w, h); g.strokeStyle = 'rgba(150,154,156,1)'; g.lineWidth = 3;
+    for (let i = -2; i < 4; i++) { g.beginPath(); g.moveTo(i * 64, 0); g.lineTo(i * 64 + 128, 128); g.stroke(); g.beginPath(); g.moveTo(i * 64 + 128, 0); g.lineTo(i * 64, 128); g.stroke(); }
+  });
+}
+// a motor yacht one unit long (bow along +z), white hull and decks, a band of dark glass
+function yachtGeo() {
+  const g = new Geo(), white = [0.92, 0.92, 0.9], dark = lin('#1d2833'), teak = lin('#a8865e');
+  const hull = [[-0.5, 0.11], [-0.3, 0.12], [0.2, 0.12], [0.42, 0.075], [0.5, 0.0]]; // half-width along z
+  for (let i = 0; i + 1 < hull.length; i++) {
+    const [z0, w0] = hull[i], [z1, w1] = hull[i + 1];
+    for (const sx of [-1, 1]) {
+      g.quad([sx * w0, -0.03, z0], [sx * w1, -0.03, z1], [sx * w1 * 1.04, 0.085, z1], [sx * w0 * 1.04, 0.085, z0], white, 0.5, [0, 0.03, (z0 + z1) / 2]);
+      g.quad([sx * w0 * 0.85, -0.03, z0], [sx * w1 * 0.85, -0.03, z1], [sx * w1, -0.03, z1], [sx * w0, -0.03, z0], dark, 0.3, [0, 0.2, (z0 + z1) / 2]);
+    }
+    g.quad([-w0 * 1.04, 0.085, z0], [w0 * 1.04, 0.085, z0], [w1 * 1.04, 0.085, z1], [-w1 * 1.04, 0.085, z1], teak, 0.1, [0, -1, 0]);
+  }
+  g.quad([-0.11, -0.03, -0.5], [0.11, -0.03, -0.5], [0.114, 0.085, -0.5], [-0.114, 0.085, -0.5], white, 0.4, [0, 0.03, 0]);
+  g.box(0, 0.115, -0.08, 0.17, 0.06, 0.5, white, 0.45);
+  g.box(0, 0.118, -0.08, 0.175, 0.025, 0.46, dark, 0.8);
+  g.box(0, 0.16, -0.1, 0.13, 0.04, 0.3, white, 0.45);
+  g.box(0, 0.162, -0.04, 0.135, 0.018, 0.14, dark, 0.8);
+  g.box(0, 0.2, -0.06, 0.012, 0.06, 0.012, white, 0.3);
+  return g;
+}
+// a date palm: a curved, ringed trunk and a crown of arching fronds
+function palmGeo() {
+  const g = new Geo(), bark = lin('#8a7356'), bark2 = lin('#6e5a43'), leaf = lin('#4f6a2c'), leaf2 = lin('#6b7f34');
+  const segs = 9, H = 7.2, bend = 0.6;
+  const cx = t => bend * t * t;
+  for (let i = 0; i < segs; i++) {
+    const a = i / segs, b = (i + 1) / segs;
+    g.cyl(cx(a), a * H, 0, 0.24 - a * 0.06, 0.24 - b * 0.06, H / segs, 7, i % 2 ? bark : bark2, 0.02, 'y', false);
+  }
+  const top = [cx(1), H, 0], R = C.rng(77);
+  for (let f = 0; f < 11; f++) {
+    const az = f / 11 * Math.PI * 2 + R() * 0.3, el = 0.45 + R() * 0.5, L = 2.6 + R() * 0.8;
+    const dx = Math.cos(az), dz = Math.sin(az), sx = -dz, sz = dx;
+    let prev = null;
+    for (let k = 0; k <= 5; k++) {
+      const t = k / 5, r = L * t, y = top[1] + Math.sin(el) * r - 1.6 * t * t, w = 0.42 * Math.sin(Math.PI * Math.min(1, t * 1.1 + 0.05));
+      const c = [top[0] + dx * r * Math.cos(el * 0.6), y, top[2] + dz * r * Math.cos(el * 0.6)];
+      const cur = [[c[0] + sx * w, c[1] - 0.05, c[2] + sz * w], [c[0] - sx * w, c[1] - 0.05, c[2] - sz * w], c];
+      if (prev) {
+        g.quad(prev[2], cur[2], cur[0], prev[0], k % 2 ? leaf : leaf2, 0.05, [c[0], c[1] - 3, c[2]]);
+        g.quad(prev[1], cur[1], cur[2], prev[2], k % 2 ? leaf2 : leaf, 0.05, [c[0], c[1] - 3, c[2]]);
+      }
+      prev = cur;
+    }
+  }
+  return g;
+}
+// tiered grandstands behind the fence, blue seats and a white canopy
+function standsGeo(W) {
+  const { O } = W, LP = O.street, N = LP.N, X = C.STREET, g = new Geo(), seat = lin('#2a4f8f'), conc = lin('#b9b4aa'), roof = lin('#f1f0ec');
+  for (const st of O.stands) for (let k = 0, len = (st.s1 - st.s0 + N) % N; k < len; k += 2) {
+    const s = (st.s0 + k) % N, s2 = (s + 2) % N, ya = LP.Y[s] + X.slab, yb = LP.Y[s2] + X.slab, sd = st.sd;
+    const A = l => C.loopSide(LP, s, sd * l), Bq = l => C.loopSide(LP, s2, sd * l), road = C.loopSide(LP, s, 0);
+    const Q = (l0, h0, l1, h1, c, sp) => { const a0 = A(l0), a1 = A(l1), b0 = Bq(l0), b1 = Bq(l1); g.quad([a0[0], ya + h0, a0[1]], [b0[0], yb + h0, b0[1]], [b1[0], yb + h1, b1[1]], [a1[0], ya + h1, a1[1]], c, sp, [road[0], ya + 30, road[1]]); };
+    const L0 = X.line + 0.6;
+    Q(X.line, -0.3, X.line, 0.55, conc, 0.03);
+    for (let t = 0; t < 5; t++) {
+      const l0 = L0 + t * 1.25, h = 0.55 + t * 0.62;
+      Q(l0, h, l0 + 1.25, h, t % 2 ? seat : scalec(seat, 0.85), 0.2);
+      Q(l0 + 1.25, h, l0 + 1.25, h + 0.62, conc, 0.03);
+    }
+    Q(L0 + 6.25, 3.65, L0 + 6.25, 5.6, conc, 0.03);
+    Q(X.line + 0.2, 5.4, L0 + 6.4, 5.7, roof, 0.1);
+  }
+  return g;
+}
+// the land beyond the near terrain, out to the horizon: hills climbing from the coast to the mountains behind Monaco,
+// built up low down, scrub and rock higher; underwater (and hidden) wherever the sea is
+function farLand(W) {
+  const { st, TR, nz } = W, wm = C.waterMask(st, 4600, 50), cell = 50, nx = wm.nx, nzc = wm.nz;
+  const town = lin('#cdbba5'), town2 = lin('#e2d5c3'), scrub = lin('#5d6a3e'), scrub2 = lin('#6f7349'), rock = lin('#9a958a');
+  const P = [], Cc = [];
+  const ix0 = TR.x0 + 40, ix1 = TR.x0 + (TR.nx - 1) * TR.cell - 40, iz0 = TR.z0 + 40, iz1 = TR.z0 + (TR.nz - 1) * TR.cell - 40;
+  for (let j = 0; j < nzc; j++) for (let i = 0; i < nx; i++) {
+    const x = wm.x0 + i * cell, z = wm.z0 + j * cell, d = wm.D[j * nx + i];
+    let y = wm.W[j * nx + i] ? -20 : C.hillAt(nz, d, x, z) + C.sstep(900, 3800, d) * 480 * (0.6 + 0.4 * nz.fbm(x / 1400, z / 1400, 3));
+    // under the near terrain it sinks right away (a 50 m triangle would cut through the streets otherwise)
+    if (x > ix0 && x < ix1 && z > iz0 && z < iz1) y = x > ix0 + cell && x < ix1 - cell && z > iz0 + cell && z < iz1 - cell ? -80 : Math.min(y, C.terrainH(TR, x, z) - 3);
+    P.push([x, y, z]);
+    const n = nz.n2(x / 90, z / 90) * 0.5 + 0.5;
+    let c = y < 160 ? mixc(town, town2, n) : mixc(scrub, scrub2, n);
+    c = mixc(c, scrub, C.sstep(110, 200, y) * (y < 160 ? 1 : 0));
+    c = mixc(c, rock, C.sstep(380, 700, y) * 0.8);
+    Cc.push([...c, 0]);
+  }
+  const m = stripMesh(nzc, nx, P, Cc); m.my = 0; return m;
+}
+// earcut for one simple polygon (no holes), x/z pairs: triangle indices
+function earcut(pts) {
+  const n = pts.length, V = [];
+  let area = 0; for (let i = 0, j = n - 1; i < n; j = i++) area += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1];
+  for (let i = 0; i < n; i++) V.push(area > 0 ? i : n - 1 - i);
+  const tris = [], cross = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const inside = (p, a, b, c) => cross(a, b, p) >= 0 && cross(b, c, p) >= 0 && cross(c, a, p) >= 0;
+  let guard = 0;
+  while (V.length > 3 && guard++ < n * n) {
+    let cut = false;
+    for (let i = 0; i < V.length; i++) {
+      const a = pts[V[(i + V.length - 1) % V.length]], b = pts[V[i]], c = pts[V[(i + 1) % V.length]];
+      if (cross(a, b, c) <= 0) continue;
+      let ok = true;
+      for (const k of V) { const p = pts[k]; if (p === a || p === b || p === c) continue; if (inside(p, a, b, c)) { ok = false; break; } }
+      if (!ok) continue;
+      tris.push(V[(i + V.length - 1) % V.length], V[i], V[(i + 1) % V.length]); V.splice(i, 1); cut = true; break;
+    }
+    if (!cut) break;
+  }
+  if (V.length === 3) tris.push(V[0], V[1], V[2]);
+  return tris;
+}
+// the harbour and the sea: the coast's outline filled at the water line
+function seaGeo(W) {
+  const V = visOf(W.st), ring = C.unpackPts(W.st.street.sea), tri = earcut(ring), g = new Geo(), c = lin(V.sea);
+  for (let i = 0; i < tri.length; i += 3) {
+    const a = ring[tri[i]], b = ring[tri[i + 1]], d = ring[tri[i + 2]];
+    g.tri([a[0], 0, a[1]], [b[0], 0, b[1]], [d[0], 0, d[1]], c, 0.9, [a[0], -10, a[1]]);
   }
   return g;
 }
@@ -1756,22 +1889,30 @@ function buildScene(R, W) {
     const sc = lin('#7d7a4a');
     add(R.mesh(shrubGeo(), instData(low, o => { const k = 0.7 + o.c * 0.6; return [o.x, o.y, o.z, o.rot, o.s * 1.2, o.sy * 0.8, 0, 0, sc[0] * k, sc[1] * k, sc[2] * k]; }), cull), { mode: 8 }, true);
   }
-  if (O.city) {
+  if (O.street) {
     const fl = facadeLayers();
-    S.city = add(R.mesh(cityMesh(W), null, { cullDist: S.E.fog[1] + 60 }), { mode: 12, arr: R.textureArray(fl), fac: facTable(fl) }, true);
-    if (O.barriers.length) add(R.mesh(barrierGeo(O.barriers)), { mode: 0 }, true);
+    S.city = add(R.mesh(streetMesh(W), null, { cullDist: S.E.fog[1] + 60 }), { mode: 12, arr: R.textureArray(fl), fac: facTable(fl) }, true);
+    const sf = streetFurniture(W);
+    add(R.mesh(sf.g), { mode: 0 }, true);
+    add(R.mesh(sf.fence), { mode: 2, tex: R.texture(fenceCanvas(), { repeat: true }) });
+    add(R.mesh(sf.lights), { mode: 4, tint: [2.6, 2.4, 2.0] });
+    add(R.mesh(seaGeo(W)), { mode: 13 });
+    add(R.mesh(standsGeo(W)), { mode: 0 }, true);
     const one = o => [o.x, o.y, o.z, o.rot, 1, 1, 0, 0, 1, 1, 1];
-    const li = instData(O.lamps, one), heads = instData(O.signals.flatMap(s => s.heads.map(rot => ({ x: s.x, y: s.y, z: s.z, rot }))), one);
+    if (O.boats.length) add(R.mesh(yachtGeo(), instData(O.boats, o => { const k = 0.9 + o.c * 0.12; return [o.x, -0.02 * o.len, o.z, o.rot, o.len, o.len, 0, 0, k, k, k]; }), cull), { mode: 0 }, true);
+    if (O.palms.length) add(R.mesh(smoothGeo(palmGeo(), 40), instData(O.palms, o => { const k = 0.85 + o.c * 0.3; return [o.x, o.y, o.z, o.rot, o.s, o.s, 0, 0, k, k, k]; }), cull), { mode: 0, sway: 0.5 }, true);
+    const li = instData(O.lamps, one);
     add(R.mesh(lampGeo(), li, cull), { mode: 0 }, true);
-    // lamp lenses glow at night; the amber of the traffic lights flashes (game.js sets S.amber.tint)
     add(R.mesh(lampLensGeo(), li, cull), { mode: 4, tint: S.E.night ? [3.2, 2.7, 1.9] : [0.42, 0.42, 0.42] });
-    // at night they light the street: game.js hands the nearest of these heads to the shader
-    if (S.E.night) S.lamps = O.lamps.map(o => [o.x + Math.sin(o.rot) * 1.55, o.y + 7.3, o.z + Math.cos(o.rot) * 1.55]);
-    add(R.mesh(signalPoleGeo(), instData(O.signals, o => [o.x, o.y, o.z, 0, 1, 1, 0, 0, 1, 1, 1]), cull), { mode: 0 }, true);
-    add(R.mesh(signalHeadGeo(), heads, cull), { mode: 0 }, true);
-    S.amber = { mode: 4, tint: [0.1, 0.06, 0.01] };
-    add(R.mesh(signalLensGeo(), heads, cull), S.amber);
-    add(R.mesh(cityDecals(W)), { mode: 0, decal: true });
+    // lights for the shader (game.js hands it the nearest): the tunnel's always, the street lamps at night
+    S.lamps = O.tlights.concat(S.E.night ? O.lamps.map(o => [o.x + Math.sin(o.rot) * 1.55, o.y + 7.3, o.z + Math.cos(o.rot) * 1.55]) : []);
+    // the tunnel keeps the sky out: capsules along it for the shader (u_occ)
+    const LP = O.street, a = Math.round(st.street.at.tunnel0 * LP.N), b = Math.round(st.street.at.tunnel1 * LP.N), k = 8, occ = [], occB = [];
+    for (let i = 0; i < k; i++) {
+      const s0 = Math.round(a + (b - a) * i / k), s1 = Math.round(a + (b - a) * (i + 1) / k);
+      occ.push(LP.X[s0], LP.Z[s0], LP.X[s1], LP.Z[s1]); occB.push(LP.Y[s0] + 6.4, LP.Y[s1] + 6.4, 6.6, 0);
+    }
+    S.E.occ = new Float32Array(occ); S.E.occB = new Float32Array(occB); S.E.occN = k;
   }
   if (O.hay.length) add(R.mesh(hayGeo(), instData(O.hay, o => [o.x, o.y, o.z, o.rot, 1, 1, 0, 0, 1, 1, 1])), { mode: 8 }, true);
   // ground cover
@@ -1827,7 +1968,7 @@ function buildScene(R, W) {
     add(R.mesh(bgeo, instData(list, o => [o.x, o.y, o.z, o.rot, 1, 1, 0, 0, 1, 1, 1])), { mode: 2, tex: R.texture(boardCanvas(...ads[k])) }, true);
   }
   // far scenery
-  const fg = farGeo(W);
+  const fg = O.street ? farLand(W) : farGeo(W);
   S.far = add(R.mesh(fg), { mode: 0, farFog: true }); S.farY = fg.my;
   S.timing.total = performance.now() - t0;
   return S;

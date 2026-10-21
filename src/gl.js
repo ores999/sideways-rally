@@ -256,6 +256,7 @@ uniform vec3 u_glw; uniform float u_cld, u_time, u_gbump; uniform vec4 u_fogLo;
 uniform float u_wet; uniform vec3 u_skyline;
 uniform sampler2DArray u_arr; uniform vec4 u_fac[16]; uniform float u_night;
 uniform vec4 u_pl[16]; uniform int u_plN; uniform vec3 u_plCol;
+uniform vec4 u_occ[8], u_occB[8]; uniform int u_occN;
 out vec4 o;
 ${COMMON}
 ${OUTC}
@@ -470,7 +471,9 @@ void main(){
     if (sid > 1.5) {
       vec4 S = u_fac[int(sid)];
       float tu = v_uv.x - sid * 64.0, top = floor(v_uv.y), sd = fract(v_uv.y) * 113.0;
-      float lv = v_wp.y < 4.0 ? v_wp.y * 0.25 : 1.0 + (v_wp.y - 4.0) / 3.0, fl = floor(lv);
+      // (heights from the building's own ground: its base rides in the vertex alpha, /200)
+      float wy = max(v_wp.y - v_col.a * 200.0, 0.0);
+      float lv = wy < 4.0 ? wy * 0.25 : 1.0 + (wy - 4.0) / 3.0, fl = floor(lv);
       float hv = hash12(vec2(floor(tu), fl) + sd);
       // over the top floor: the parapet, in the style's party wall
       // (along a ground floor the variants step through the pool from a place of the building's own, so a front
@@ -492,6 +495,12 @@ void main(){
       spec += u_wet * 0.12 * t.a; // the joints stay matt
     }
     base *= 0.9 + 0.2 * vnoise(v_wp.xz * 0.11 + v_wp.y * 0.17);
+  } else if (u_mode == 13) {
+    // water: two drifting ripple fields as a height for the bump; glossy, so the Fresnel picks up sky and skyline
+    vec2 q = v_wp.xz;
+    bh = vnoise(q * 0.31 + u_time * vec2(0.21, 0.08)) * 0.6 + vnoise(q * 0.93 - u_time * vec2(0.13, 0.33)) * 0.4;
+    bk = 0.12;
+    spec = 0.9;
   } else if (u_mode == 11) {
     base *= texture(u_tex, v_uv).rgb; // vertex colour × texture, nothing more (tyre lettering)
   } else if (u_mode == 2) {
@@ -593,8 +602,18 @@ void main(){
   }
   float sh = u_shOn > 0.5 ? shadowF() : 1.0;
   sh *= v_cs; // shadow of the actual clouds overhead (see CLOUDS)
+  // inside a tunnel (capsules along it, under its ceiling): no sun, little sky
+  float occ = 0.0;
+  for (int i = 0; i < 8; i++) {
+    if (i >= u_occN) break;
+    vec2 a = u_occ[i].xy, d = u_occ[i].zw - a;
+    float t = clamp(dot(v_wp.xz - a, d) / dot(d, d), 0.0, 1.0);
+    float yc = mix(u_occB[i].x, u_occB[i].y, t);
+    occ = max(occ, (1.0 - smoothstep(u_occB[i].z - 0.6, u_occB[i].z, length(v_wp.xz - a - d * t))) * (1.0 - smoothstep(yc - 0.2, yc + 0.2, v_wp.y)));
+  }
+  sh *= 1.0 - occ;
   float ndl = max(dot(n, u_sunDir), 0.0);
-  vec3 amb = mix(u_gnd, u_sky, n.y*0.5 + 0.5);
+  vec3 amb = mix(u_gnd, u_sky, n.y*0.5 + 0.5) * (1.0 - 0.88 * occ);
   vec3 light = amb + u_sunCol * ndl * sh;
   if (u_hlOn > 0.0) {
     vec3 L = u_hlPos - v_wp; float d = length(L); L /= d;
@@ -621,7 +640,7 @@ void main(){
     float metal = step(0.75, spec);
     float F0 = mix(0.05, 0.55, metal);
     float F = F0 + (1.0 - F0) * pow(1.0 - ndv, 5.0);
-    vec3 refl = envRefl(reflect(-V, n)) * F * spec * mix(2.0, 1.35, metal);
+    vec3 refl = envRefl(reflect(-V, n)) * F * spec * mix(2.0, 1.35, metal) * (1.0 - 0.85 * occ);
     if (metal > 0.5) refl *= base * 1.6 + 0.15;
     col = col * (1.0 - F * spec * 0.55) + refl * mix(0.55, 1.0, sh);
     vec3 H = normalize(V + u_sunDir);
@@ -1478,6 +1497,8 @@ function createRenderer(canvas) {
     gl.uniform1f(u.u_dirt, 0);
     gl.uniform1f(u.u_night, E.night ? 1 : 0);
     gl.uniform1i(u.u_plN, E.plN || 0);
+    gl.uniform1i(u.u_occN, E.occN || 0);
+    if (E.occN) { gl.uniform4fv(u['u_occ[0]'], E.occ); gl.uniform4fv(u['u_occB[0]'], E.occB); }
     if (E.plN) { gl.uniform4fv(u['u_pl[0]'], E.pl); gl.uniform3fv(u.u_plCol, [1.0, 0.85, 0.66]); }
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D_ARRAY, whiteArr); gl.uniform1i(u.u_arr, 2);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, shTex); gl.uniform1i(u.u_shadow, 1);
