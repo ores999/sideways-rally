@@ -115,6 +115,16 @@ const CARS = [
     feel: { lag: 0.05, kick: 1.0, ayc: 0.6, push: 0, twitch: 0.85 },
     character: 'A pickup with 560 hp, a sound system in the bed, grip from another planet and brakes that stop it on a coin. Only the fastest driver on a road gets the keys, and its times go on the board without ever counting.',
     col: { base: '#f4f4f1', roof: '#f4f4f1', lower: '#1b1c1f', stripe: '#d4a62a', stripe2: '#1b1c1f', rim: '#d9ad3a', text: '#1b1c1f', gold: '#d4a62a' } },
+  // a V8-era Formula 1 car, only for the Monaco street circuit (`only`): normally aspirated (na 1, no boost), seamless
+  // 7-speed, rear drive, slicks and wings. Its times are kept apart from the rally cars'
+  { id: 'f1', name: 'Ferrari F2008', note: 'Scuderia Ferrari\'s 2.4-litre V8 Formula 1 car. Monaco only', era: 'Formula 1 · 2008', cls: 'F1', num: 2, shape: 'f1', wing: 'none', only: 'monaco',
+    engine: { code: 'Tipo 056', layout: 'V8 (90°)', cyl: 8, disp: 2398, asp: 'Normally aspirated', hp: 760, hpRpm: 18500, nmCap: 320, redline: 19000, idle: 4200, onset: 1e5, spool: 1, antilag: false, na: 1, boostBar: 0, shape: 0.7 },
+    gearbox: { type: 'Seamless', gears: 7, shift: 0.02, top: 300 },
+    drive: { layout: 'RWD', front: 0, diff: 'Hydraulic diff' },
+    mass: 605, wd: 0.46, wb: 3.1, cgH: 0.3, inertia: 0.9, CdA: 1.25, ClA: 4.5, brake: 3.0, lock: 0.48, tyre: 1.45, agility: 1.0,
+    feel: { lag: 0, kick: 1, ayc: 0, push: 0, twitch: 0.9 },
+    character: 'Seven hundred and sixty horsepower at 19,000 rpm in a car that weighs as much as a rally car\'s engine and gearbox. The wings press it down harder the faster it goes, the brakes are brutal, and the rear tyres spin up the moment you get greedy out of a slow corner.',
+    col: { base: '#d40a14', roof: '#d40a14', lower: '#141516', stripe: '#f4f4f1', stripe2: '#141516', rim: '#3a3c40', text: '#f4f4f1', helmet: '#f2d21a' } },
 ];
 
 function torqueAt(P, rpm) { // full-throttle torque with full boost (Nm)
@@ -167,10 +177,11 @@ function carStatsRaw(c) {
   };
 }
 function carStats(c) {
-  const all = CARS.map(carStatsRaw), me = carStatsRaw(c), out = {};
+  // the F1 is off any rally car's scale: the bars are set by the others and it fills them (or not) like they do
+  const all = CARS.filter(o => !o.only).map(carStatsRaw), me = carStatsRaw(c), out = {};
   for (const k of Object.keys(me)) {
     const vs = all.map(o => o[k]), lo = Math.min(...vs), hi = Math.max(...vs);
-    out[k] = Math.round(3 + 7 * (hi > lo ? (me[k] - lo) / (hi - lo) : 1));
+    out[k] = clamp(Math.round(3 + 7 * (hi > lo ? (me[k] - lo) / (hi - lo) : 1)), 1, 10);
   }
   return out;
 }
@@ -1574,7 +1585,7 @@ function measureCar(P) {
   for (let i = 0; i < 120; i++) stepCar(W, c2, P, { steer: 0, thr: 0.25, brk: 0, hb: false, manual: true }, dt);
   let lag = 0;
   for (let i = 1; i < 900 && !lag; i++) { stepCar(W, c2, P, { steer: 0, thr: 1, brk: 0, hb: false, manual: true }, dt); if (c2.boost > 0.9) lag = i * dt; }
-  P.spec = { t100, t160, vmax, lag: lag || 7.5 };
+  P.spec = { t100, t160, vmax, lag: P.engine.na >= 1 ? 0 : lag || 7.5 }; // no turbo, no lag
   return P.spec;
 }
 CARS.forEach(measureCar);
