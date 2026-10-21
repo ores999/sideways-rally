@@ -603,6 +603,16 @@ function streetLoop(st) {
   const at = s => Math.round(SP.at[s] * N);
   return SP.loop = { N, X, Z, H, K, Y, hash, at };
 }
+// the lowest height of another part of the loop (over 60 m from s along it) within r metres
+function loopLowY(LP, x, z, r, s0) {
+  const k = Math.ceil(r / CELL), cx = Math.floor(x / CELL), cz = Math.floor(z / CELL), r2 = r * r;
+  let lo = 1e9;
+  for (let a = -k; a <= k; a++) for (let b = -k; b <= k; b++) {
+    const arr = LP.hash.get(hkey(cx + a, cz + b)); if (!arr) continue;
+    for (const s of arr) { const dx = x - LP.X[s], dz = z - LP.Z[s], ds = Math.abs(s - s0); if (Math.min(ds, LP.N - ds) > 60 && dx * dx + dz * dz < r2 && LP.Y[s] < lo) lo = LP.Y[s]; }
+  }
+  return lo;
+}
 // a point beside the loop: lat > 0 is to the right of the direction of the lap
 const loopSide = (LP, s, lat) => { s = ((Math.round(s) % LP.N) + LP.N) % LP.N; return [LP.X[s] - Math.cos(LP.H[s]) * lat, LP.Z[s] + Math.sin(LP.H[s]) * lat]; };
 // the nearest point of the loop within r metres: { s, d } (d = 1e9 if none)
@@ -822,12 +832,17 @@ function buildTerrain(T, nz) {
         // paved at the road's level out to the building line (the whole lap, gap included), the harbour and the sea
         // well under the water line, the hillside beyond
         const ln = loopNear(LP, x, z, 60);
-        if (ln.d < STREET.line) hgt = LP.Y[ln.s] - (ln.d < hw - 0.8 ? 0.2 : 0.06);
+        // where two parts of the lap pass close at different heights (the Fairmont hairpin's legs), the ground between
+        // them takes the lower one; the upper street's retaining wall (world.js) covers the step, not the terrain grid
+        if (ln.d < STREET.line) hgt = (ln.d > hw ? Math.min(LP.Y[ln.s], loopLowY(LP, x, z, STREET.line + 9, ln.s)) : LP.Y[ln.s]) - (ln.d < hw - 0.8 ? 0.2 : 0.06);
         else if (wetAt(wm, x, z)) hgt = -6;
         else {
           // the hillside, but never more than a 30 % slope away from the streets (it is built up, not cliffs)
           const dd = Math.min(ln.d, d) - STREET.line, base = nearB - 0.06;
           hgt = lerp(base, clamp(hillAt(nz, shoreDist(wm, x, z), x, z), base - 0.3 * dd, base + 0.3 * dd), sstep(0, 60, dd));
+          // nor stand above a lower street close by (the strip between the hairpin's legs)
+          const lo2 = loopLowY(LP, x, z, STREET.line + 2, ln.s);
+          if (lo2 < hgt) hgt = lo2 - 0.06;
           // the casino square and the swimming pool are level with their streets
           for (const p of pads) {
             if (x < p.b[0] - 12 || x > p.b[1] + 12 || z < p.b[2] - 12 || z > p.b[3] + 12) continue;
@@ -1132,6 +1147,13 @@ function placeStreet(T, TR, st, nz, out, R, addCol, addSeg) {
     const far = Math.min(1, ln.d / 200);
     out.bldgs.push({ pts, base: hi, low: lo - 1.5, floors: Math.round(5 + R() * (8 + far * 14)), row: 4, classic: false, c: R() });
     keep(pts);
+  }
+  // buildings on the edge of the open places (the square, the gardens, the pool) show windows on every side: with
+  // their neighbours gone, their party walls would stand blank
+  const opens = out.gardens.concat(out.lms.pool ? [out.lms.pool] : []);
+  for (const b of out.bldgs) {
+    let cx = 0, cz = 0; for (const [x, z] of b.pts) { cx += x; cz += z; } cx /= 4; cz /= 4;
+    if ((out.square && Math.hypot(cx - out.square.x, cz - out.square.z) < out.square.r + 28) || opens.some(P => padDist(P, cx, cz) < 22)) b.open = true;
   }
   // ---- grandstands, with their crowd ----
   const shirts = 12;
