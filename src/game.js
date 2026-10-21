@@ -3009,7 +3009,7 @@ function updateVis(dt) {
   if (car.air && car.thrE > 0.5) vis.spin += 30 * dt;
   if (car.spinV > 0.5) vis.spin += car.spinV / 0.335 * dt;
   // the front wheels show the angle the physics uses, so in a slide they visibly countersteer into it
-  vis.steer += (-(car.delta || 0) - vis.steer) * Math.min(1, dt * 14);
+  vis.steer += ((car.delta || 0) - vis.steer) * Math.min(1, dt * 14);
   M4.trs(carMat, vis.x, vis.y + susp.heave + 0.02, vis.z, vis.h, susp.pitch, susp.roll, 1);
   for (let i = 0; i < 4; i++) {
     const [lx, lz] = wheelLocal(i);
