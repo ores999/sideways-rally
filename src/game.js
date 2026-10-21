@@ -830,7 +830,7 @@ async function onlineSync() {
   const withG = !online.noGhost;
   const all = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && ONLINE_STAGES.test(e.k) && !apart(carById(e.c)) && (!sent.has(id(e)) || (withG && !sentG.has(id(e)) && ownGhost(e))));
   const todo = all.slice(0, withG ? 25 : 200);
-  if (!todo.length) { syncBonus(sent, id); return; }
+  if (!todo.length) { syncApart(sent, id); return; }
   syncing = true;
   let retry = false;
   try {
@@ -848,24 +848,29 @@ async function onlineSync() {
     online.status = 'ok'; renderTimes();
     if (settings.leadGhost && W) onlineGhost(mapKey(W.st.key)); // your new run may be the No. 1 now
     retry = all.length > todo.length;
-    if (!retry) syncBonus(sent, id);
+    if (!retry) syncApart(sent, id);
   } catch (e) { online.status = 'error'; }
   finally { syncing = false; if (retry) setTimeout(onlineSync, 1500); }
 }
-// Saveiro times go up in a request of their own and without ghosts: a server whose car check doesn't list the
-// Saveiro yet (online/supabase.sql not updated) refuses them, and that must not hold back anyone's real times
-async function syncBonus(sent, id) {
-  if (online.noBonus || !settings.name) return;
+// The cars kept apart (the Saveiro, the F1) send their times in requests of their own, one per car, and without
+// ghosts (so the No. 1 ghost query, fastest row with a ghost, never lands on one): a server whose car check doesn't
+// list a car yet (online/supabase.sql not run) refuses its rows, and that must not hold back anyone else's times.
+// A refused car is left alone for the session (online.noCar).
+async function syncApart(sent, id) {
+  if (!settings.name) return;
   const me = settings.name.toLowerCase();
-  const todo = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && ONLINE_STAGES.test(e.k) && isBonus(carById(e.c)) && !sent.has(id(e))).slice(0, 50);
-  if (!todo.length) return;
-  try {
-    const r = await fetch(ONLINE.url.replace(/\/$/, '') + '/rest/v1/times', { method: 'POST', headers: onlineHeaders(true),
-      body: JSON.stringify(todo.map(e => ({ name: e.n, stage: e.k, car: e.c, time: +e.t.toFixed(3), splits: (e.s || []).slice(0, 4).map(x => +(+x).toFixed(3)) }))) });
-    if (!r.ok) { online.noBonus = true; return; }
-    for (const e of todo) { sent.add(id(e)); online.cache.delete(mapKey(e.k)); }
-    store.set('sent', [...sent].slice(-3000)); renderTimes();
-  } catch (e) { /* offline: next time */ }
+  online.noCar = online.noCar || new Set();
+  const all = boardAll().filter(e => !e.f && e.n.toLowerCase() === me && ONLINE_STAGES.test(e.k) && apart(carById(e.c)) && !online.noCar.has(e.c) && !sent.has(id(e)));
+  for (const car of new Set(all.map(e => e.c))) {
+    const todo = all.filter(e => e.c === car).slice(0, 50);
+    try {
+      const r = await fetch(ONLINE.url.replace(/\/$/, '') + '/rest/v1/times', { method: 'POST', headers: onlineHeaders(true),
+        body: JSON.stringify(todo.map(e => ({ name: e.n, stage: e.k, car: e.c, time: +e.t.toFixed(3), splits: (e.s || []).slice(0, 4).map(x => +(+x).toFixed(3)) }))) });
+      if (!r.ok) { online.noCar.add(car); continue; }
+      for (const e of todo) { sent.add(id(e)); online.cache.delete(mapKey(e.k)); }
+      store.set('sent', [...sent].slice(-3000)); renderTimes();
+    } catch (e) { return; /* offline: next time */ }
+  }
 }
 // ---- the No. 1's ghost: the fastest recorded run on this road (yours, a friend's challenge, or the online board's),
 // drawn in gold with a name tag when the "No. 1 ghost" option is on ----

@@ -45,3 +45,9 @@ alter table public.times add constraint times_stage_check check (stage ~ '^(pine
 -- 2026-10 · Monaco replaces Downtown (id 'monaco'). Run before the game that has it goes live.
 alter table public.times drop constraint if exists times_stage_check;
 alter table public.times add constraint times_stage_check check (stage ~ '^(pine|frost|mesa|forest|city|monaco)(-r)?(-night|-rain)?$' or stage ~ '^daily-[0-9]{8}$');
+
+-- 2026-10 · the F1 car at Monaco (id 'f1'). Its times are listed in a class of their own (the game keeps them out
+-- of places, the No. 1 and medals, and sends them without ghosts). Lets it through the car check; until this runs
+-- the server refuses its rows and the game keeps them on each browser.
+alter table public.times drop constraint if exists times_car_check;
+alter table public.times add constraint times_car_check check (car in ('foca', 'impressa', 'lancha', 'delta', 'pejo', 'kwattro', 'selica', 'saveiro', 'f1'));

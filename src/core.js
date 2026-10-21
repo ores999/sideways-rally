@@ -121,7 +121,9 @@ const CARS = [
     engine: { code: 'Tipo 056', layout: 'V8 (90°)', cyl: 8, disp: 2398, asp: 'Normally aspirated', hp: 760, hpRpm: 18500, nmCap: 320, redline: 19000, idle: 4200, onset: 1e5, spool: 1, antilag: false, na: 1, boostBar: 0, shape: 0.7 },
     gearbox: { type: 'Seamless', gears: 7, shift: 0.02, top: 300 },
     drive: { layout: 'RWD', front: 0, diff: 'Hydraulic diff' },
-    mass: 605, wd: 0.46, wb: 3.1, cgH: 0.3, inertia: 0.9, CdA: 1.25, ClA: 4.5, brake: 3.0, lock: 0.48, tyre: 1.45, agility: 1.0,
+    // lockV: full lock at hairpin speed, little of it at 200 km/h (with this much grip a key tap was a swerve);
+    // rearGrip keeps the tail planted when it brakes hard with the wheel turned (the load all goes to the front)
+    mass: 605, wd: 0.46, wb: 3.1, cgH: 0.3, inertia: 0.9, CdA: 1.25, ClA: 4.5, brake: 3.0, lock: 0.55, lockV: [15, 0.115], tyre: 1.45, rearGrip: 1.12, agility: 1.0,
     feel: { lag: 0, kick: 1, ayc: 0, push: 0, twitch: 0.9 },
     character: 'Seven hundred and sixty horsepower at 19,000 rpm in a car that weighs as much as a rally car\'s engine and gearbox. The wings press it down harder the faster it goes, the brakes are brutal, and the rear tyres spin up the moment you get greedy out of a slow corner.',
     col: { base: '#d40a14', roof: '#d40a14', lower: '#141516', stripe: '#f4f4f1', stripe2: '#141516', rim: '#3a3c40', text: '#f4f4f1', helmet: '#f2d21a' } },
@@ -1208,6 +1210,9 @@ function gearbox(c, P, inp) {
   else if (c.gear > 1 && rpmAt(c.gear) < E.redline * 0.52 && rpmAt(c.gear - 1) < E.redline - 900) { c.gear--; c.shifted = -1; }
 }
 
+// steering lock at speed v: rally cars lose it gently; a car with `lockV` [k, floor] keeps nearly full lock at hairpin
+// speed and gives most of it up past ~k m/s (the F1: with its downforce a key tap at 200 km/h was a 4 g swerve)
+const lockAt = (P, v) => P.lock * (P.lockV ? Math.max(P.lockV[1], 1 / (1 + (v / P.lockV[0]) * (v / P.lockV[0]))) : Math.max(0.27, 1 / (1 + v / TUNE.lockK)));
 function dynamics(W, c, P, inp, dt) {
   const st = W.st, E = P.engine;
   const fx = Math.sin(c.h), fz = Math.cos(c.h), rx = -fz, rz = fx;
@@ -1274,7 +1279,7 @@ function dynamics(W, c, P, inp, dt) {
   const lowG = 1 + TUNE.lowGrip * (1 - clamp((spd - 5) / 15, 0, 1));
   const capF = muF * Fzf, capR = muR * Fzr;
   // ---- steering angle with self-aligning help ----
-  const lockV = P.lock * Math.max(0.27, 1 / (1 + Math.abs(vx) / TUNE.lockK));
+  const lockV = lockAt(P, Math.abs(vx));
   const beta = Math.atan2(vy, Math.abs(vx) + 0.5);
   let delta = -c.steer * lockV;
   if (vx > 1) delta += TUNE.assist * beta * clamp(spd / 6, 0, 1);
@@ -1519,7 +1524,7 @@ function aiDrive(W, c, P, ai) {
   const psi = wrapA(p.h - course);
   const kappa = T.K[look];
   let dLeft = psi + clamp(Math.atan2(1.0 * e, v + 4), -0.1, 0.1) + Math.atan(P.wb * kappa) * 1.05 - 0.15 * (c.w - v * kappa);
-  const lockV = P.lock * Math.max(0.27, 1 / (1 + Math.abs(c.vF) / TUNE.lockK));
+  const lockV = lockAt(P, Math.abs(c.vF));
   const spdA = Math.hypot(c.vx, c.vz);
   dLeft += c.vF > 1 ? TUNE.assist * clamp(c.beta, -0.05, 0.05) * clamp(spdA / 6, 0, 1) : 0;
   let steer = clamp(-dLeft / lockV, -1, 1);
