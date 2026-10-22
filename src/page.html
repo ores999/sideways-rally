@@ -108,6 +108,17 @@ kbd { font-family: var(--f-mono); font-size: 11px; font-weight: 500; padding: 1p
 .seg button { padding: 9px 0; border-radius: 5px; font-weight: 700; font-size: 14px; color: var(--mute); }
 .seg button[aria-pressed="true"] { background: var(--paper); color: var(--ink); }
 .seg.seg3 { grid-template-columns: 1fr 1fr 1fr; }
+.seg.seg4 { grid-template-columns: repeat(4, 1fr); }
+.seg.seg4 button { font-size: 13px; }
+.gfx-note { margin: 0 2px; }
+.gfx-rows { display: grid; gap: 6px; }
+.gfx-row { display: grid; grid-template-columns: 112px 1fr; align-items: center; gap: 10px; padding-left: 2px; }
+.gfx-row b { font-weight: 700; font-size: 15px; }
+.gfx-row .seg button { padding: 7px 0; font-size: 13px; }
+.pause-gfx { display: grid; gap: 6px; margin-top: 4px; }
+.pause-gfx b { font-weight: 700; font-size: 15px; padding-left: 2px; }
+#fps { position: fixed; top: env(safe-area-inset-top, 0px); left: 50%; transform: translateX(-50%); z-index: 6; pointer-events: none; padding: 1px 8px 2px; border-radius: 0 0 6px 6px;
+  background: rgba(0,0,0,.4); font: 500 11px/1.1 var(--f-mono); color: rgba(255,255,255,.75); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .seg button:disabled { opacity: .35; cursor: default; }
 .var-note { margin: 0 2px; color: var(--mute); font-size: 13px; }
 .chal-tag { align-self: flex-start; margin-top: 2px; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #ff8aa0; }
@@ -410,6 +421,7 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
   <canvas id="view" aria-label="Rally stage view"></canvas><div id="leadTag" hidden></div><div id="netTags" aria-hidden="true"></div>
   <div id="hitFlash" aria-hidden="true"></div>
 
+  <div id="fps" hidden></div>
   <div id="hud" hidden>
     <div class="hud-top">
       <div class="stagebar">
@@ -499,8 +511,16 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
         <button class="opt" id="optGhost" aria-pressed="true"><b>Ghost cars</b><span class="switch"></span><small>Race the rival and your personal best</small></button>
         <button class="opt" id="optLead" aria-pressed="false"><b>No. 1 ghost</b><span class="switch"></span><small>Race the fastest recorded run on the road, in gold, the way its driver drove it</small></button>
         <p class="label group-label">Graphics</p>
-        <button class="opt" id="optShadows" aria-pressed="true"><b>Shadows and sharp rendering</b><span class="switch"></span><small>Turn off if the game stutters</small></button>
-        <button class="opt" id="optPost" aria-pressed="true"><b>Glow and colour grading</b><span class="switch"></span><small>Bloom, film-style colour and smooth edges. Turn off on slow devices</small></button>
+        <div class="seg seg4" id="optGfx"><button data-v="auto" aria-pressed="true">Auto</button><button data-v="perf" aria-pressed="false">Performance</button><button data-v="bal" aria-pressed="false">Balanced</button><button data-v="qual" aria-pressed="false">Quality</button></div>
+        <p class="tune-note gfx-note" id="gfxNote"></p>
+        <div class="gfx-rows">
+          <div class="gfx-row"><b>Resolution</b><div class="seg seg3" data-g="res"><button data-v="0" aria-pressed="false">Low</button><button data-v="1" aria-pressed="false">Medium</button><button data-v="2" aria-pressed="false">High</button></div></div>
+          <div class="gfx-row"><b>Smooth edges</b><div class="seg seg3" data-g="aa"><button data-v="0" aria-pressed="false">Off</button><button data-v="1" aria-pressed="false">Low</button><button data-v="2" aria-pressed="false">High</button></div></div>
+        </div>
+        <button class="opt" id="optShadows" aria-pressed="true"><b>Shadows</b><span class="switch"></span><small>From the sun, the trees and the car</small></button>
+        <button class="opt" id="optPost" aria-pressed="true"><b>Glow and colour grading</b><span class="switch"></span><small>Bloom around bright light and film-style colour</small></button>
+        <button class="opt" id="optRays" aria-pressed="true"><b>Sun rays</b><span class="switch"></span><small>Light shafts when you drive towards the sun</small></button>
+        <button class="opt" id="optFps" aria-pressed="false"><b>Show frame rate</b><span class="switch"></span><small>Frames per second and the size the game draws at, top of the screen</small></button>
         <p class="label group-label">Controls</p>
         <div class="keys">
           <span><kbd>↑</kbd><kbd>W</kbd></span><span>Throttle</span>
@@ -542,6 +562,7 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
         <button class="opt" id="pGhost" aria-pressed="true"><b>Ghost cars</b><span class="switch"></span></button>
         <button class="opt" id="pLead" aria-pressed="false"><b>No. 1 ghost</b><span class="switch"></span></button>
         <button class="opt" id="pLights" aria-pressed="false"><b>Headlights</b><span class="switch"></span><small><kbd>L</kbd> switches them in a run</small></button>
+        <div class="pause-gfx"><b>Graphics</b><div class="seg seg4" id="pGfx"><button data-v="auto" aria-pressed="true">Auto</button><button data-v="perf" aria-pressed="false">Performance</button><button data-v="bal" aria-pressed="false">Balanced</button><button data-v="qual" aria-pressed="false">Quality</button></div></div>
       </div>
       <div class="actions">
         <button class="btn primary" id="pResume">Resume <kbd>Esc</kbd></button>

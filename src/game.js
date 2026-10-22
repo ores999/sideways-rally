@@ -22,13 +22,37 @@ const store = {
   set(k, v) { try { localStorage.setItem('sideways.' + k, JSON.stringify(v)); return true; } catch (e) { return false; } },
   del(k) { try { localStorage.removeItem('sideways.' + k); } catch (e) { /* storage unavailable */ } },
 };
-const settings = Object.assign({ voice: false, sound: true, ghost: false, leadGhost: false, shadows: true, post: !matchMedia('(pointer: coarse)').matches, cam: 0, stage: 0, car: 0, gearbox: 'auto', rev: false, cond: 'day', name: '' }, store.get('settings', {}));
+const settings = Object.assign({ voice: false, sound: true, ghost: false, leadGhost: false, gfx: 'auto', fps: false, cam: 0, stage: 0, car: 0, gearbox: 'auto', rev: false, cond: 'day', name: '' }, store.get('settings', {}));
 if (settings.stage !== 'daily') settings.stage = clamp(settings.stage | 0, 0, C.STAGES.length - 1);
 settings.car = clamp(settings.car | 0, 0, C.CARS.length - 1);
 if (!C.CONDS.includes(settings.cond)) settings.cond = 'day';
 // ghost cars and the co-driver's voice are off unless you turn them on (once for everyone who had them on before)
 if (!settings.v2) { settings.voice = false; settings.ghost = false; settings.v2 = 1; }
 settings.dailyKey = C.dailyKey(); // a new day, a new road
+// graphics: a preset sets every level below; touching one of them makes it 'custom' (settings.g). Everything is
+// applied as it renders, nothing rebuilds the stage. Auto starts at Quality (Balanced on touch screens) and steps
+// down for the session when the lowest resolution still can't hold the frame rate.
+// Measured at 3200x2000 (ms/frame, Pine / Dark Pines / Monaco / Spa): Quality 14.5 / 13.9 / 22.1 / 21.2,
+// Balanced 9.2 / 9.5 / 14.3 / 13.1, Performance 2.4 / 3.9 / 7.1 / 5.2. Resolution is most of it; then the post chain
+// and MSAA (~3 ms each at that size), shadows ~1-2.5 ms. Shorter tree and grass distances changed nothing measurable.
+const PRESETS = {
+  perf: { res: 0, aa: 0, shadows: false, post: false, rays: false },
+  bal: { res: 1, aa: 1, shadows: true, post: true, rays: false },
+  qual: { res: 2, aa: 2, shadows: true, post: true, rays: true },
+};
+const GFX_LV = ['perf', 'bal', 'qual'], GFX_NAME = { auto: 'Auto', perf: 'Performance', bal: 'Balanced', qual: 'Quality', custom: 'Custom' };
+const RES_K = [0.5, 0.75, 1]; // of the screen's own pixels (at most 2 per CSS pixel)
+const coarse = matchMedia('(pointer: coarse)').matches, gAuto = { lv: coarse ? 1 : 2 };
+if ('shadows' in settings || 'post' in settings) { // before presets there were two switches: keep what was turned off
+  if (settings.shadows === false || (settings.post === false && !coarse)) { // (touch screens started with post off)
+    settings.gfx = 'custom';
+    settings.g = Object.assign({}, PRESETS.qual, settings.shadows === false ? { res: 1, shadows: false } : {}, settings.post === false ? { post: false, rays: false } : {});
+  }
+  delete settings.shadows; delete settings.post;
+}
+if (!GFX_NAME[settings.gfx] || (settings.gfx === 'custom' && !settings.g)) settings.gfx = 'auto';
+if (settings.g) settings.g = Object.assign({}, PRESETS.qual, settings.g);
+const gq = () => settings.gfx === 'custom' ? settings.g : PRESETS[settings.gfx === 'auto' ? GFX_LV[gAuto.lv] : settings.gfx];
 const saveSettings = () => store.set('settings', settings);
 // ---- bytes <-> text (base64url) ----
 function b64e(u8) { let s = ''; for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
@@ -396,14 +420,49 @@ function updateToggles() {
   $('gearManual').setAttribute('aria-pressed', String(settings.gearbox === 'manual'));
   if (A.master) A.master.gain.value = settings.sound ? 0.55 : 0;
 }
-const TOGGLES = [['optVoice', 'voice'], ['optSound', 'sound'], ['optGhost', 'ghost'], ['optLead', 'leadGhost'], ['optShadows', 'shadows'], ['optPost', 'post'], ['pVoice', 'voice'], ['pSound', 'sound'], ['pGhost', 'ghost'], ['pLead', 'leadGhost']];
+const TOGGLES = [['optVoice', 'voice'], ['optSound', 'sound'], ['optGhost', 'ghost'], ['optLead', 'leadGhost'], ['optFps', 'fps'], ['pVoice', 'voice'], ['pSound', 'sound'], ['pGhost', 'ghost'], ['pLead', 'leadGhost']];
 for (const [id, key] of TOGGLES) {
   $(id).addEventListener('click', () => {
     settings[key] = !settings[key]; saveSettings(); updateToggles();
     if (key === 'voice' && !settings.voice && 'speechSynthesis' in window) speechSynthesis.cancel();
     if (key === 'leadGhost' && settings.leadGhost && W) onlineGhost(mapKey(W.st.key));
+    if (key === 'fps') renderGfx();
   });
 }
+// ---- graphics ----
+// after any change: a fresh measuring window for the dynamic resolution, and the menu
+function applyGfx(user) {
+  dyn.acc = 0; dyn.n = 0; dyn.slow = 0;
+  if (user) { dyn.scale = 1; dyn.lastDown = -99; } // a new choice starts at full resolution and is judged from there
+  renderGfx();
+}
+function setGfx(v) {
+  if (v === 'auto' && settings.gfx !== 'auto') gAuto.lv = coarse ? 1 : 2;
+  settings.gfx = v; delete settings.g; saveSettings(); applyGfx(true);
+}
+// one level by hand: the preset becomes 'custom', starting from what was in use
+function setGfxLevel(k, v) {
+  const g = Object.assign({}, gq(), { [k]: v });
+  if (k === 'post' && !v) g.rays = false; // the shafts are part of the post chain
+  if (k === 'rays' && v) g.post = true;
+  const same = GFX_LV.find(n => Object.keys(PRESETS[n]).every(q => PRESETS[n][q] === g[q]));
+  if (same) { settings.gfx = same; delete settings.g; } else { settings.gfx = 'custom'; settings.g = g; }
+  saveSettings(); applyGfx(true);
+}
+function renderGfx() {
+  const G = gq(), lv = settings.gfx === 'auto' ? GFX_LV[gAuto.lv] : null;
+  for (const id of ['optGfx', 'pGfx']) for (const b of $(id).children) b.setAttribute('aria-pressed', String(b.dataset.v === settings.gfx));
+  for (const el of document.querySelectorAll('[data-g]')) for (const b of el.children) b.setAttribute('aria-pressed', String(String(G[el.dataset.g]) === b.dataset.v));
+  for (const k of ['shadows', 'post', 'rays']) $(GFX_OPT[k]).setAttribute('aria-pressed', String(G[k]));
+  $('gfxNote').textContent = settings.gfx === 'auto' ? `Running ${GFX_NAME[lv]}. Auto starts high and steps down if your device can't hold 60 fps.`
+    : settings.gfx === 'custom' ? 'Custom: your own mix of the settings below.'
+    : { perf: 'The most frames: lower resolution, no shadows, no glow.', bal: 'Sharp enough and smooth on most laptops.', qual: 'Everything on, at full resolution.' }[settings.gfx];
+  $('fps').hidden = !settings.fps;
+}
+for (const id of ['optGfx', 'pGfx']) for (const b of $(id).children) b.addEventListener('click', () => setGfx(b.dataset.v));
+for (const el of document.querySelectorAll('[data-g]')) for (const b of el.children) b.addEventListener('click', () => setGfxLevel(el.dataset.g, +b.dataset.v));
+const GFX_OPT = { shadows: 'optShadows', post: 'optPost', rays: 'optRays' };
+for (const k in GFX_OPT) $(GFX_OPT[k]).addEventListener('click', () => setGfxLevel(k, !gq()[k]));
 $('gearAuto').addEventListener('click', () => { settings.gearbox = 'auto'; saveSettings(); updateToggles(); });
 $('gearManual').addEventListener('click', () => { settings.gearbox = 'manual'; saveSettings(); updateToggles(); });
 function selectStage(i) {
@@ -3646,20 +3705,25 @@ let last = performance.now();
 const proj = M4.create(), view = M4.create(), lightView = M4.create(), lightProj = M4.create();
 // dynamic resolution: when frames run long the canvas renders fewer pixels (the browser scales it up),
 // and it creeps back up once there is headroom again. Judged on 1.5 s windows so single hitches don't count.
-const dyn = { scale: 1, acc: 0, n: 0, lastDown: -99, dpr: 1, noPost: false, slow: 0 };
+// The frame rate comes first: it aims for 60 fps (on a 60 Hz screen there is no telling how much headroom is left).
+const dyn = { scale: 1, acc: 0, n: 0, lastDown: -99, dpr: 1, slow: 0, fps: 0 };
 function adaptRes(rawDt) {
   // gaps over a second are tab switches or loads, not slow rendering; a lone hitch averages out over the window
   if (rawDt <= 0 || rawDt > 1 || document.hidden || mode === 'loading') { dyn.acc = 0; dyn.n = 0; return; }
   dyn.acc += rawDt; dyn.n++;
   if (dyn.acc < 1.5) return;
-  const avg = dyn.acc / dyn.n; dyn.acc = 0; dyn.n = 0;
-  if (avg > 1 / 48 && dyn.scale > 0.6) { dyn.scale = Math.max(0.6, dyn.scale * (avg > 1 / 30 ? 0.75 : 0.85)); dyn.lastDown = time; }
-  // already at the lowest resolution and still slow: drop the post chain for this session (the saved option stays as is)
-  else if (avg > 1 / 40 && settings.post && !dyn.noPost) { if (++dyn.slow >= 2) { dyn.noPost = true; dyn.lastDown = time; } }
+  const avg = dyn.acc / dyn.n, floor = resFloor(); dyn.acc = 0; dyn.n = 0;
+  if (avg > 1 / 52 && dyn.scale > floor) { dyn.scale = Math.max(floor, dyn.scale * (avg > 1 / 30 ? 0.75 : 0.85)); dyn.lastDown = time; dyn.slow = 0; }
+  // Auto, already at the lowest resolution and still slow: one level down for this session (nothing is saved), drawing
+  // as many pixels as before, so the frame only loses effects; the resolution climbs back if there's headroom
+  else if (avg > 1 / 50 && settings.gfx === 'auto' && gAuto.lv > 0) {
+    if (++dyn.slow >= 2) { const k = RES_K[gq().res]; gAuto.lv--; dyn.scale = clamp(dyn.scale * k / RES_K[gq().res], resFloor(), 1); dyn.lastDown = time; applyGfx(); }
+  }
   else if (avg < 1 / 57 && dyn.scale < 1 && time - dyn.lastDown > 8) dyn.scale = Math.min(1, dyn.scale * 1.1);
 }
+const resFloor = () => gq().res ? 0.6 : 0.9; // never under about 45 % of the screen's pixels across
 function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, settings.shadows ? 2 : 1.25) * dyn.scale;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2) * RES_K[gq().res] * dyn.scale;
   dyn.dpr = dpr;
   const w = Math.max(1, Math.floor(canvas.clientWidth * dpr)), h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
@@ -3671,7 +3735,17 @@ function frame(now) {
   const dt = Math.min(0.05, Math.max(0, raw)); last = now;
   if (paused_dbg) return;
   adaptRes(raw);
+  if (settings.fps) fpsTick(raw);
   tick(dt, true);
+}
+// the frame-rate readout: frames over the last half second, and the size the scene is drawn at
+const fpsC = { t: 0, n: 0 };
+function fpsTick(raw) {
+  if (raw <= 0 || raw > 1) return;
+  fpsC.t += raw; fpsC.n++;
+  if (fpsC.t < 0.5) return;
+  $('fps').textContent = `${Math.round(fpsC.n / fpsC.t)} fps · ${canvas.width}×${canvas.height}` + (settings.gfx === 'auto' ? ' · ' + GFX_NAME[GFX_LV[gAuto.lv]] : '');
+  fpsC.t = fpsC.n = 0;
 }
 function tick(dt, doRender) {
   if (!W || !car) { gl.clearColor(0.04, 0.05, 0.07, 1); gl.clear(gl.COLOR_BUFFER_BIT); return; }
@@ -3776,7 +3850,8 @@ const ghostP = {}, spkT = M4.create(), spkM = M4.create();
 function render() {
   resize();
   const E = S.E;
-  E.time = time; E.shadows = settings.shadows;
+  const G = gq();
+  E.time = time; E.shadows = G.shadows;
   const w = canvas.width, h = canvas.height;
   M4.persp(proj, cam.fov * Math.PI / 180, w / h, settings.cam === 2 && mode !== 'menu' ? 0.08 : 0.25, 4500);
   M4.lookAt(view, cam.pos, cam.look, cam.up);
@@ -3826,7 +3901,7 @@ function render() {
     }
     R.endShadow();
   }
-  R.beginScene(w, h, settings.post && !dyn.noPost, dyn.dpr >= 1.5 ? 2 : 4); // dense screens need less MSAA
+  R.beginScene(w, h, G.post, G.aa === 0 ? 1 : G.aa === 1 || dyn.dpr >= 1.5 ? 2 : 4); // dense screens need less MSAA
   gl.clearColor(E.fogCol[0], E.fogCol[1], E.fogCol[2], 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND);
@@ -3906,7 +3981,7 @@ function render() {
   gl.depthMask(true); gl.disable(gl.BLEND);
   // light shafts: where the sun sits on screen, faded out as it leaves the view or goes behind the camera
   let rays = null;
-  if (E.V.rays) {
+  if (E.V.rays && G.rays) {
     const vp = R.env.vp, sd = E.sunDir, px = cam.pos[0] + sd[0] * 1000, py = cam.pos[1] + sd[1] * 1000, pz = cam.pos[2] + sd[2] * 1000;
     const cw = vp[3] * px + vp[7] * py + vp[11] * pz + vp[15];
     if (cw > 0) {
@@ -3939,7 +4014,7 @@ function mixLight(E) {
 
 // ---------- boot ----------
 keepCarAllowed(curKey());
-renderStageInfo(); renderCarList(); updateToggles();
+renderStageInfo(); renderCarList(); updateToggles(); renderGfx();
 setScreen('menu');
 const fontsReady = document.fonts && document.fonts.load ? Promise.race([
   Promise.all([document.fonts.load('800 60px "Big Shoulders Display"'), document.fonts.load('700 40px "Chivo Mono"'), document.fonts.load('600 20px "Barlow Semi Condensed"')]),
@@ -3966,5 +4041,8 @@ if (location.protocol === 'file:') window.__rally = {
   view(p, l, fov, world) { dbgCam = p ? { p, l, fov, world } : null; },
   pickCar(i) { selectCar(i); },
   audio: () => ({ A, sfx, getTune }),
-  setDirt(v) { dirt = v; }, get mode() { return mode; }, get dbg() { return { dirt, hitFlash, dust: dust.n, chips: chips.n, hitK: S.E.hitK, shake: cam.shake, evt: Object.assign({}, evt) }; }, get car() { return car; }, get W() { return W; }, startRace, settings, keys, toMenu, get raceT() { return raceT; }, net, netJoin, netCreate, netStart, netLeave, netRows: () => (netRun() ? netRows() : null) };
+  setDirt(v) { dirt = v; },
+  // graphics: a preset name or levels to mix into the current ones; draw(n) renders the same frame n times
+  gfx(v) { if (typeof v === 'string') setGfx(v); else if (v) { settings.g = Object.assign({}, gq(), v); settings.gfx = 'custom'; applyGfx(true); } return { gfx: settings.gfx, g: gq(), auto: gAuto.lv, scale: dyn.scale, w: canvas.width, h: canvas.height }; },
+  draw(n) { for (let i = 0; i < n; i++) render(); }, get mode() { return mode; }, get dbg() { return { dirt, hitFlash, dust: dust.n, chips: chips.n, hitK: S.E.hitK, shake: cam.shake, evt: Object.assign({}, evt) }; }, get car() { return car; }, get W() { return W; }, startRace, settings, keys, toMenu, get raceT() { return raceT; }, net, netJoin, netCreate, netStart, netLeave, netRows: () => (netRun() ? netRows() : null) };
 })();
