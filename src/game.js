@@ -569,6 +569,8 @@ function loadStage(key, after) {
     loadedKey = st.key;
     document.body.dataset.cond = st.cond;
     document.body.dataset.stage = W.st.id;
+    // whatever brought this road here (Next, a link, the menu), the car must be allowed on it
+    if (!rallyOn() && keepCarAllowed(st.key)) renderCarList();
     setupCar();
     buildMinimap(); buildTvSpots(); resetEffects();
     hideLoading();
@@ -1626,16 +1628,24 @@ function netUpdate(dt) {
     o.out = !!(f && f.t == null) || (!net.peers.has(o.i) && wt - o.hist[o.hist.length - 1][0] > 2);
     if (o.out || !o.model) continue;
     const dc = Math.hypot(p.x - cam.pos[0], p.y - cam.pos[1], p.z - cam.pos[2]), dm = Math.hypot(p.x - vis.x, p.z - vis.z);
-    // see-through when it sits on the camera, when it's a ghost (paused, finished, just reset) and when it's passing
-    // through your car (you were overlapping while one of you was a ghost)
+    // see-through when it's a ghost (paused, finished, just reset) and when it's passing through your car (you were
+    // overlapping while one of you was a ghost); those also fade as the camera nears them. A car you can hit stays
+    // solid however close it gets, unless the camera is in its body
     const gh = mode === 'race' && ((p.fl & 512) || net.pause || car.ghostT > 0);
-    o.alpha = clamp((dc - 3.5) / 6, 0, 1) * (gh ? 0.5 : 1) * (o.thru && dm < 5.5 ? 0.35 + 0.65 * clamp((dm - 2.5) / 3, 0, 1) : 1);
+    const near = gh || o.thru ? clamp((dc - 3.5) / 6, 0, 1) : clamp((camGap(o, p) - 0.25) / 0.65, 0, 1);
+    o.alpha = near * (gh ? 0.5 : 1) * (o.thru && dm < 5.5 ? 0.35 + 0.65 * clamp((dm - 2.5) / 3, 0, 1) : 1);
     o.dc = dc;
     const wr = (p.vx * Math.sin(p.h) + p.vz * Math.cos(p.h)) / 0.335, wa = Math.abs(wr);
     o.spin += Math.sign(wr) * (wa < 15 ? wa : 15 + (wa - 15) * 0.25) * dt;
     M4.trs(o.mat, p.x, p.y, p.z, p.h, p.pitch, p.roll, 1);
     o.vis = o.alpha > 0.01 && dc < 900;
   }
+}
+// how far the camera is from the outside of a driver's body (its contact box up to roof height; 0 inside it)
+function camGap(o, p) {
+  const b = o.box || (o.box = C.carBox(carById(o.c))), ex = cam.pos[0] - p.x, ez = cam.pos[2] - p.z, sh = Math.sin(p.h), ch = Math.cos(p.h);
+  const lz = ex * sh + ez * ch, lx = ex * ch - ez * sh;
+  return Math.hypot(Math.max(0, Math.abs(lx) - b.w), Math.max(0, lz - b.f, b.r - lz), Math.max(0, cam.pos[1] - p.y - 1.45));
 }
 const netWm = M4.create(), netWt = M4.create(), netSh = M4.create(), netGc = { x: 0, z: 0, s: 0, lat: 0, rd: {} };
 function netWheel(o, i, noSpin) {
@@ -1977,11 +1987,18 @@ function buildResults(old, isPB, medal, oldBest) {
   else nxt.textContent = 'Next: ' + C.stageDef(nextKey()).name;
   nxt.title = inRally && !rally.done ? C.stageTitle(C.stageDef(rally.legs[rally.idx])) : '';
 }
-function nextKey() { const ni = settings.stage === 'daily' ? 0 : (settings.stage + 1) % C.STAGES.length; return keyFor(ni); }
+// the next road in the list, skipping the ones the car doesn't run on (the F1 goes Monaco → Spa → Monaco)
+function nextIdx() {
+  const c = C.CARS[settings.car];
+  let ni = settings.stage === 'daily' ? 0 : (settings.stage + 1) % C.STAGES.length;
+  for (let k = 0; c.only && k < C.STAGES.length && !fitsRoad(c, keyFor(ni)); k++) ni = (ni + 1) % C.STAGES.length;
+  return ni;
+}
+function nextKey() { return keyFor(nextIdx()); }
 function retry() { if (netRun()) { toMenu(); return; } if (rallyLeg) return; setScreen('race'); startRace(); }
 function nextStage() {
   if (rallyLeg) { rallyNext(); return; }
-  settings.stage = settings.stage === 'daily' ? 0 : (settings.stage + 1) % C.STAGES.length; saveSettings();
+  settings.stage = nextIdx(); saveSettings();
   setScreen('none');
   loadStage(curKey(), () => { renderStageList(); startRace(); });
 }
