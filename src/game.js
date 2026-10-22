@@ -863,7 +863,7 @@ async function ghostDecode(str) {
 function ownGhost(e) { const r = store.get(pbKey(e.k, e.c), null); return r && r.q && Math.abs(r.t - e.t) < 0.005 ? r.q : null; }
 // the stages the server's check takes (online/supabase.sql). Times on any other stage stay on this browser until the
 // server is migrated: one refused row fails the whole batch, and a 400 reads as "no ghost column"
-const ONLINE_STAGES = /^(pine|frost|mesa|forest|monaco)(-r)?(-night|-rain)?$|^daily-\d{8}$|^monaco(-r)?(-night|-rain)?-lap$/;
+const ONLINE_STAGES = /^(pine|frost|mesa|forest|monaco|spa)(-r)?(-night|-rain)?$|^daily-\d{8}$|^(monaco|spa)(-r)?(-night|-rain)?-lap$/;
 async function onlineSync() {
   if (!online.on || !settings.name || syncing) return;
   const sent = new Set(store.get('sent', [])), sentG = new Set(store.get('sentG', [])), me = settings.name.toLowerCase(), id = e => e.n.toLowerCase() + '|' + e.k + '|' + e.c + '|' + e.t.toFixed(3);
