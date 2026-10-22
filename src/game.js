@@ -135,7 +135,7 @@ function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.
 const nf = n => Math.round(n).toLocaleString('en-US');
 function drawThumb(cv, T, st) {
   const g = cv.getContext('2d'), w = cv.width, h = cv.height;
-  const acc = { pine: '#8cc06f', frost: '#8fb6ff', mesa: '#ff9152', forest: '#6fbf73', monaco: '#e6c27a' }[st.id] || '#ffd23a';
+  const acc = { pine: '#8cc06f', frost: '#8fb6ff', mesa: '#ff9152', forest: '#6fbf73', monaco: '#e6c27a', spa: '#7fc35a' }[st.id] || '#ffd23a';
   g.fillStyle = '#10141a'; g.fillRect(0, 0, w, h);
   g.strokeStyle = 'rgba(255,255,255,0.05)'; g.lineWidth = 1;
   for (let x = 0; x < w; x += 16) { g.beginPath(); g.moveTo(x + 0.5, 0); g.lineTo(x + 0.5, h); g.stroke(); }
@@ -231,7 +231,7 @@ function renderCarList() {
         : lead ? `🔒 Only the No. 1 on ${road} drives it (${lead.n} right now)` : `🔒 Set the fastest time on ${road} to unlock it`));
       for (const [x, y, d] of [[2, 10, 0], [97, 18, 0.6], [52, 86, 1.1], [92, 84, 0.3], [30, 4, 1.4]]) { const sp = el('span', 'spark', '✦'); sp.style.left = x + '%'; sp.style.top = y + '%'; sp.style.animationDelay = d + 's'; b.append(sp); }
     } else if (c.only) {
-      const ok = fitsRoad(c, curKeyMenu()), road = C.stageDef(c.only).name;
+      const ok = fitsRoad(c, curKeyMenu()), road = onlyNames(c);
       b.classList.add('only'); if (!ok) b.classList.add('locked');
       t.append(el('small', ok ? null : 'lock', ok ? `${c.era} · ${c.engine.layout} · its times are a class of their own` : `🔒 ${road} only`));
     } else t.append(el('small', null, `${c.era} · ${c.engine.layout} turbo`));
@@ -246,7 +246,9 @@ function renderCarList() {
 const isBonus = c => !!(c && c.bonus);
 // cars kept apart from the rally cars' times: the bonus Saveiro and the cars built for one road (the F1 at Monaco)
 const apart = c => !!(c && (c.bonus || c.only));
-const fitsRoad = (c, key) => !c.only || C.stageDef(key).id === c.only;
+const fitsRoad = (c, key) => !c.only || [].concat(c.only).includes(C.stageDef(key).id);
+// the roads a car built for some of them runs on, by name ("Monaco and Spa-Francorchamps")
+const onlyNames = c => [].concat(c.only).map(id => C.stageDef(id).name).join(' and ');
 function leaderOf(key) {
   const m = mapKey(key), oc = online.on ? online.cache.get(m) : null; let best = null;
   for (const e of [...boardAll().filter(x => mapKey(x.k) === m), ...(oc ? oc.rows : [])]) if (!apart(carById(e.c)) && (!best || e.t < best.t)) best = e;
@@ -260,7 +262,7 @@ function keepCarAllowed(key) {
   if (c.only) {
     if (fitsRoad(c, key || curKeyMenu())) return false;
     settings.car = plainCar(); saveSettings();
-    toast(`The ${shortCar(c.id)} only runs at ${C.stageDef(c.only).name}: back in the ${C.CARS[settings.car].name}.`);
+    toast(`The ${shortCar(c.id)} only runs at ${onlyNames(c)}: back in the ${C.CARS[settings.car].name}.`);
     if (inRoom()) netTrack();
     return true;
   }
@@ -453,7 +455,7 @@ function selectCar(i, btn) {
   const c = C.CARS[i];
   if (c.only && !fitsRoad(c, curKeyMenu())) {
     if (btn) { btn.classList.remove('shake'); void btn.offsetWidth; btn.classList.add('shake'); }
-    toast(`The ${shortCar(c.id)} is built for ${C.stageDef(c.only).name}: pick that stage first.`);
+    toast(`The ${shortCar(c.id)} is built for ${onlyNames(c)}: pick one of those first.`);
     return;
   }
   if (isBonus(c) && inRoom()) {
@@ -861,7 +863,7 @@ async function ghostDecode(str) {
 function ownGhost(e) { const r = store.get(pbKey(e.k, e.c), null); return r && r.q && Math.abs(r.t - e.t) < 0.005 ? r.q : null; }
 // the stages the server's check takes (online/supabase.sql). Times on any other stage stay on this browser until the
 // server is migrated: one refused row fails the whole batch, and a 400 reads as "no ghost column"
-const ONLINE_STAGES = /^(pine|frost|mesa|forest|monaco)(-r)?(-night|-rain)?$|^daily-\d{8}$|^monaco(-r)?(-night|-rain)?-lap$/;
+const ONLINE_STAGES = /^(pine|frost|mesa|forest|monaco|spa)(-r)?(-night|-rain)?$|^daily-\d{8}$|^(monaco|spa)(-r)?(-night|-rain)?-lap$/;
 async function onlineSync() {
   if (!online.on || !settings.name || syncing) return;
   const sent = new Set(store.get('sent', [])), sentG = new Set(store.get('sentG', [])), me = settings.name.toLowerCase(), id = e => e.n.toLowerCase() + '|' + e.k + '|' + e.c + '|' + e.t.toFixed(3);
@@ -1506,7 +1508,7 @@ function netDepth() {
 }
 function netDrawOpaque(E) {
   if (!netRun()) return;
-  const dcol = DIRT[W.st.kind].col;
+  const dcol = (DIRT[W.st.id] || DIRT[W.st.kind]).col;
   for (const o of net.race.others.values()) {
     if (!o.vis || o.alpha < 0.99) continue;
     const m = o.model, y = o.pose.y, lit = o.pose.fl & 2, brk = o.pose.fl & 1;
@@ -2959,7 +2961,7 @@ const wheelMesh = (m, i) => i < 2 || !m.wheelR ? m.wheel : m.wheelR;
 function wheelLocal(i) { const sh = carModel.shape; return [(i % 2 ? -1 : 1) * halfTrack(sh, i), i < 2 ? carModel.fz : carModel.rz]; }
 function surfBump(x, z, surf) {
   const sid = W.st.kind;
-  const amp = surf === 0 || W.st.town ? (sid === 'pine' ? 0.026 : sid === 'frost' ? 0.016 : 0.004) : surf === 1 ? 0.03 : 0.042;
+  const amp = surf === 0 || W.st.town ? (W.st.tarmac ? 0.004 : sid === 'pine' ? 0.026 : sid === 'frost' ? 0.016 : 0.004) : surf === 1 ? 0.03 : 0.042;
   return amp * (W.nz.n2(x * 0.9, z * 0.9) * 0.65 + W.nz.n2(x * 2.6 + 9, z * 2.6) * 0.35);
 }
 function updateVis(dt) {
@@ -2971,7 +2973,8 @@ function updateVis(dt) {
     const [lx, lz] = wheelLocal(i);
     const wx = vis.x + lx * c + lz * sn, wz = vis.z - lx * sn + lz * c;
     const latW = Math.abs(car.lat + (wx - car.x) * car.rd.rx + (wz - car.z) * car.rd.rz);
-    const surf = latW < T.hw + 0.2 ? 0 : latW < T.hw + 1.7 ? 1 : 2;
+    const surf = T.ru ? (latW < C.paveEdge(T, car.idx, car.lat) + 0.2 ? 0 : C.inGravel(T, car.idx, Math.sign(car.lat || 1) * latW) ? 1 : 2)
+      : latW < T.hw + 0.2 ? 0 : latW < T.hw + 1.7 ? 1 : 2;
     susp.surf[i] = surf;
     const g = C.groundAt(W, car, wx, wz);
     flat += g;
@@ -3051,11 +3054,11 @@ function buildContactShadow() {
   csMesh = R.mesh(q);
 }
 // dirt builds up on the lower body and wheels as you drive
-const DIRT = { pine: { col: lin('#857259'), max: 0.6, rate: 0.03 }, frost: { col: lin('#bcc5d3'), max: 0.42, rate: 0.03 }, mesa: { col: lin('#b08a66'), max: 0.32, rate: 0.012 }, city: { col: lin('#7d7b78'), max: 0.2, rate: 0.008 } };
+const DIRT = { pine: { col: lin('#857259'), max: 0.6, rate: 0.03 }, frost: { col: lin('#bcc5d3'), max: 0.42, rate: 0.03 }, mesa: { col: lin('#b08a66'), max: 0.32, rate: 0.012 }, city: { col: lin('#7d7b78'), max: 0.2, rate: 0.008 }, spa: { col: lin('#6f6a5c'), max: 0.22, rate: 0.008 } };
 let dirt = 0;
 function updateDirt(dt) {
   if (mode !== 'race') return;
-  const D = DIRT[W.st.kind], spd = Math.hypot(car.vx, car.vz);
+  const D = (DIRT[W.st.id] || DIRT[W.st.kind]), spd = Math.hypot(car.vx, car.vz);
   const off = susp.surf[2] + susp.surf[3] > 1 ? 2.4 : 1;
   const r = D.rate * clamp(spd / 25, 0, 1.6) * off + (car.slip > 3 ? 0.012 : 0);
   dirt += (D.max - dirt) * r * dt;
@@ -3182,7 +3185,7 @@ function updateCamera(dt) {
   if (asp < 1.1 && cm !== 3) fovT *= 1 + clamp(1.1 - asp, 0, 0.65) * 0.6;
   cam.fov += (fovT - cam.fov) * (cam.snap ? 1 : Math.min(1, dt * 4));
   if (evt.land > 3) cam.shake = Math.max(cam.shake, Math.min(0.5, evt.land * 0.04));
-  const rough = car.air || (!car.onRoad && !W.st.town) ? 0.03 : (W.st.kind === 'pine' ? 0.012 : W.st.kind === 'frost' ? 0.007 : 0.003);
+  const rough = car.air || (!car.onRoad && !W.st.town) ? 0.03 : (W.st.tarmac ? 0.003 : W.st.kind === 'pine' ? 0.012 : W.st.kind === 'frost' ? 0.007 : 0.003);
   const sk = cam.shake + rough * clamp(spd / 30, 0, 1.5);
   if (cm !== 3 && sk > 0.0005) {
     // smooth multi-sine shake rather than per-frame noise, so it reads as a jolt and not as jitter
@@ -3261,6 +3264,8 @@ const SURF_FX = {
   frost: [{ c: [0.95, 0.97, 1.0], a: 0.4, k: 1.05, chip: [0.92, 0.95, 1.0] }, { c: [0.95, 0.97, 1.0], a: 0.45, k: 1.3, chip: [0.92, 0.95, 1.0] }, { c: [0.96, 0.98, 1.0], a: 0.5, k: 1.5, chip: [0.94, 0.96, 1.0] }],
   mesa: [{ c: [0.8, 0.79, 0.78], a: 0.1, k: 0.02, chip: null }, { c: [0.76, 0.56, 0.4], a: 0.28, k: 1.0, chip: [0.45, 0.28, 0.18] }, { c: [0.78, 0.55, 0.38], a: 0.3, k: 1.1, chip: [0.5, 0.3, 0.2] }],
   city: [{ c: [0.8, 0.79, 0.78], a: 0.1, k: 0.02, chip: null }, { c: [0.78, 0.77, 0.75], a: 0.12, k: 0.1, chip: null }, { c: [0.8, 0.79, 0.78], a: 0.1, k: 0.03, chip: null }],
+  // a race circuit: [track and run-off, gravel trap, grass]
+  spa: [{ c: [0.8, 0.79, 0.78], a: 0.1, k: 0.02, chip: null }, { c: [0.72, 0.65, 0.53], a: 0.3, k: 1.2, chip: [0.55, 0.5, 0.42] }, { c: [0.4, 0.38, 0.27], a: 0.16, k: 0.6, chip: [0.2, 0.3, 0.12] }],
 };
 // in the rain the wheels throw a fine grey spray (tarmac too) and only a little of the gravel
 const SPRAY = { c: [0.8, 0.83, 0.87], a: 0.12, k: 0.75 };
@@ -3268,11 +3273,12 @@ const SURF_WET = {
   pine: [Object.assign({}, SPRAY, { chip: [0.16, 0.13, 0.1] }), Object.assign({}, SPRAY, { c: [0.62, 0.6, 0.55], a: 0.16, k: 0.8, chip: [0.18, 0.14, 0.1] }), { c: [0.36, 0.34, 0.26], a: 0.14, k: 0.6, chip: [0.14, 0.2, 0.08] }],
   mesa: [Object.assign({}, SPRAY, { chip: null }), { c: [0.6, 0.46, 0.36], a: 0.18, k: 0.7, chip: [0.4, 0.25, 0.16] }, { c: [0.6, 0.45, 0.33], a: 0.2, k: 0.8, chip: [0.45, 0.27, 0.18] }],
   city: [Object.assign({}, SPRAY, { chip: null }), Object.assign({}, SPRAY, { chip: null }), Object.assign({}, SPRAY, { chip: null })],
+  spa: [Object.assign({}, SPRAY, { chip: null }), { c: [0.55, 0.5, 0.42], a: 0.18, k: 0.8, chip: [0.45, 0.4, 0.33] }, { c: [0.36, 0.34, 0.26], a: 0.14, k: 0.6, chip: [0.14, 0.2, 0.08] }],
 };
 function emitEffects(dt) {
   if (mode === 'menu' || mode === 'paused') return;
   const sid = W.st.kind, spd = Math.hypot(car.vx, car.vz);
-  const FX = (S.E.wet && SURF_WET[sid]) || SURF_FX[sid];
+  const FX = (S.E.wet && (SURF_WET[W.st.id] || SURF_WET[sid])) || SURF_FX[W.st.id] || SURF_FX[sid];
   if (!car.air && spd > 1.5) {
     for (let i = 0; i < 4; i++) {
       const rear = i >= 2, f = FX[susp.surf[i]];
@@ -3788,7 +3794,7 @@ function render() {
     R.drawLit(m, o);
   }
   // car
-  const dcol = DIRT[W.st.kind].col, baseY = vis.y + susp.heave;
+  const dcol = (DIRT[W.st.id] || DIRT[W.st.kind]).col, baseY = vis.y + susp.heave;
   R.drawLit(carModel.body, { model: carMat, mode: 5, tex: carModel.tex, dirt, carY: baseY, dirtCol: dcol });
   if (carModel.spk) { M4.trs(spkT, 0, 0, -spkPump(), 0, 0, 0, 1); M4.mul(spkM, carMat, spkT); R.drawLit(carModel.spk, { model: spkM, dirt: dirt * 0.4, carY: baseY, dirtCol: dcol }); }
   for (let i = 0; i < 4; i++) R.drawLit(wheelMesh(carModel, i), { model: wheelMatrix(i), mode: 11, tex: carModel.tyreTex, dirt: dirt * 0.9, carY: baseY, dirtCol: dcol });
