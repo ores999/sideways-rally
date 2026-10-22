@@ -1043,20 +1043,25 @@ function createRenderer(canvas) {
   // without post: an RGBA8 multisampled target, resolved straight onto the canvas
   const ldr = { ok: true, w: 0, h: 0, samples: 0, maxSamples: 4, on: false, fbo: null, color: null, depth: null, rFbo: null, rColor: null };
   try { const sc = gl.getInternalformatParameter(gl.RENDERBUFFER, gl.RGBA8, gl.SAMPLES); ldr.maxSamples = sc && sc.length ? Math.min(4, Math.max(...sc)) : 0; } catch (e) { ldr.maxSamples = 0; }
+  // ns 1 (no MSAA): the canvas has no depth buffer of its own, so the scene still needs this target, blitted straight over
   function buildLdr(w, h, ns) {
-    if (ldr.fbo) { gl.deleteFramebuffer(ldr.fbo); gl.deleteRenderbuffer(ldr.color); gl.deleteRenderbuffer(ldr.depth); gl.deleteFramebuffer(ldr.rFbo); gl.deleteRenderbuffer(ldr.rColor); }
-    // single-sample stage for the resolve: a multisample blit needs identical formats, and the canvas may be RGB8
-    ldr.rFbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, ldr.rFbo);
-    ldr.rColor = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, ldr.rColor);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.RGBA8, w, h);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, ldr.rColor);
+    if (ldr.fbo) { gl.deleteFramebuffer(ldr.fbo); gl.deleteRenderbuffer(ldr.color); gl.deleteRenderbuffer(ldr.depth); if (ldr.rFbo) { gl.deleteFramebuffer(ldr.rFbo); gl.deleteRenderbuffer(ldr.rColor); } }
+    ldr.rFbo = ldr.rColor = null;
+    const store = (fmt) => ns > 1 ? gl.renderbufferStorageMultisample(gl.RENDERBUFFER, ns, fmt, w, h) : gl.renderbufferStorage(gl.RENDERBUFFER, fmt, w, h);
+    if (ns > 1) {
+      // single-sample stage for the resolve: a multisample blit needs identical formats, and the canvas may be RGB8
+      ldr.rFbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, ldr.rFbo);
+      ldr.rColor = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, ldr.rColor);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.RGBA8, w, h);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, ldr.rColor);
+    }
     ldr.w = w; ldr.h = h; ldr.samples = ns;
     ldr.fbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, ldr.fbo);
     ldr.color = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, ldr.color);
-    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, ns, gl.RGBA8, w, h);
+    store(gl.RGBA8);
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, ldr.color);
     ldr.depth = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, ldr.depth);
-    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, ns, gl.DEPTH_COMPONENT24, w, h);
+    store(gl.DEPTH_COMPONENT24);
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, ldr.depth);
     if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) ldr.ok = false;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.bindRenderbuffer(gl.RENDERBUFFER, null);
@@ -1126,8 +1131,8 @@ function createRenderer(canvas) {
     }
     ldr.on = false;
     if (!post.on) {
-      const ns = Math.min(ldr.maxSamples, samples || 4);
-      if (ldr.ok && ns > 1) {
+      const ns = Math.max(1, Math.min(ldr.maxSamples, samples || 4));
+      if (ldr.ok) {
         if (ldr.w !== w || ldr.h !== h || ldr.samples !== ns) buildLdr(w, h, ns);
         if (ldr.ok) { gl.bindFramebuffer(gl.FRAMEBUFFER, ldr.fbo); ldr.on = true; }
       }
@@ -1141,9 +1146,11 @@ function createRenderer(canvas) {
   // rays: { uv: sun position on screen, col: shaft colour × strength } or null
   function endScene(G, time, blur, rays) {
     if (ldr.on) {
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, ldr.fbo); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, ldr.rFbo);
-      gl.blitFramebuffer(0, 0, ldr.w, ldr.h, 0, 0, ldr.w, ldr.h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, ldr.rFbo); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      if (ldr.rFbo) {
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, ldr.fbo); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, ldr.rFbo);
+        gl.blitFramebuffer(0, 0, ldr.w, ldr.h, 0, 0, ldr.w, ldr.h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      }
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, ldr.rFbo || ldr.fbo); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
       gl.blitFramebuffer(0, 0, ldr.w, ldr.h, 0, 0, ldr.w, ldr.h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       return;
@@ -1481,7 +1488,7 @@ function createRenderer(canvas) {
     gl.uniform1f(u.u_exp, E.exp);
     gl.uniform1f(u.u_hdr, env.hdr || 0);
     gl.uniform3fv(u.u_zen, E.zen); gl.uniform3fv(u.u_hor, E.fogCol);
-    gl.uniform3fv(u.u_fol, [E.folFade ? E.folFade[0] : 60, E.folFade ? E.folFade[1] : 90, (post.on ? post.samples > 1 : ldr.on) ? 1 : 0]);
+    gl.uniform3fv(u.u_fol, [E.folFade ? E.folFade[0] : 60, E.folFade ? E.folFade[1] : 90, (post.on ? post.samples : ldr.on ? ldr.samples : 0) > 1 ? 1 : 0]);
     gl.uniform1f(u.u_time, E.time);
     gl.uniform1f(u.u_shOn, E.shadows ? 1 : 0);
     gl.uniform2f(u.u_shTex, 1 / (2 * SHADOW), 1 / SHADOW);
