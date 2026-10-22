@@ -239,7 +239,30 @@ dl.spec dd em { font-style: normal; color: var(--mute); }
 .netbox .r.me { background: rgba(255, 210, 58, .1); } .netbox .r.me b { color: var(--signal); }
 .netbox .r.out { opacity: .5; }
 .netbox .foot { padding: 3px 10px 0; font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); }
+.netbox { pointer-events: auto; cursor: pointer; }
 .prog em.np { width: 8px; height: 8px; margin-left: -4px; top: -3px; border: 0; }
+/* the room table (hold Tab in an online race) */
+.netboard { position: absolute; z-index: 5; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(600px, calc(100vw - 32px)); max-height: calc(100vh - 40px); overflow: hidden; pointer-events: auto;
+  display: flex; flex-direction: column; gap: 10px; padding: 14px 18px 12px; background: rgba(12, 15, 20, .86); border: 1px solid var(--line-2); border-radius: 10px; backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass); box-shadow: var(--sheen), 0 18px 50px rgba(0,0,0,.5); animation: nbIn .14s ease-out; }
+@keyframes nbIn { from { opacity: 0; transform: translate(-50%, -48%); } }
+.nb-head { display: flex; align-items: baseline; gap: 10px; }
+.nb-head b { font-family: var(--f-display); font-weight: 800; font-size: 22px; letter-spacing: .06em; text-transform: uppercase; }
+.nb-head span { color: var(--paper-2); font-size: 14px; }
+.nb-head .nb-st { margin-left: auto; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--signal); }
+.tt.nb td, .tt.nb th { padding: 7px 0; }
+.tt.nb td:first-child, .tt.nb th:first-child { width: 24px; font-family: var(--f-mono); font-weight: 700; }
+.tt.nb td.dot { width: 16px; } .tt.nb td.dot i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
+.tt.nb td.nm, .tt.nb th:nth-child(3) { text-align: left; font-family: var(--f-ui); font-weight: 700; color: var(--paper); font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.tt.nb td.nm small { margin-left: 8px; font-weight: 500; font-size: 12.5px; color: var(--mute); }
+.tt.nb td.nm .tag { margin-left: 6px; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; background: var(--line-2); color: var(--paper); vertical-align: 2px; }
+.tt.nb td.nm .tag.host { background: rgba(94, 200, 255, .22); color: #bfe8ff; }
+.tt.nb tr.you td.nm { color: var(--signal); }
+.tt.nb tr.out td { opacity: .5; }
+.tt.nb td:nth-child(5) { width: 44px; color: var(--good); }
+.tt.nb td.ping { width: 92px; white-space: nowrap; } .tt.nb td.ping b { font-weight: 700; }
+.tt.nb td.ping small { display: block; font-family: var(--f-ui); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); }
+.tt.nb td.ping .good { color: var(--good); } .tt.nb td.ping .ok { color: var(--signal); } .tt.nb td.ping .bad { color: var(--bad); }
+.nb-foot { font-size: 12px; line-height: 1.4; color: var(--mute); }
 #netTags { position: fixed; inset: 0; pointer-events: none; z-index: 3; overflow: hidden; }
 #netTags span { position: absolute; left: 0; top: 0; white-space: nowrap; font: 700 12px/1 var(--f-ui); letter-spacing: .04em; color: #0d1014; padding: 4px 8px; border-radius: 999px; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
 .net-res { display: flex; flex-direction: column; gap: 8px; }
@@ -267,6 +290,9 @@ dl.spec dd em { font-style: normal; color: var(--mute); }
 .prog em.ld { border-color: #ffd36a; background: #ffd36a; box-shadow: 0 0 8px rgba(255, 211, 106, .7); }
 #leadTag { position: fixed; left: 0; top: 0; z-index: 4; pointer-events: none; white-space: nowrap; font: 700 12px/1 var(--f-ui); letter-spacing: .04em; color: #1b1608;
   background: linear-gradient(90deg, #f3cd5f, #fff0b8, #e0b23e); padding: 4px 8px; border-radius: 999px; box-shadow: 0 2px 10px rgba(0,0,0,.35); }
+.hcenter { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+/* the rear-view mirror's frame: the game draws the picture inside it (MIR_RAD in game.js = the inner corner radius) */
+.mirror { width: clamp(200px, 28vw, 400px); aspect-ratio: 3.6; border: 3px solid #14171c; border-radius: 12px; box-shadow: 0 0 0 1px rgba(255,255,255,.12), 0 8px 24px rgba(0,0,0,.35); }
 .timer { text-align: center; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 16px 7px; min-width: 190px; backdrop-filter: var(--glass); -webkit-backdrop-filter: var(--glass); box-shadow: var(--sheen), 0 8px 24px rgba(0,0,0,.25); }
 .timer .t { font-family: var(--f-mono); font-weight: 700; font-size: 34px; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
 .timer .d { font-family: var(--f-mono); font-weight: 500; font-size: 15px; font-variant-numeric: tabular-nums; min-height: 18px; color: var(--mute); }
@@ -285,6 +311,7 @@ dl.spec dd em { font-style: normal; color: var(--mute); }
 .note .mods span.soft { background: var(--line-2); color: var(--paper); }
 .note.next { transform: scale(.78); transform-origin: left top; opacity: .7; border-left-color: var(--line-2); }
 .center { position: absolute; left: 50%; top: 34%; transform: translate(-50%, -50%); text-align: center; font-family: var(--f-display); font-weight: 900; text-transform: uppercase; text-shadow: 0 4px 30px rgba(0,0,0,.55); white-space: nowrap; }
+#app:has(#hMirror:not([hidden])) .center { top: 40%; } /* the timer sits lower under the mirror */
 .center .big { font-size: clamp(64px, 14vw, 150px); line-height: .9; }
 .center .mid { font-size: clamp(30px, 5vw, 52px); line-height: 1; }
 .center .sub { font-family: var(--f-mono); font-weight: 700; font-size: clamp(20px, 3vw, 30px); text-transform: none; }
@@ -384,6 +411,7 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
   .netbox { top: calc(66px + env(safe-area-inset-top, 0px)); width: 170px; right: 10px; }
   .netbox .r { font-size: 13px; padding: 1px 8px; }
   .timer { min-width: 0; padding: 4px 10px; }
+  .mirror { width: 40vw; }
   .timer .t { font-size: 24px; }
   .stagebar .nm { font-size: 15px; }
   .notes { top: calc(76px + env(safe-area-inset-top, 0px)); }
@@ -403,6 +431,13 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
   .g-head h3 { font-size: 30px; }
   .notes { top: calc(80px + env(safe-area-inset-top, 0px)); }
   .logo { font-size: 36px; }
+  .mirror { width: 200px; } /* between the stage bar and the touch pause and lights buttons */
+}
+@media (max-width: 760px) and (max-height: 520px) {
+  /* small landscape phones: the timer (and the mirror over it) take the right-hand column, so the touch pause and
+     lights buttons go just left of it */
+  #touchPause { left: auto; right: 280px; }
+  #touchLights { left: auto; right: 228px; }
 }
 @media (max-width: 560px) {
   #gauge { width: 118px; height: 118px; top: calc(104px + env(safe-area-inset-top, 0px)); bottom: auto; right: 10px; }
@@ -413,6 +448,13 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
   .hint { bottom: calc(100px + env(safe-area-inset-bottom, 0px)); font-size: 13px; }
   .netbox { top: calc(340px + env(safe-area-inset-top, 0px)); width: 150px; } /* under the touch pause and lights buttons */
   .center { top: 40%; }
+  #app:has(#hMirror:not([hidden])) .center { top: 44%; }
+  /* the mirror over the timer pushes the right-hand stack down by its height */
+  .mirror { width: 150px; }
+  #app:has(#hMirror:not([hidden])) #gauge { top: calc(160px + env(safe-area-inset-top, 0px)); }
+  #app:has(#hMirror:not([hidden])) #touchPause { top: calc(288px + env(safe-area-inset-top, 0px)); }
+  #app:has(#hMirror:not([hidden])) #touchLights { top: calc(340px + env(safe-area-inset-top, 0px)); }
+  #app:has(#hMirror:not([hidden])) .netbox { top: calc(396px + env(safe-area-inset-top, 0px)); }
 }
 @media (prefers-reduced-motion: reduce) { .pop, #loading p::after, .note, .medal, .card, .car-row.bonus, .car-row.bonus::after, .car-row.bonus .spark { animation: none; } .go, .row, .tab, .switch, .switch::after { transition: none; } }
 </style>
@@ -428,10 +470,14 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
         <div class="nm"><span id="hStage">Pine Ridge</span><em id="hSurf">Gravel</em></div>
         <div class="prog" id="hProgBar"><i id="hProg"></i><b id="hS1"></b><b id="hS2"></b><em id="hRival" title="Rival"></em><em id="hPB" class="pb" title="Your best" hidden></em><em id="hChal" class="ch" title="Challenge" hidden></em><em id="hLead" class="ld" title="No. 1" hidden></em></div>
       </div>
-      <div class="timer"><div class="t" id="hTime">0:00.00</div><div class="d" id="hDelta"></div></div>
+      <div class="hcenter">
+        <div class="mirror" id="hMirror" hidden></div>
+        <div class="timer"><div class="t" id="hTime">0:00.00</div><div class="d" id="hDelta"></div></div>
+      </div>
       <canvas id="minimap" width="300" height="300"></canvas>
     </div>
     <div class="netbox" id="hNet" hidden></div>
+    <div class="netboard" id="netBoard" hidden></div>
     <div class="notes" id="notes"></div>
     <div class="center" id="centerMsg"></div>
     <canvas id="gauge" width="440" height="440"></canvas>
@@ -521,6 +567,7 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
         <button class="opt" id="optShadows" aria-pressed="true"><b>Shadows</b><span class="switch"></span><small>From the sun, the trees and the car</small></button>
         <button class="opt" id="optPost" aria-pressed="true"><b>Glow and colour grading</b><span class="switch"></span><small>Bloom around bright light and film-style colour</small></button>
         <button class="opt" id="optRays" aria-pressed="true"><b>Sun rays</b><span class="switch"></span><small>Light shafts when you drive towards the sun</small></button>
+        <div class="gfx-row"><b>Rear-view mirror</b><div class="seg seg3" id="optMirror"><button data-v="net" aria-pressed="true">Online races</button><button data-v="on" aria-pressed="false">Always</button><button data-v="off" aria-pressed="false">Off</button></div></div>
         <button class="opt" id="optFps" aria-pressed="false"><b>Show frame rate</b><span class="switch"></span><small>Frames per second and the size the game draws at, top of the screen</small></button>
         <p class="label group-label">Controls</p>
         <div class="keys">
@@ -531,6 +578,8 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
           <span><kbd>E</kbd><kbd>Q</kbd></span><span>Shift up / down (manual)</span>
           <span><kbd>C</kbd></span><span>Change camera</span>
           <span><kbd>L</kbd></span><span>Headlights on / off</span>
+          <span><kbd>B</kbd></span><span>Rear-view mirror on / off</span>
+          <span><kbd>Tab</kbd></span><span>Hold: drivers and ping (online)</span>
           <span><kbd>R</kbd></span><span>Back on the road</span>
           <span><kbd>Esc</kbd></span><span>Pause</span>
         </div>
@@ -563,6 +612,7 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
         <button class="opt" id="pGhost" aria-pressed="true"><b>Ghost cars</b><span class="switch"></span></button>
         <button class="opt" id="pLead" aria-pressed="false"><b>No. 1 ghost</b><span class="switch"></span></button>
         <button class="opt" id="pLights" aria-pressed="false"><b>Headlights</b><span class="switch"></span><small><kbd>L</kbd> switches them in a run</small></button>
+        <div class="pause-gfx"><b>Rear-view mirror <kbd>B</kbd></b><div class="seg seg3" id="pMirror"><button data-v="net" aria-pressed="true">Online races</button><button data-v="on" aria-pressed="false">Always</button><button data-v="off" aria-pressed="false">Off</button></div></div>
         <div class="pause-gfx"><b>Graphics</b><div class="seg seg5" id="pGfx"><button data-v="auto" aria-pressed="true">Auto</button><button data-v="min" aria-pressed="false">Minimum</button><button data-v="perf" aria-pressed="false">Performance</button><button data-v="bal" aria-pressed="false">Balanced</button><button data-v="qual" aria-pressed="false">Quality</button></div></div>
       </div>
       <div class="actions">

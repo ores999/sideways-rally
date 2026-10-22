@@ -22,7 +22,7 @@ const store = {
   set(k, v) { try { localStorage.setItem('sideways.' + k, JSON.stringify(v)); return true; } catch (e) { return false; } },
   del(k) { try { localStorage.removeItem('sideways.' + k); } catch (e) { /* storage unavailable */ } },
 };
-const settings = Object.assign({ voice: false, sound: true, ghost: false, leadGhost: false, gfx: 'auto', fps: false, cam: 0, stage: 0, car: 0, gearbox: 'auto', rev: false, cond: 'day', name: '' }, store.get('settings', {}));
+const settings = Object.assign({ voice: false, sound: true, ghost: false, leadGhost: false, gfx: 'auto', fps: false, mirror: 'net', cam: 0, stage: 0, car: 0, gearbox: 'auto', rev: false, cond: 'day', name: '' }, store.get('settings', {}));
 if (settings.stage !== 'daily') settings.stage = clamp(settings.stage | 0, 0, C.STAGES.length - 1);
 settings.car = clamp(settings.car | 0, 0, C.CARS.length - 1);
 if (!C.CONDS.includes(settings.cond)) settings.cond = 'day';
@@ -153,6 +153,18 @@ function setLights(on, quiet) {
   if (!quiet) { sfx.click && sfx.click(); $('camTag').textContent = 'Lights · ' + (lightsOn ? 'on' : 'off') + ' (L)'; camTagT = 2; }
 }
 const toggleLights = () => { if (mode === 'race' || mode === 'countdown' || mode === 'done' || mode === 'paused') setLights(!lightsOn); };
+// the rear-view mirror: online races (the default), always or off, in Options and the pause menu; B in a run turns it on
+// or off for this kind of run
+const mirWanted = () => settings.mirror === 'on' || (settings.mirror === 'net' && netRun());
+function setMirror(v) {
+  settings.mirror = v; saveSettings();
+  for (const id of ['optMirror', 'pMirror']) for (const b of $(id).children) b.setAttribute('aria-pressed', String(b.dataset.v === v));
+}
+for (const id of ['optMirror', 'pMirror']) for (const b of $(id).children) b.addEventListener('click', () => setMirror(b.dataset.v));
+function toggleMirror() {
+  setMirror(mirWanted() ? 'off' : netRun() ? 'net' : 'on');
+  sfx.click && sfx.click(); $('camTag').textContent = 'Mirror · ' + (mirWanted() ? 'on' : 'off') + ' (B)'; camTagT = 2;
+}
 const prev = { x: 0, y: 0, z: 0, h: 0 };
 const evt = { hit: 0, land: 0, shift: false, down: false, kind: '', x: 0, z: 0, nx: 0, nz: 0, front: true };
 let input = { steer: 0, thr: 0, brk: 0, hb: false, analog: false };
@@ -1145,7 +1157,8 @@ const sess = {
 const netId = sess.get('netId') || (() => { const v = Math.random().toString(36).slice(2, 10).padEnd(8, '0'); sess.set('netId', v); return v; })();
 const net = { ch: null, code: '', status: 'off', peers: new Map(), bye: new Map(), room: null, off: 0, rtt: 1e9, clk: [], race: null, ld: new Map(), loadT: 0, noState: 0,
   hostGone: 0, sentRoom: 0, models: new Map(), pending: '', prog: new Map(), j: 0, pause: false, waitN: '', hudT: 0, preT: 0, tk: 0, warned: false, rx: {}, drops: 0,
-  p2p: NET.p2p && !window.__noP2P, trace: null }; // __noP2P: tests that want everything through the server
+  p2p: NET.p2p && !window.__noP2P, trace: null, // __noP2P: tests that want everything through the server
+  sv: new Map(), boardTap: false, boardT: 0 }; // sv: each driver's round trip to the server (it comes with their samples)
 const inRoom = () => !!net.ch;
 const isHost = () => !!(net.room && net.room.h === netId);
 const netRun = () => !!(net.race && net.race.inRun);
@@ -1529,7 +1542,8 @@ function netSample() {
   else if (s[11] & 256) nr.cutB = true; // a gear change in a sample left out: the next one carries it
   if (go) { nr.cred -= 1; netSend(); }
 }
-function netSend() { const nr = net.race; net.ch.send('st', { f: netId, r: nr.id, p: nr.buf }); nr.buf = []; }
+// sv: your round trip to the server, for the others' room table (a pair that talks through the server is both trips apart)
+function netSend() { const nr = net.race; net.ch.send('st', { f: netId, r: nr.id, p: nr.buf, sv: Math.round(net.ch.srv) || undefined }); nr.buf = []; }
 // ---- the cars hit each other ----
 // a ghost touches nothing: on the grid, paused, finished, retired and for a moment after a reset (R)
 function netGhost() { const nr = net.race; return !nr || mode !== 'race' || net.pause || !!nr.fin[netId] || car.ghostT > 0; }
@@ -1592,6 +1606,7 @@ function netState(p) {
   if (!Array.isArray(p.p) || !p.p.length) return;
   const last = p.p[p.p.length - 1];
   if (Array.isArray(last) && isFinite(last[7])) net.prog.set(p.f, { r: p.r, s: +last[7] });
+  if (typeof p.sv === 'number' && p.sv > 0 && p.sv < 5000) net.sv.set(p.f, p.sv);
   const nr = net.race; if (!nr || p.r !== nr.id) return;
   const o = nr.others.get(p.f); if (!o) return;
   const list = [];
@@ -1615,7 +1630,7 @@ function netUpdate(dt) {
   const tr = net.trace && [nowMs(), vis.x, vis.z, []];
   if (tr) net.trace.push(tr);
   for (const o of nr.others.values()) {
-    o.vis = false;
+    o.vis = o.visM = false;
     if (!o.hist.length) continue;
     const p = netPose(o, wt - STEP, o.pose); // as your car: a physics step back
     // the correction eases out over ~0.2 s, quicker when it's next to your car (what you see is what you hit)
@@ -1633,12 +1648,14 @@ function netUpdate(dt) {
     // solid however close it gets, unless the camera is in its body
     const gh = mode === 'race' && ((p.fl & 512) || net.pause || car.ghostT > 0);
     const near = gh || o.thru ? clamp((dc - 3.5) / 6, 0, 1) : clamp((camGap(o, p) - 0.25) / 0.65, 0, 1);
-    o.alpha = near * (gh ? 0.5 : 1) * (o.thru && dm < 5.5 ? 0.35 + 0.65 * clamp((dm - 2.5) / 3, 0, 1) : 1);
+    o.alphaM = (gh ? 0.5 : 1) * (o.thru && dm < 5.5 ? 0.35 + 0.65 * clamp((dm - 2.5) / 3, 0, 1) : 1); // in the mirror
+    o.alpha = near * o.alphaM;
     o.dc = dc;
     const wr = (p.vx * Math.sin(p.h) + p.vz * Math.cos(p.h)) / 0.335, wa = Math.abs(wr);
     o.spin += Math.sign(wr) * (wa < 15 ? wa : 15 + (wa - 15) * 0.25) * dt;
     M4.trs(o.mat, p.x, p.y, p.z, p.h, p.pitch, p.roll, 1);
     o.vis = o.alpha > 0.01 && dc < 900;
+    o.visM = dc < 900;
   }
 }
 // how far the camera is from the outside of a driver's body (its contact box up to roof height; 0 inside it)
@@ -1663,11 +1680,12 @@ function netDepth() {
   if (!netRun()) return;
   for (const o of net.race.others.values()) if (o.vis && o.alpha > 0.5 && Math.hypot(o.pose.x - vis.x, o.pose.z - vis.z) < 90) R.drawDepth(o.model.body, o.mat);
 }
-function netDrawOpaque(E) {
+// mir: drawn in the rear-view mirror (o.alphaM: it doesn't fade as the screen's camera nears it)
+function netDrawOpaque(E, mir) {
   if (!netRun()) return;
   const dcol = (DIRT[W.st.id] || DIRT[W.st.kind]).col;
   for (const o of net.race.others.values()) {
-    if (!o.vis || o.alpha < 0.99) continue;
+    if (!(mir ? o.visM : o.vis) || (mir ? o.alphaM : o.alpha) < 0.99) continue;
     const m = o.model, y = o.pose.y, lit = o.pose.fl & 2, brk = o.pose.fl & 1;
     R.drawLit(m.body, { model: o.mat, mode: 5, tex: m.tex, dirt: dirt * 0.8, carY: y, dirtCol: dcol });
     if (o.dc < 180) {
@@ -1680,26 +1698,26 @@ function netDrawOpaque(E) {
   }
 }
 // in the transparent pass with the polygon offset of the contact shadows already set
-function netContact(E) {
+function netContact(E, mir) {
   if (!netRun() || !csMesh) return;
   for (const o of net.race.others.values()) {
-    if (!o.vis || o.dc > 120) continue;
+    if (!(mir ? o.visM : o.vis) || o.dc > 120) continue;
     const gy = netGround(o), hgt = Math.max(0, o.pose.y - 0.02 - gy);
-    const ca = clamp(1 - hgt / 2.2, 0, 1) * (E.night ? 0.42 : E.overcast ? 0.7 : 0.55) * o.alpha;
+    const ca = clamp(1 - hgt / 2.2, 0, 1) * (E.night ? 0.42 : E.overcast ? 0.7 : 0.55) * (mir ? o.alphaM : o.alpha);
     if (ca <= 0.01) continue;
     M4.trs(netSh, o.pose.x, gy + 0.03, o.pose.z, o.pose.h, o.pose.pitch, o.pose.roll, 1 + Math.min(hgt, 2) * 0.12);
     R.drawLit(csMesh, { model: netSh, mode: 6, tex: csTex, alpha: ca });
   }
 }
-function netDrawTransparent(E) {
+function netDrawTransparent(E, mir) {
   if (!netRun()) return;
   let lit = false;
   for (const o of net.race.others.values()) {
-    if (!o.vis) continue;
+    if (!(mir ? o.visM : o.vis)) continue;
     if (!lit) { R.setLitFrame(E); lit = true; }
-    const m = o.model;
-    if (o.alpha >= 0.99) { if (m.glass && o.dc < 180) R.drawLit(m.glass, { model: o.mat, alpha: 0.8 }); if (m.lens && o.dc < 120) R.drawLit(m.lens, { model: o.mat, alpha: 0.18 }); }
-    else R.drawLit(m.body, { model: o.mat, alpha: o.alpha, mode: 5, tex: m.tex });
+    const m = o.model, a = mir ? o.alphaM : o.alpha;
+    if (a >= 0.99) { if (m.glass && o.dc < 180) R.drawLit(m.glass, { model: o.mat, alpha: 0.8 }); if (m.lens && o.dc < 120) R.drawLit(m.lens, { model: o.mat, alpha: 0.18 }); }
+    else R.drawLit(m.body, { model: o.mat, alpha: a, mode: 5, tex: m.tex });
   }
 }
 // name tags over the others' cars (like the No. 1 ghost's)
@@ -1774,7 +1792,47 @@ function netHUD(dt) {
     box.append(r);
   });
   if (nr.done) box.append(el('div', 'foot', 'Race over'));
-  else if (nr.close) { const s = Math.max(0, Math.ceil((nr.close - nowMs()) / 1000)); box.append(el('div', 'foot', `Closes in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`)); }
+  else if (nr.close) box.append(el('div', 'foot', netClosesIn()));
+  else if (mode === 'countdown') box.append(el('div', 'foot', isTouch ? 'Tap for the table' : 'Hold Tab for the table'));
+}
+function netClosesIn() { const s = Math.max(0, Math.ceil((net.race.close - nowMs()) / 1000)); return `Closes in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
+// ---- the room table: held on Tab (d-pad down on a pad; a tap on the standings on a touch screen) in a race ----
+// every driver with their place, gap, room points and ping: the round trip of the direct link between your browsers,
+// or through the server (your trip to it plus theirs, which comes with their samples)
+let padBoard = false;
+function netBoard(dt) {
+  const box = $('netBoard');
+  if (!netRun()) net.boardTap = false;
+  if (!(netRun() && !$('hud').hidden && (keys.Tab || padBoard || net.boardTap))) { if (!box.hidden) box.hidden = true; return; }
+  if (!box.hidden && (net.boardT -= dt) > 0) return;
+  net.boardT = 0.25; box.hidden = false; box.textContent = '';
+  const room = net.room, nr = net.race, head = el('div', 'nb-head');
+  head.append(el('b', null, `Room ${net.code}`), el('span', null, C.stageTitle(W.st)));
+  if (nr.done || nr.close) head.append(el('span', 'nb-st', nr.done ? 'Race over' : netClosesIn()));
+  const tb = el('table', 'tt nb'), hr = el('tr');
+  for (const h of ['', '', 'Driver', 'Gap', 'Pts', 'Ping']) hr.append(el('th', null, h));
+  tb.append(hr);
+  netRows().forEach((x, k) => {
+    const tr = el('tr', (x.me ? 'you' : '') + (x.out ? ' out' : '')), dot = el('td', 'dot'), di = el('i'), nm = el('td', 'nm', x.n);
+    di.style.background = x.col; dot.append(di);
+    if (room && x.i === room.h) nm.append(el('span', 'tag host', 'host'));
+    if (x.me) nm.append(el('span', 'tag', 'you'));
+    nm.append(el('small', null, shortCar(x.c)));
+    const pe = room && room.pts[x.i];
+    tr.append(el('td', null, x.out ? '–' : String(k + 1)), dot, nm, el('td', null, x.txt), el('td', null, String(pe ? pe.p : 0)), netPingCell(x));
+    tb.append(tr);
+  });
+  box.append(head, tb, el('div', 'nb-foot', 'Ping: the round trip to each driver, straight between your browsers (direct) or through the room server. Your own row is your trip to the server.'));
+}
+function netPingCell(x) {
+  const td = el('td', 'ping'), ch = net.ch;
+  if (x.gone || !ch) return td;
+  let ms = 0, via = 'server';
+  if (x.me) ms = ch.srv;
+  else if (ch.linked(x.i)) { ms = ch.rtt(x.i); via = 'direct'; }
+  else if (ch.srv && net.sv.has(x.i)) ms = ch.srv + net.sv.get(x.i);
+  td.append(el('b', ms ? (ms < 60 ? 'good' : ms < 130 ? 'ok' : 'bad') : '', ms ? `${Math.max(1, Math.round(ms))} ms` : '…'), el('small', null, via));
+  return td;
 }
 function renderNetResults() {
   const nr = net.race; if (!nr || !W) return;
@@ -2042,6 +2100,9 @@ $('rNext').addEventListener('click', nextStage);
 $('rMenu').addEventListener('click', toMenu);
 $('touchPause').addEventListener('click', togglePause);
 $('touchLights').addEventListener('click', toggleLights);
+// on a touch screen the standings open and close the room table
+$('hNet').addEventListener('click', () => { net.boardTap = !net.boardTap; net.boardT = 0; });
+$('netBoard').addEventListener('click', () => { net.boardTap = false; });
 $('pLights').addEventListener('click', toggleLights);
 document.addEventListener('visibilitychange', () => { if (document.hidden && (mode === 'race' || mode === 'countdown') && !net.pause) togglePause(); if (A.ctx) { if (document.hidden) A.ctx.suspend(); else A.ctx.resume(); } });
 
@@ -2073,7 +2134,7 @@ addEventListener('keydown', e => {
   if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
   if (!$('welcome').hidden) return;
   const k = e.code;
-  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(k) && mode !== 'menu') e.preventDefault();
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab'].includes(k) && mode !== 'menu') e.preventDefault();
   if (k === 'Space' && mode === 'menu' && document.activeElement && document.activeElement.tagName === 'BUTTON') return;
   const first = !keys[k]; keys[k] = true;
   if (!first) return;
@@ -2084,6 +2145,7 @@ addEventListener('keydown', e => {
   else if ((k === 'KeyQ' || k === 'ControlLeft' || k === 'ControlRight') && mode === 'race') pendDown++;
   else if (k === 'KeyM') { settings.sound = !settings.sound; saveSettings(); updateToggles(); }
   else if (k === 'KeyL') toggleLights();
+  else if (k === 'KeyB' && mode !== 'menu') toggleMirror();
   else if (k === 'Enter') {
     if (mode === 'menu') { e.preventDefault(); menuGo(); }
     else if (resultsShown && !$('results').hidden) { e.preventDefault(); retry(); }
@@ -2108,6 +2170,7 @@ function readInput() {
   if (keys.ArrowDown || keys.KeyS || touch.brake) brk = 1;
   if (keys.Space || touch.hb) hb = true;
   let pads = [];
+  padBoard = false;
   try { pads = navigator.getGamepads ? navigator.getGamepads() : []; } catch (e) { pads = []; }
   for (const p of pads) {
     if (!p || !p.connected) continue;
@@ -2121,6 +2184,7 @@ function readInput() {
     if (edge(3) && mode !== 'menu') { settings.cam = (settings.cam + 1) % 4; saveSettings(); showCamTag(); }
     if (edge(8)) manualReset();
     if (edge(12)) toggleLights();
+    padBoard = bv(13) > 0.5; // d-pad down, held: the room table
     if (edge(5) && mode === 'race') pendUp++;
     if (edge(4) && mode === 'race') pendDown++;
     break;
@@ -3743,7 +3807,8 @@ function updateHUD(dt) {
     else { const rt = chal ? chal.t : rival.time, d = finishT - rt; dEl.className = 'd ' + (d <= 0 ? 'ahead' : 'behind'); dEl.innerHTML = `<small>${chal ? 'vs ' + escapeHTML(chal.n) : 'vs rival'}</small>${fmtD(d)}`; }
   }
   updateNoteCards();
-  netHUD(dt);
+  netHUD(dt); netBoard(dt);
+  const ms = mirShown(); if ($('hMirror').hidden === ms) { $('hMirror').hidden = !ms; mirBox.t = 0; }
   drawMinimap(); drawGauge();
   if (centerT > 0) { centerT -= dt; if (centerT <= 0) $('centerMsg').innerHTML = ''; }
   if (camTagT > 0) { camTagT -= dt; $('camTag').style.opacity = clamp(camTagT, 0, 1); }
@@ -3979,11 +4044,33 @@ function render() {
   gl.clearColor(E.fogCol[0], E.fogCol[1], E.fogCol[2], 1);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND);
+  const leadPos = drawWorld(E, G, false);
+  placeLeadTag($('hud').hidden ? null : leadPos);
+  // light shafts: where the sun sits on screen, faded out as it leaves the view or goes behind the camera
+  let rays = null;
+  if (E.V.rays && G.rays) {
+    const vp = R.env.vp, sd = E.sunDir, px = cam.pos[0] + sd[0] * 1000, py = cam.pos[1] + sd[1] * 1000, pz = cam.pos[2] + sd[2] * 1000;
+    const cw = vp[3] * px + vp[7] * py + vp[11] * pz + vp[15];
+    if (cw > 0) {
+      const nx = (vp[0] * px + vp[4] * py + vp[8] * pz + vp[12]) / cw, ny = (vp[1] * px + vp[5] * py + vp[9] * pz + vp[13]) / cw;
+      const k = E.V.rays * clamp(1 - (Math.max(Math.abs(nx), Math.abs(ny)) - 1) / 0.7, 0, 1);
+      const sc = E.sunCol, m = Math.max(sc[0], sc[1], sc[2]) || 1;
+      if (k > 0) rays = { uv: [nx * 0.5 + 0.5, ny * 0.5 + 0.5], col: [sc[0] / m * k, sc[1] / m * k, sc[2] / m * k] };
+    }
+  }
+  R.endScene(E.grade, time, cam.blur, rays);
+  placeNetTags();
+  if (mirShown()) renderMirror(E, G);
+}
+// the scene into the target that's bound, seen from R.env's camera: the screen's, or (mir) the rear-view mirror's,
+// which leaves out your own car (the mirror sits in it), grass, the crowd, dust and rain. Returns where the No. 1
+// ghost was drawn (for its name tag)
+function drawWorld(E, G, mir) {
   R.setLitFrame(E);
   for (const { m, o } of S.meshes) {
-    if (!G.scenery) { // bare scenery: no grass or crowd, trees as their last (far) level everywhere
+    if (!G.scenery || mir) { // no grass or crowd (bare scenery, or the mirror); bare scenery has trees as their last (far) level everywhere
       if (o.mode === 7 || m === S.fanMesh) continue;
-      if (m.lods) { R.drawLit(m.lods[m.lods.length - 1].m, o); continue; }
+      if (m.lods && !G.scenery) { R.drawLit(m.lods[m.lods.length - 1].m, o); continue; }
     }
     if (o.farFog) { R.drawLit(m, { mode: 0, fog: [380, 3200], fogRestore: E.fog, fogLo: [E.fog[0], E.fog[1], W.st.kind === 'mesa' ? 100 : 110, (S.farY || 0) - 30] }); continue; }
     if (m === S.road) { gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -2); R.drawLit(m, o); gl.disable(gl.POLYGON_OFFSET_FILL); continue; }
@@ -3992,23 +4079,25 @@ function render() {
   }
   // car
   const dcol = (DIRT[W.st.id] || DIRT[W.st.kind]).col, baseY = vis.y + susp.heave;
-  R.drawLit(carModel.body, { model: carMat, mode: 5, tex: carModel.tex, dirt, carY: baseY, dirtCol: dcol });
-  if (carModel.spk) { M4.trs(spkT, 0, 0, -spkPump(), 0, 0, 0, 1); M4.mul(spkM, carMat, spkT); R.drawLit(carModel.spk, { model: spkM, dirt: dirt * 0.4, carY: baseY, dirtCol: dcol }); }
-  for (let i = 0; i < 4; i++) R.drawLit(wheelMesh(carModel, i), { model: wheelMatrix(i), mode: 11, tex: carModel.tyreTex, dirt: dirt * 0.9, carY: baseY, dirtCol: dcol });
-  for (let i = 0; i < 4; i++) R.drawLit(carModel.caliper, { model: wheelMatrix(i, true), dirt: dirt * 0.6, carY: baseY, dirtCol: dcol });
-  if (!(settings.cam === 2 && (mode === 'race' || mode === 'countdown'))) R.drawLit(carModel.lightF, { model: carMat, mode: 4, tint: lightsOn ? (E.night ? [2.6, 2.6, 2.6] : [1.9, 1.9, 1.9]) : [0.3, 0.3, 0.3] });
-  if (flameT > 0) R.drawLit(carModel.flame, { model: carMat, mode: 4, tint: [2.6 + Math.random(), 1.6 + Math.random() * 0.6, 0.9] });
-  const braking = (mode === 'race' && input.brk > 0.1) || mode === 'done' || (mode === 'race' && input.hb);
-  // the F1's only lamp is its rain light: on in the rain and at night, not a brake light
-  const rainL = carModel.shape.kind === 'f1' ? (W.st.cond === 'rain' || E.night ? [2.6, 2.6, 2.6] : [0.2, 0.2, 0.2]) : null;
-  R.drawLit(carModel.lightR, { model: carMat, mode: 4, tint: rainL || (braking ? [3.2, 3.2, 3.2] : lightsOn ? [0.85, 0.85, 0.85] : [0.55, 0.55, 0.55]) });
-  netDrawOpaque(E);
+  if (!mir) {
+    R.drawLit(carModel.body, { model: carMat, mode: 5, tex: carModel.tex, dirt, carY: baseY, dirtCol: dcol });
+    if (carModel.spk) { M4.trs(spkT, 0, 0, -spkPump(), 0, 0, 0, 1); M4.mul(spkM, carMat, spkT); R.drawLit(carModel.spk, { model: spkM, dirt: dirt * 0.4, carY: baseY, dirtCol: dcol }); }
+    for (let i = 0; i < 4; i++) R.drawLit(wheelMesh(carModel, i), { model: wheelMatrix(i), mode: 11, tex: carModel.tyreTex, dirt: dirt * 0.9, carY: baseY, dirtCol: dcol });
+    for (let i = 0; i < 4; i++) R.drawLit(carModel.caliper, { model: wheelMatrix(i, true), dirt: dirt * 0.6, carY: baseY, dirtCol: dcol });
+    if (!(settings.cam === 2 && (mode === 'race' || mode === 'countdown'))) R.drawLit(carModel.lightF, { model: carMat, mode: 4, tint: lightsOn ? (E.night ? [2.6, 2.6, 2.6] : [1.9, 1.9, 1.9]) : [0.3, 0.3, 0.3] });
+    if (flameT > 0) R.drawLit(carModel.flame, { model: carMat, mode: 4, tint: [2.6 + Math.random(), 1.6 + Math.random() * 0.6, 0.9] });
+    const braking = (mode === 'race' && input.brk > 0.1) || mode === 'done' || (mode === 'race' && input.hb);
+    // the F1's only lamp is its rain light: on in the rain and at night, not a brake light
+    const rainL = carModel.shape.kind === 'f1' ? (W.st.cond === 'rain' || E.night ? [2.6, 2.6, 2.6] : [0.2, 0.2, 0.2]) : null;
+    R.drawLit(carModel.lightR, { model: carMat, mode: 4, tint: rainL || (braking ? [3.2, 3.2, 3.2] : lightsOn ? [0.85, 0.85, 0.85] : [0.55, 0.55, 0.55]) });
+  }
+  netDrawOpaque(E, mir);
   R.drawSky(E); // after opaque geometry: covered pixels fail the depth test and skip the sky shader
   // transparent pass
   gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
   gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-2, -4);
   // contact shadow: grounds the car, spreads and fades as it leaves the ground
-  if (csMesh) {
+  if (csMesh && !mir) {
     const hgt = Math.max(0, vis.y - vis.gy);
     const ca = clamp(1 - hgt / 2.2, 0, 1) * (E.night ? 0.42 : E.overcast ? 0.7 : 0.55);
     if (ca > 0.01) {
@@ -4017,12 +4106,12 @@ function render() {
       R.drawLit(csMesh, { model: shadowM, mode: 6, tex: csTex, alpha: ca });
     }
   }
-  if (netRun()) { gl.polygonOffset(-3, -6); netContact(E); }
+  if (netRun()) { gl.polygonOffset(-3, -6); netContact(E, mir); }
   // tinted glass over the interior (the bonnet camera sits in front of it); a little dirt film from the body's level
-  if (carModel.glass) { gl.disable(gl.POLYGON_OFFSET_FILL); R.drawLit(carModel.glass, { model: carMat, alpha: 0.8, dirt: dirt * 0.5, carY: baseY, dirtCol: dcol }); if (carModel.lens) R.drawLit(carModel.lens, { model: carMat, alpha: 0.18 }); gl.enable(gl.POLYGON_OFFSET_FILL); }
+  if (carModel.glass && !mir) { gl.disable(gl.POLYGON_OFFSET_FILL); R.drawLit(carModel.glass, { model: carMat, alpha: 0.8, dirt: dirt * 0.5, carY: baseY, dirtCol: dcol }); if (carModel.lens) R.drawLit(carModel.lens, { model: carMat, alpha: 0.18 }); gl.enable(gl.POLYGON_OFFSET_FILL); }
   // wheel motion blur, fading in with wheel speed
   const wb = clamp((Math.abs(car.vF) / 0.335 - 9) / 22, 0, 0.85);
-  if (wb > 0.02) { gl.disable(gl.POLYGON_OFFSET_FILL); for (let i = 0; i < 4; i++) R.drawLit(i < 2 || !carModel.wheelBlurR ? carModel.wheelBlur : carModel.wheelBlurR, { model: wheelMatrix(i), alpha: wb }); gl.enable(gl.POLYGON_OFFSET_FILL); }
+  if (wb > 0.02 && !mir) { gl.disable(gl.POLYGON_OFFSET_FILL); for (let i = 0; i < 4; i++) R.drawLit(i < 2 || !carModel.wheelBlurR ? carModel.wheelBlur : carModel.wheelBlurR, { model: wheelMatrix(i), alpha: wb }); gl.enable(gl.POLYGON_OFFSET_FILL); }
   gl.polygonOffset(-2, -4);
   gl.blendFunc(gl.DST_COLOR, gl.ZERO);
   R.drawTrail(skid, E, mixLight(E), Math.min(skTotal, SK) * SKV);
@@ -4033,7 +4122,7 @@ function render() {
     R.setLitFrame(E);
     const drawGhost = (g, tint, amax) => {
       ghostPose(g, raceT, ghostP);
-      const d = Math.hypot(ghostP.x - cam.pos[0], ghostP.z - cam.pos[2]);
+      const d = Math.hypot(ghostP.x - R.env.cam[0], ghostP.z - R.env.cam[2]);
       const a = clamp((d - 3) / 6, 0, 1) * (amax || 0.32);
       if (a <= 0.01) return;
       const gm = M4.trs(M4.create(), ghostP.x, ghostP.y, ghostP.z, ghostP.h, 0, 0, 1);
@@ -4050,27 +4139,54 @@ function render() {
       leadPos = { x: ghostP.x, y: ghostP.y, z: ghostP.z };
     }
   }
-  placeLeadTag($('hud').hidden ? null : leadPos);
-  netDrawTransparent(E);
-  R.drawPoints(dust.pts, E, mixLight(E), 1);
-  R.drawPoints(chips.pts, E, mixLight(E), 0);
-  if (E.snowfall) { gl.blendFunc(gl.SRC_ALPHA, gl.ONE); R.drawPoints(snowPts, E, [0.9, 0.9, 1.0], 0.3); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); }
-  if (E.rain) R.drawLines(rainLn, E, mixLight(E));
-  gl.depthMask(true); gl.disable(gl.BLEND);
-  // light shafts: where the sun sits on screen, faded out as it leaves the view or goes behind the camera
-  let rays = null;
-  if (E.V.rays && G.rays) {
-    const vp = R.env.vp, sd = E.sunDir, px = cam.pos[0] + sd[0] * 1000, py = cam.pos[1] + sd[1] * 1000, pz = cam.pos[2] + sd[2] * 1000;
-    const cw = vp[3] * px + vp[7] * py + vp[11] * pz + vp[15];
-    if (cw > 0) {
-      const nx = (vp[0] * px + vp[4] * py + vp[8] * pz + vp[12]) / cw, ny = (vp[1] * px + vp[5] * py + vp[9] * pz + vp[13]) / cw;
-      const k = E.V.rays * clamp(1 - (Math.max(Math.abs(nx), Math.abs(ny)) - 1) / 0.7, 0, 1);
-      const sc = E.sunCol, m = Math.max(sc[0], sc[1], sc[2]) || 1;
-      if (k > 0) rays = { uv: [nx * 0.5 + 0.5, ny * 0.5 + 0.5], col: [sc[0] / m * k, sc[1] / m * k, sc[2] / m * k] };
-    }
+  netDrawTransparent(E, mir);
+  if (!mir) {
+    R.drawPoints(dust.pts, E, mixLight(E), 1);
+    R.drawPoints(chips.pts, E, mixLight(E), 0);
+    if (E.snowfall) { gl.blendFunc(gl.SRC_ALPHA, gl.ONE); R.drawPoints(snowPts, E, [0.9, 0.9, 1.0], 0.3); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); }
+    if (E.rain) R.drawLines(rainLn, E, mixLight(E));
   }
-  R.endScene(E.grade, time, cam.blur, rays);
-  placeNetTags();
+  gl.depthMask(true); gl.disable(gl.BLEND);
+  return leadPos;
+}
+// ---- the rear-view mirror (top of the screen): online races by default, Options → Always / Off, B in a run ----
+// A camera on the roof of your car looking back (it moves with the body, pitch and roll included), drawn into a small
+// target of its own and from there into the frame the page puts at the top of the HUD (#hMirror)
+const mirShown = () => !!W && mirWanted() && !$('hud').hidden;
+// vertical field of view (°); the frame's inner corner radius (CSS px, as in page.html); how much nearer trees and terrain
+// switch to their simpler levels (a mirror pixel covers about three times the angle of a screen pixel)
+const MIR_FOV = 20, MIR_RAD = 9, MIR_LOD = 3;
+const mirView = M4.create(), mirProj = M4.create(), mirVp = new Float32Array(16), mirIvp = new Float32Array(16);
+const mirBox = { x: 0, y: 0, w: 0, h: 0, rad: 0, t: 0, cw: 0, ch: 0 };
+function mirrorBox() {
+  // where the frame's inside is, in canvas pixels (GL counts y from the bottom): read from the page twice a second
+  // and whenever the canvas changes size, not every frame (that would force a layout)
+  const b = mirBox;
+  if (b.t > performance.now() && b.cw === canvas.width && b.ch === canvas.height) return b;
+  const el = $('hMirror'), r = el.getBoundingClientRect(), k = canvas.width / (canvas.clientWidth || 1);
+  b.w = Math.round(el.clientWidth * k); b.h = Math.round(el.clientHeight * k);
+  b.x = Math.round((r.left + el.clientLeft) * k); b.y = canvas.height - Math.round((r.top + el.clientTop) * k) - b.h;
+  b.rad = MIR_RAD * k; b.t = performance.now() + 500; b.cw = canvas.width; b.ch = canvas.height;
+  return b;
+}
+function renderMirror(E, G) {
+  const b = mirrorBox(); if (b.w < 16 || b.h < 8) return;
+  const m = carMat, at = (x, y, z, w) => [m[0] * x + m[4] * y + m[8] * z + m[12] * w, m[1] * x + m[5] * y + m[9] * z + m[13] * w, m[2] * x + m[6] * y + m[10] * z + m[14] * w];
+  const eye = at(0, 1.3, 0.1, 1), dir = at(0, -0.06, -1, 0);
+  M4.persp(mirProj, MIR_FOV * Math.PI / 180, b.w / b.h, 0.3, 4500);
+  M4.lookAt(mirView, eye, [eye[0] + dir[0], eye[1] + dir[1], eye[2] + dir[2]], at(0, 1, 0, 0));
+  const env = R.env, keep = { cam: env.cam, fov: env.fov };
+  mirVp.set(env.vp); mirIvp.set(env.ivp);
+  M4.mul(env.vp, mirProj, mirView); M4.inv(env.ivp, env.vp); env.cam = eye; env.fov = MIR_FOV * Math.PI / 180; env.lodK = MIR_LOD;
+  if (R.beginMirror(b.w, b.h, 4)) {
+    gl.clearColor(E.fogCol[0], E.fogCol[1], E.fogCol[2], 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND);
+    drawWorld(E, G, true);
+    R.endMirror();
+    R.drawMirror(b.x, b.y, b.w, b.h, b.rad, G.post ? E.grade : null);
+  }
+  env.vp.set(mirVp); env.ivp.set(mirIvp); env.cam = keep.cam; env.fov = keep.fov; env.lodK = 1;
 }
 // the No. 1 ghost's name tag, over the ghost on screen (hidden when it is behind the camera, very close or far off)
 function placeLeadTag(p) {
@@ -4092,7 +4208,7 @@ function mixLight(E) {
 
 // ---------- boot ----------
 keepCarAllowed(curKey());
-renderStageInfo(); renderCarList(); updateToggles(); renderGfx();
+renderStageInfo(); renderCarList(); updateToggles(); renderGfx(); setMirror(settings.mirror);
 setScreen('menu');
 const fontsReady = document.fonts && document.fonts.load ? Promise.race([
   Promise.all([document.fonts.load('800 60px "Big Shoulders Display"'), document.fonts.load('700 40px "Chivo Mono"'), document.fonts.load('600 20px "Barlow Semi Condensed"')]),
