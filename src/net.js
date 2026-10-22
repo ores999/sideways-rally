@@ -22,8 +22,10 @@ function room(cfg) {
   const topic = 'realtime:' + cfg.topic;
   const url = cfg.url.replace(/^http/, 'ws').replace(/\/$/, '') + '/realtime/v1/websocket?apikey=' + encodeURIComponent(cfg.key) + '&vsn=1.0.0';
   let ws = null, ref = 0, joinRef = null, hbT = 0, hbWait = null, retry = 0, retryT = 0, closed = false, meta = cfg.meta;
+  let pgT = 0, pgRef = null, pgAt = 0; // the round trip to the server, timed on a heartbeat of its own every 2 s
   let pres = {}; // presence key -> metas
-  const self = { status: 'connecting', joined: false, tx: {}, lag: 0 }; // tx: broadcasts sent, by event; lag: test hook, ms added to every direct message received
+  // tx: broadcasts sent, by event; lag: test hook, ms added to every direct message received; srv: round trip to the server (ms)
+  const self = { status: 'connecting', joined: false, tx: {}, lag: 0, srv: 0 };
   const status = s => { if (self.status === s) return; self.status = s; if (cfg.onStatus) cfg.onStatus(s); };
   const out = (o) => { if (!ws || ws.readyState !== 1) return false; try { ws.send(JSON.stringify(o)); return true; } catch (e) { return false; } };
   const push = (event, payload) => out({ topic, event, payload, ref: String(++ref), join_ref: joinRef });
@@ -46,11 +48,16 @@ function room(cfg) {
     }
   }
   function handle(m) {
-    if (m.topic === 'phoenix') { if (m.event === 'phx_reply' && m.ref === hbWait) hbWait = null; return; }
+    if (m.topic === 'phoenix') {
+      if (m.event !== 'phx_reply') return;
+      if (m.ref === hbWait) hbWait = null;
+      else if (m.ref === pgRef) { const r = now() - pgAt; pgRef = null; if (r >= 0 && r < 5000) self.srv = self.srv ? self.srv + (r - self.srv) * 0.25 : r; }
+      return;
+    }
     if (m.topic !== topic) return;
     if (m.event === 'phx_reply' && m.ref === joinRef) {
       if (m.payload && m.payload.status === 'ok') {
-        self.joined = true; retry = 0; status('online');
+        self.joined = true; retry = 0; status('online'); srvPing();
         if (meta) push('presence', { type: 'presence', event: 'track', payload: meta });
       } else { status('error'); drop(); }
       return;
@@ -70,6 +77,12 @@ function room(cfg) {
     hbWait = String(++ref);
     out({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: hbWait });
   }
+  // heartbeats aren't broadcasts: they don't count against the project's message quota
+  function srvPing() {
+    if (!self.joined || pgRef) { pgRef = null; return; } // no reply in 2 s: lost, try again next time
+    pgRef = String(++ref); pgAt = now();
+    out({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: pgRef });
+  }
   function open() {
     if (closed) return;
     status(retry ? 'reconnecting' : 'connecting');
@@ -79,12 +92,13 @@ function room(cfg) {
       joinRef = String(++ref); hbWait = null;
       out({ topic, event: 'phx_join', payload: { config: { broadcast: { self: false, ack: false }, presence: { key: cfg.me, enabled: true }, private: false } }, ref: joinRef, join_ref: joinRef });
       clearInterval(hbT); hbT = setInterval(heartbeat, 25000);
+      clearInterval(pgT); pgT = setInterval(srvPing, 2000); pgRef = null;
     };
     ws.onmessage = e => { if (ws !== me) return; let m; try { m = JSON.parse(e.data); } catch (err) { return; } handle(m); };
-    ws.onclose = () => { if (ws !== me) return; ws = null; clearInterval(hbT); self.joined = false; if (!closed) later(); };
+    ws.onclose = () => { if (ws !== me) return; ws = null; clearInterval(hbT); clearInterval(pgT); self.joined = false; if (!closed) later(); };
     ws.onerror = () => {};
   }
-  function drop() { const w = ws; ws = null; clearInterval(hbT); self.joined = false; if (w) { try { w.close(); } catch (e) { /* closed */ } } if (!closed) later(); }
+  function drop() { const w = ws; ws = null; clearInterval(hbT); clearInterval(pgT); self.joined = false; if (w) { try { w.close(); } catch (e) { /* closed */ } } if (!closed) later(); }
   function later() {
     if (closed || retryT) return;
     status('reconnecting'); // presence stays as it was until the server sends it again on the next join
@@ -192,7 +206,7 @@ function room(cfg) {
   self.track = m => { meta = m; if (self.joined) push('presence', { type: 'presence', event: 'track', payload: m }); };
   self.members = members;
   self.leave = () => {
-    if (closed) return; closed = true; clearTimeout(retryT); clearInterval(hbT); clearInterval(lkT);
+    if (closed) return; closed = true; clearTimeout(retryT); clearInterval(hbT); clearInterval(pgT); clearInterval(lkT);
     for (const L of links.values()) shut(L);
     links.clear();
     if (self.joined) push('phx_leave', {});

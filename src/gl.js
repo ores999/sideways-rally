@@ -966,6 +966,25 @@ void main(){
   c += (hash12(gl_FragCoord.xy + fract(u_time) * 61.0) - 0.5) / 255.0;
   o = vec4(clamp(c, 0.0, 1.0), 1.0);
 }`;
+// the rear-view mirror over the screen: its picture flipped left to right (a mirror), the same grade as the screen when
+// post is on (the mirror is drawn without post, so its picture is already tonemapped), darker towards the rim, a faint
+// sheen across the top, and corners rounded to the frame on the page (u_rad, pixels) with an antialiased edge
+const MIRROR_FS = `#version 300 es
+precision highp float;
+in vec2 v_uv; uniform sampler2D u_src; uniform vec2 u_size; uniform float u_rad, u_sat, u_con; uniform vec3 u_lift, u_gain;
+out vec4 o;
+void main(){
+  vec3 c = texture(u_src, vec2(1.0 - v_uv.x, v_uv.y)).rgb;
+  c = c * u_gain + u_lift * (1.0 - c);
+  c = mix(c, c * c * (3.0 - 2.0 * c), u_con);
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = mix(vec3(l), c, u_sat);
+  vec2 q = abs(v_uv * u_size - u_size * 0.5) - (u_size * 0.5 - u_rad);
+  float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - u_rad;
+  c *= 1.0 - 0.22 * smoothstep(-0.18 * u_size.y, 0.0, d);
+  c += 0.03 * smoothstep(0.6, 1.0, v_uv.y);
+  o = vec4(clamp(c, 0.0, 1.0), clamp(0.5 - d, 0.0, 1.0));
+}`;
 
 function createRenderer(canvas) {
   // no antialiasing or depth on the canvas itself: the scene always renders into our own multisampled target (HDR
@@ -1001,6 +1020,7 @@ function createRenderer(canvas) {
     bup: compile(FS_VS, BLOOM_UP_FS),
     comp: compile(FS_VS, COMPOSITE_FS),
     rays: compile(FS_VS, RAYS_FS),
+    mir: compile(FS_VS, MIRROR_FS),
   };
 
   // shadow map
@@ -1119,6 +1139,61 @@ function createRenderer(canvas) {
     { const rw = Math.max(1, w >> 2), rh = Math.max(1, h >> 2), tex = ftex(rw, rh, post.bloomFmt); post.rays = { tex, fbo: fbo(tex), w: rw, h: rh }; }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.bindRenderbuffer(gl.RENDERBUFFER, null);
     if (!okFb) { freePost(); post.ok = false; }
+  }
+  // ---- rear-view mirror: a small RGBA8 target of its own (multisampled, resolved into a texture), drawn without post ----
+  const mir = { ok: true, w: 0, h: 0, samples: 0, on: false, hdr: 0, fbo: null, color: null, depth: null, rFbo: null, tex: null };
+  function buildMirror(w, h, ns) {
+    if (mir.rFbo) { if (mir.fbo !== mir.rFbo) { gl.deleteFramebuffer(mir.fbo); gl.deleteRenderbuffer(mir.color); } gl.deleteFramebuffer(mir.rFbo); gl.deleteRenderbuffer(mir.depth); gl.deleteTexture(mir.tex); }
+    mir.w = w; mir.h = h; mir.samples = ns;
+    mir.tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, mir.tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    mir.rFbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, mir.rFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, mir.tex, 0);
+    mir.fbo = mir.rFbo; mir.color = null;
+    if (ns > 1) {
+      mir.fbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, mir.fbo);
+      mir.color = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, mir.color);
+      gl.renderbufferStorageMultisample(gl.RENDERBUFFER, ns, gl.RGBA8, w, h);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, mir.color);
+    }
+    mir.depth = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, mir.depth);
+    if (ns > 1) gl.renderbufferStorageMultisample(gl.RENDERBUFFER, ns, gl.DEPTH_COMPONENT24, w, h); else gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, w, h);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, mir.depth);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) mir.ok = false;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+  }
+  // bind the mirror's target (w × h pixels); the lit shaders tonemap straight away while it's bound
+  function beginMirror(w, h, samples) {
+    const ns = Math.max(1, Math.min(ldr.maxSamples, samples || 4));
+    if (mir.ok && (mir.w !== w || mir.h !== h || mir.samples !== ns)) buildMirror(w, h, ns);
+    if (!mir.ok) return false;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, mir.fbo); gl.viewport(0, 0, w, h);
+    mir.hdr = env.hdr; env.hdr = 0; mir.on = true;
+    return true;
+  }
+  function endMirror() {
+    if (mir.fbo !== mir.rFbo) {
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, mir.fbo); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, mir.rFbo);
+      gl.blitFramebuffer(0, 0, mir.w, mir.h, 0, 0, mir.w, mir.h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    env.hdr = mir.hdr; mir.on = false;
+  }
+  // onto the screen at (x, y) from the bottom left, w × h pixels, corners of radius rad; G: the grade, or null
+  function drawMirror(x, y, w, h, rad, G) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(x, y, w, h);
+    gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE); gl.depthMask(false);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    const u = prog.mir.u; gl.useProgram(prog.mir.p);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, mir.tex); gl.uniform1i(u.u_src, 0);
+    gl.uniform2f(u.u_size, w, h); gl.uniform1f(u.u_rad, rad);
+    gl.uniform1f(u.u_sat, G ? G.sat : 1); gl.uniform1f(u.u_con, G ? G.con : 0);
+    gl.uniform3fv(u.u_lift, G ? G.lift : [0, 0, 0]); gl.uniform3fv(u.u_gain, G ? G.gain : [1, 1, 1]);
+    fsDraw();
+    gl.disable(gl.BLEND); gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
   }
   // bind the scene target for this frame; returns whether the HDR path is active
   // samples: MSAA wanted for this frame (high-density screens get away with fewer)
@@ -1294,14 +1369,14 @@ function createRenderer(canvas) {
     if (!m.inst && ch.lodDist) {
       // blocks with levels of detail: each visible block picks its level by ground distance from the camera
       // (full detail in passes without a camera); blocks that land next to each other in the index buffer share a draw
-      const ld = ch.lodDist; let rs = 0, re = 0;
+      const ld = ch.lodDist, K = env.lodK || 1; let rs = 0, re = 0;
       for (let k = 0; k < n; k++) {
         const c = ch[k];
         if (cullOn && !boxVisible(c.box, maxD)) continue;
         let L = 0;
         if (cullDistOn) {
           const b = c.box, dx = Math.max(b[0] - cullCam[0], 0, cullCam[0] - b[3]), dz = Math.max(b[2] - cullCam[2], 0, cullCam[2] - b[5]);
-          const d = Math.hypot(dx, dz); L = d > ld[1] ? 2 : d > ld[0] ? 1 : 0;
+          const d = Math.hypot(dx, dz) * K; L = d > ld[1] ? 2 : d > ld[0] ? 1 : 0;
         }
         const r = c.lods[L];
         if (r.first === re && re > rs) re += r.count;
@@ -1314,14 +1389,16 @@ function createRenderer(canvas) {
       // instanced props with simpler versions for distance: m.lods = [{ m, dist, band }, …, { m }], all built from
       // the same instance data so the chunks line up. Each level covers its range plus the dissolve bands on either
       // side (the shader splits the pixels in a band between the two levels). The shadow pass casts with the last,
-      // solid level everywhere (the depth pass has no alpha test).
-      const L = m.lods;
+      // solid level everywhere (the depth pass has no alpha test). env.lodK > 1 brings every change nearer, for a small
+      // view where a pixel covers more (the rear-view mirror)
+      const L = m.lods, K = env.lodK || 1;
       if (!cullDistOn) { const last = L[L.length - 1].m; gl.bindVertexArray(last.vao); instRuns(m, last, maxD, null); return; }
       const u = prog.lit.u.u_lodB;
       for (let i = 0; i < L.length; i++) {
         const a = i ? L[i - 1] : null, b = i < L.length - 1 ? L[i] : null;
-        const lo = a ? a.dist - a.band : -1, hi = b ? b.dist + b.band : Infinity;
-        gl.uniform4f(u, a ? a.dist - a.band : -1e9, a ? a.dist + a.band : -1e9 + 1, b ? b.dist - b.band : 1e9, b ? b.dist + b.band : 1e9 + 1);
+        const aD = a ? a.dist / K : 0, aB = a ? a.band / K : 0, bD = b ? b.dist / K : 0, bB = b ? b.band / K : 0;
+        const lo = a ? aD - aB : -1, hi = b ? bD + bB : Infinity;
+        gl.uniform4f(u, a ? aD - aB : -1e9, a ? aD + aB : -1e9 + 1, b ? bD - bB : 1e9, b ? bD + bB : 1e9 + 1);
         gl.bindVertexArray(L[i].m.vao);
         instRuns(m, L[i].m, maxD, c => groundDistMax(c.box) >= lo && groundDist(c.box) <= hi);
       }
@@ -1473,7 +1550,7 @@ function createRenderer(canvas) {
   }
 
   const I4 = M4.create();
-  const env = { vp: M4.create(), svp: M4.create(), svp2: M4.create(), ivp: M4.create(), cam: [0, 0, 0], exp: 1, hdr: 0, shNo: [0.02, 0.08] };
+  const env = { vp: M4.create(), svp: M4.create(), svp2: M4.create(), ivp: M4.create(), cam: [0, 0, 0], exp: 1, hdr: 0, shNo: [0.02, 0.08], lodK: 1 };
 
   function setLitFrame(E) {
     const u = prog.lit.u;
@@ -1488,7 +1565,7 @@ function createRenderer(canvas) {
     gl.uniform1f(u.u_exp, E.exp);
     gl.uniform1f(u.u_hdr, env.hdr || 0);
     gl.uniform3fv(u.u_zen, E.zen); gl.uniform3fv(u.u_hor, E.fogCol);
-    gl.uniform3fv(u.u_fol, [E.folFade ? E.folFade[0] : 60, E.folFade ? E.folFade[1] : 90, (post.on ? post.samples : ldr.on ? ldr.samples : 0) > 1 ? 1 : 0]);
+    gl.uniform3fv(u.u_fol, [E.folFade ? E.folFade[0] : 60, E.folFade ? E.folFade[1] : 90, (mir.on ? mir.samples : post.on ? post.samples : ldr.on ? ldr.samples : 0) > 1 ? 1 : 0]);
     gl.uniform1f(u.u_time, E.time);
     gl.uniform1f(u.u_shOn, E.shadows ? 1 : 0);
     gl.uniform2f(u.u_shTex, 1 / (2 * SHADOW), 1 / SHADOW);
@@ -1611,7 +1688,7 @@ function createRenderer(canvas) {
     gl.bindVertexArray(Tr.vao); gl.drawArrays(gl.TRIANGLES, 0, count);
   }
   return { gl, env, mesh, disposeMesh, setInstances, texture, textureArray, points, trail, lines, drawLines, disposeAll, setLitFrame, drawLit, drawDepth, beginShadow, endShadow, drawSky, drawPoints, drawTrail, SHADOW,
-    beginScene, endScene, post };
+    beginScene, endScene, post, beginMirror, endMirror, drawMirror };
 }
 
 return { M4, Geo, lin, mixc, scalec, createRenderer };
