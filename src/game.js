@@ -32,8 +32,8 @@ settings.dailyKey = C.dailyKey(); // a new day, a new road
 // graphics: a preset sets every level below; touching one of them makes it 'custom' (settings.g). Everything is
 // applied as it renders, nothing rebuilds the stage. Auto starts at Quality (Balanced on touch screens) and steps
 // down for the session when the lowest resolution still can't hold the frame rate.
-// Measured at 3200x2000 (ms/frame, Pine / Dark Pines / Monaco / Spa): Quality 14.5 / 13.9 / 22.1 / 21.2,
-// Balanced 9.2 / 9.5 / 14.3 / 13.1, Performance 2.4 / 3.9 / 7.1 / 5.2. Resolution is most of it; then the post chain
+// Measured at 3200x2000 (ms/frame, Pine / Dark Pines / Monaco / Spa): Quality 14.0 / 14.2 / 8.3 / 8.0,
+// Balanced 8.4 / 9.6 / 5.5 / 5.2, Performance 2.7 / 3.2 / 2.5 / 2.8. Resolution is most of it; then the post chain
 // and MSAA (~3 ms each at that size), shadows ~1-2.5 ms. Shorter tree and grass distances changed nothing measurable.
 const PRESETS = {
   perf: { res: 0, aa: 0, shadows: false, post: false, rays: false },
