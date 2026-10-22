@@ -57,3 +57,8 @@ alter table public.times add constraint times_car_check check (car in ('foca', '
 -- a request of their own) and the game keeps them on each browser.
 alter table public.times drop constraint if exists times_stage_check;
 alter table public.times add constraint times_stage_check check (stage ~ '^(pine|frost|mesa|forest|city|monaco)(-r)?(-night|-rain)?$' or stage ~ '^daily-[0-9]{8}$' or stage ~ '^monaco(-r)?(-night|-rain)?-lap$');
+
+-- 2026-10 · Spa-Francorchamps (id 'spa'), its endless laps ('spa-lap', …) and the F1 there. Lets its times through the
+-- stage check; run before adding 'spa' to ONLINE_STAGES in game.js (until then the game keeps Spa's times local).
+alter table public.times drop constraint if exists times_stage_check;
+alter table public.times add constraint times_stage_check check (stage ~ '^(pine|frost|mesa|forest|city|monaco|spa)(-r)?(-night|-rain)?$' or stage ~ '^daily-[0-9]{8}$' or stage ~ '^(monaco|spa)(-r)?(-night|-rain)?-lap$');
