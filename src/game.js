@@ -1118,16 +1118,20 @@ $('driverChip').addEventListener('click', () => showWelcome(true));
 // A room is a Supabase Realtime channel (net.js) named after a 4-letter code. Its creator is the host: they pick the
 // stage in their Stage tab (everyone else's Stage tab follows it) and start the races. Everyone drives the same stage at
 // the same moment, each in their own car (the Saveiro stays out), and the others are drawn from what they send: their
-// pose 10 times a second, batched into 2-6 messages a second depending on how many are in the room (Supabase's free
-// plan allows 100 messages a second for the project, and counts each receiver). The cars hit each other (C.carContact:
-// each browser resolves its own car against the others as it sees them, see core.js); a paused, finished or just reset
-// car is a ghost. Each driver's clock decides, and the finishing order gives points (10 8 6 5 4 3) that the room keeps.
+// pose 30 times a second, each sample on its own, over the direct link between the two browsers (net.js), or for a pair
+// that couldn't open one, 10 times a second through the server, batched into 2-10 messages a second depending on how
+// many are in the room (Supabase's free plan allows 100 messages a second for the project, and counts each receiver).
+// The cars hit each other (C.carContact: each browser resolves its own car against the others as it sees them, see
+// core.js); a paused, finished or just reset car is a ghost. Each driver's clock decides, and the finishing order gives
+// points (10 8 6 5 4 3) that the room keeps.
 // The host holds the room's state (stage, phase, race, points) and sends all of it whenever it changes and every few
 // seconds; everyone keeps the latest copy, so if the host goes the next driver in (by join time) carries on with it.
-// Clocks: each browser pings the host and keeps the offset from the quickest round trip, so the start lights go green
-// at the same moment everywhere. Each driver's time is their own, from their own green light. The others are drawn on
-// "wall race time" (wt: seconds since that shared green), which is also what their samples are stamped with.
-const NET_V = 2, ROOM_MAX = 6, PTS = [10, 8, 6, 5, 4, 3], CLOSE_MS = 60000, LOAD_MS = 12000;
+// Clocks: each browser pings the host (over the direct link, four times a second until the green light and once a second
+// after it) and keeps the offset from the quickest of the last 16 round trips, so the start lights go green at the same
+// moment everywhere. Each driver's time is their own, from their own green light. The others are drawn on "wall race
+// time" (wt: seconds since that shared green), which is also what their samples are stamped with; after the green it
+// follows the offset slowly (2 ms a second at most), so two clocks that drift apart over a long race stay in step.
+const NET_V = 3, ROOM_MAX = 6, PTS = [10, 8, 6, 5, 4, 3], CLOSE_MS = 60000, LOAD_MS = 12000;
 const CODE_ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const PCOL = ['#ffd23a', '#5ec8ff', '#ff6b8a', '#8be36f', '#c58bff', '#ff9c48'];
 const nowMs = () => performance.timeOrigin + performance.now();
@@ -1137,17 +1141,19 @@ const sess = {
 };
 // one id per tab: a reload keeps it (and the room), so you come back as the same driver with your points
 const netId = sess.get('netId') || (() => { const v = Math.random().toString(36).slice(2, 10).padEnd(8, '0'); sess.set('netId', v); return v; })();
-const net = { ch: null, code: '', status: 'off', peers: new Map(), bye: new Map(), room: null, off: 0, rtt: 1e9, race: null, ld: new Map(), loadT: 0, noState: 0,
-  hostGone: 0, sentRoom: 0, models: new Map(), pending: '', prog: new Map(), j: 0, pause: false, waitN: '', hudT: 0, preT: 0, tk: 0, warned: false, rx: {}, drops: 0 };
+const net = { ch: null, code: '', status: 'off', peers: new Map(), bye: new Map(), room: null, off: 0, rtt: 1e9, clk: [], race: null, ld: new Map(), loadT: 0, noState: 0,
+  hostGone: 0, sentRoom: 0, models: new Map(), pending: '', prog: new Map(), j: 0, pause: false, waitN: '', hudT: 0, preT: 0, tk: 0, warned: false, rx: {}, drops: 0,
+  p2p: NET.p2p && !window.__noP2P, trace: null }; // __noP2P: tests that want everything through the server
 const inRoom = () => !!net.ch;
 const isHost = () => !!(net.room && net.room.h === netId);
 const netRun = () => !!(net.race && net.race.inRun);
 const r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100, r3 = v => Math.round(v * 1000) / 1000;
-const myMeta = () => ({ i: netId, n: cleanName(driverName()), c: C.CARS[settings.car].id, v: NET_V, j: net.j });
+// w: can open direct links (older clients don't say, and go through the server)
+const myMeta = () => ({ i: netId, n: cleanName(driverName()), c: C.CARS[settings.car].id, v: NET_V, j: net.j, w: net.p2p ? 1 : 0 });
 function cleanPeer(m) {
   if (!m || typeof m.i !== 'string' || !/^[a-z0-9]{4,12}$/.test(m.i)) return null;
   const c = carById(m.c);
-  return { i: m.i, n: cleanName(m.n), c: c && !c.bonus ? c.id : 'foca', v: m.v | 0, j: +m.j || 0 };
+  return { i: m.i, n: cleanName(m.n), c: c && !c.bonus ? c.id : 'foca', v: m.v | 0, j: +m.j || 0, w: m.w === 1 ? 1 : 0 };
 }
 // the room in join order: it gives the colours and the next host
 function peerList() { return [...net.peers.values()].sort((a, b) => a.j - b.j || (a.i < b.i ? -1 : 1)); }
@@ -1170,10 +1176,11 @@ function netJoin(code, create) {
   const kept = /^([A-Z0-9]{4}):(\d+)$/.exec(sess.get('roomJ') || '');
   net.j = kept && kept[1] === code ? +kept[2] : Date.now();
   sess.set('room', code); sess.set('roomJ', code + ':' + net.j);
-  Object.assign(net, { code, status: 'connecting', peers: new Map(), bye: new Map(), room: create ? freshRoom() : null, race: null, off: 0, rtt: create ? 0 : 1e9, noState: nowMs(), hostGone: 0, prog: new Map(), warned: false });
+  Object.assign(net, { code, status: 'connecting', peers: new Map(), bye: new Map(), room: create ? freshRoom() : null, race: null, off: 0, rtt: create ? 0 : 1e9, clk: [], noState: nowMs(), hostGone: 0, prog: new Map(), warned: false });
   net.peers.set(netId, myMeta());
-  net.ch = NET.room({ url: ONLINE.url, key: ONLINE.key, topic: 'sr-room-' + code, me: netId, meta: myMeta(), onMsg: netMsg, onPresence: netPresence,
-    onStatus: s => { if (s === 'reconnecting') net.drops++; net.status = s; if (s === 'online') netHello(); renderOnline(); updateSummary(); } });
+  net.ch = NET.room({ url: ONLINE.url, key: ONLINE.key, topic: 'sr-room-' + code, me: netId, meta: myMeta(), p2p: net.p2p, onMsg: netMsg, onPresence: netPresence,
+    onStatus: s => { if (s === 'reconnecting') net.drops++; net.status = s; if (s === 'online') netHello(); renderOnline(); updateSummary(); },
+    onLink: () => { if (mode === 'menu') renderOnline(); } });
   renderOnline(); updateSummary(); renderCarList();
 }
 function netLeave(quiet) {
@@ -1211,9 +1218,17 @@ function netPresence(list) {
 function netPeersChanged() {
   const order = peerList(), at = order.findIndex(p => p.i === netId);
   if (at >= ROOM_MAX && !(net.race && net.race.grid.some(g => g.i === netId))) { const c = net.code; netLeave(true); toast(`Room ${c} is full: ${ROOM_MAX} drivers is the most.`); return; }
+  // a direct link with everyone in the room who can open one (net.js does the handshake), none with those who left
+  if (net.p2p) {
+    for (const [id, p] of net.peers) if (id !== netId && p.w) net.ch.link(id);
+    for (const id of net.ch.links()) if (!net.peers.has(id)) net.ch.unlink(id);
+  }
   renderOnline(); updateSummary();
 }
-function netMsg(ev, p) {
+// someone in the room has no direct link with us: they only hear us through the server
+function netWsNeeded() { for (const id of net.peers.keys()) if (id !== netId && !net.ch.linked(id)) return true; return false; }
+// via: the sender's id when it came over the direct link ('' through the server); a ping is answered the same way
+function netMsg(ev, p, via) {
   net.rx[ev] = (net.rx[ev] || 0) + 1;
   if (!p || typeof p.f !== 'string' || p.f === netId) return;
   const t = nowMs();
@@ -1227,11 +1242,14 @@ function netMsg(ev, p) {
     else if (net.room && net.room.h === pe.i) { const next = peerList().find(x => x.i !== pe.i); if (next && next.i === netId) net.ch.send('room', Object.assign({}, net.room, { f: netId })); }
   } else if (ev === 'bye') { net.peers.delete(p.f); net.bye.set(p.f, t); netPeersChanged(); }
   else if (ev === 'room') netRoomMsg(p);
-  else if (ev === 'ping') { if (isHost()) net.ch.send('pong', { f: netId, to: p.f, c: p.c, h: nowMs() }); }
-  else if (ev === 'pong') {
+  else if (ev === 'ping') {
+    if (!isHost()) return;
+    const o = { f: netId, to: p.f, c: p.c, h: nowMs() };
+    if (!(via && net.ch.direct(via, 'pong', o))) net.ch.send('pong', o);
+  } else if (ev === 'pong') {
     if (p.to !== netId || !net.room || p.f !== net.room.h || !isFinite(p.c) || !isFinite(p.h)) return;
     const rtt = t - p.c;
-    if (rtt > 0 && rtt < 4000 && rtt < net.rtt) { net.rtt = rtt; net.off = p.h + rtt / 2 - t; netGreen(); }
+    if (rtt > 0 && rtt < 4000) netClock(rtt, p.h + rtt / 2 - t);
   }
   else if (ev === 'ld') { if (typeof p.r === 'string') { netLoaded(p.r).add(p.f); renderOnline(); } }
   else if (ev === 'st') netState(p);
@@ -1273,7 +1291,7 @@ function validRoom(p) {
 function applyRoom(r) {
   const prev = net.room;
   net.room = r; net.noState = 0;
-  if (!prev || prev.h !== r.h) { if (r.h === netId) { net.off = 0; net.rtt = 0; } else { net.rtt = 1e9; netSync(5); } }
+  if (!prev || prev.h !== r.h) { if (r.h === netId) netClockHost(); else { net.rtt = 1e9; net.clk = []; netSync(5); } }
   if (r.h !== netId) netFollowStage(r.k);
   const race = r.race;
   if (race && !race.done && r.ph !== 'lobby' && race.grid.some(g => g.i === netId) && !(netId in race.fin) && (!net.race || net.race.id !== race.id)) netLoadRace(race);
@@ -1291,10 +1309,19 @@ function applyRoom(r) {
 function hostCommit() { sendRoom(); applyRoom(net.room); }
 function sendRoom() { if (!net.ch || !isHost()) return; net.room.seq++; net.sentRoom = nowMs(); net.ch.send('room', Object.assign({}, net.room, { f: netId })); }
 function netSync(n) {
-  for (let k = 0; k < n; k++) setTimeout(() => { if (net.ch && net.room && !isHost()) net.ch.send('ping', { f: netId, c: nowMs() }); }, 60 + k * 170);
+  for (let k = 0; k < n; k++) setTimeout(() => { if (net.ch && net.room && !isHost()) netPing(); }, 60 + k * 170);
 }
+function netPing() { const o = { f: netId, c: nowMs() }; if (!net.ch.direct(net.room.h, 'ping', o)) net.ch.send('ping', o); }
+// the host's clock: the offset from the quickest of the last 16 round trips (a slow one was held up somewhere, and
+// the longer it took the less is known about when the host read its clock)
+function netClock(rtt, off) {
+  const w = net.clk; w.push([rtt, off]); if (w.length > 16) w.shift();
+  let b = w[0]; for (const x of w) if (x[0] < b[0]) b = x;
+  net.rtt = b[0]; net.off = b[1]; netGreen();
+}
+function netClockHost() { net.off = 0; net.rtt = 0; net.clk = []; }
 // local time of the green light; it settles while the clock offset improves and stays put from the start
-function netGreen() { const r = net.race; if (r && r.at && !r.green) r.greenL = r.at - net.off; }
+function netGreen() { const r = net.race; if (r && r.at && !r.green) r.greenL = r.wt0 = r.at - net.off; }
 // a guest's Stage tab shows the room's stage (and builds it in the background once the host stops clicking around)
 function netFollowStage(k) {
   if (curKeyMenu() === k) return;
@@ -1322,20 +1349,27 @@ function netStart() {
 function netTakeOver() {
   const room = net.room;
   if (room.race) { if (room.race.at) room.race.at = Math.round(room.race.at - net.off); if (room.race.close) room.race.close = Math.round(room.race.close - net.off); }
-  room.h = netId; net.off = 0; net.rtt = 0; net.hostGone = 0; net.loadT = nowMs();
+  room.h = netId; netClockHost(); net.hostGone = 0; net.loadT = nowMs();
   hostCommit(); toast('The host has gone: you run the room now.');
 }
 // runs four times a second while in a room: the host moves the race along, everyone watches for a missing host
 function netTick() {
   if (!net.ch) return;
   net.tk++;
+  const nr = net.race;
+  if (nr && nr.inRun && net.room && !isHost()) {
+    // over a direct link pings cost nothing: four a second until the green light, then one a second for the drift
+    if (net.ch.linked(net.room.h) && (!nr.green || net.tk % 4 === 0)) netPing();
+    // after the green, wall race time follows the offset at 2 ms a second at most (a sample never goes back in time)
+    if (nr.green && nr.at) nr.wt0 += clamp(nr.at - net.off - nr.wt0, -0.5, 0.5);
+  }
   if (netRun() && !$('results').hidden && net.tk % 2 === 0) renderNetResults();
-  if (mode === 'menu' && net.room && net.room.race && !net.room.race.done && !$('paneOnline').hidden && net.tk % 4 === 0) renderOnline();
+  { const on = net.room && net.room.race && !net.room.race.done; if (mode === 'menu' && net.room && !$('paneOnline').hidden && (on ? net.tk % 4 === 0 : net.tk % 8 === 0 && net.ch.anyLinked())) renderOnline(); }
   if (net.status !== 'online') return;
   const t = nowMs(), room = net.room;
   if (!room) {
     // nobody speaks for this room (a link to a room whose host has gone): the first driver in starts it afresh
-    if (net.noState && t - net.noState > 3000 && peerList()[0].i === netId) { net.room = freshRoom(); net.off = 0; net.rtt = 0; hostCommit(); }
+    if (net.noState && t - net.noState > 3000 && peerList()[0].i === netId) { net.room = freshRoom(); netClockHost(); hostCommit(); }
     return;
   }
   if (room.h !== netId) {
@@ -1380,15 +1414,15 @@ function netLoadRace(race) {
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
   { const c = C.CARS[settings.car]; if (isBonus(c) || !fitsRoad(c, race.k)) { settings.car = plainCar(); saveSettings(); renderCarList(); } }
   netClearRun();
-  const nr = net.race = { id: race.id, k: race.k, at: race.at || 0, greenL: 0, green: false, grid: race.grid.map(g => Object.assign({}, g)), others: new Map(), fin: Object.assign({}, race.fin),
-    hist: [], buf: [], lastS: -1e9, lastSend: -1e9, cut: false, inRun: true, done: false, close: 0, col: PCOL[0] };
+  const nr = net.race = { id: race.id, k: race.k, at: race.at || 0, greenL: 0, wt0: 0, green: false, grid: race.grid.map(g => Object.assign({}, g)), others: new Map(), fin: Object.assign({}, race.fin),
+    hist: [], buf: [], lastS: -1e9, lastB: -1e9, cred: 0, cut: false, cutB: false, inRun: true, done: false, close: 0, col: PCOL[0] };
   nr.grid.forEach((g, k) => {
     g.col = PCOL[k % PCOL.length];
     if (g.i === netId) nr.col = g.col;
     else nr.others.set(g.i, { i: g.i, n: g.n, c: g.c, col: g.col, hist: [], cur: 0, err: [0, 0, 0, 0], spin: 0, pose: {}, mat: M4.create(), model: null, vis: false, alpha: 1, dc: 1e9, s: null, tag: null, bar: null,
       kick: null, thru: false, was: false, soft: false, ep: -1e9, mute: -1e9 });
   });
-  net.rtt = 1e9; netSync(5);
+  if (!isHost()) { net.rtt = 1e9; net.clk = []; netSync(5); }
   $('share').hidden = true; $('welcome').hidden = true;
   setScreen('none');
   const go = () => {
@@ -1458,29 +1492,42 @@ function netFin(id, p) {
   renderOnline(); if (netRun() && !$('results').hidden) renderNetResults();
 }
 // Supabase counts a broadcast once sent and once per receiver: n drivers sending f a second cost n·n·f
-function netRate() { const n = Math.max(1, net.race.grid.filter(g => g.i === netId || net.peers.has(g.i)).length); return clamp(70 / (n * n), 2, 6); }
-const netWT = () => (nowMs() - net.race.greenL) / 1000;
-// a sample every 0.1 s of race time: [wt, x, y, z, heading, vx, vz, s, pitch, roll, front wheel angle, flags, rpm / 10]
+function netRate() { const n = Math.max(1, net.race.grid.filter(g => g.i === netId || net.peers.has(g.i)).length); return clamp(70 / (n * n), 2, 10); }
+const netWT = () => (nowMs() - net.race.wt0) / 1000;
+const NET_DT = 1 / 30; // a sample this often over direct links (0.1 s through the server)
+// a sample every 1/30 s (0.1 s through the server): [wt, x, y, z, heading, vx, vz, s, pitch, roll, front wheel angle, flags,
+// rpm / 10]. The pose is the drawn one, which is a physics step behind the physics (it's interpolated between the last two
+// steps), so it's stamped a step earlier: the time it really shows. The others are drawn a step back too, like your car
 // flags: 1 brake, 2 lights, bits 2-4 throttle (0-7), bits 5-7 boost (0-7), 256 a gear change since the last sample (not
 // the limiter: at ten samples a second it would cut their engine for whole tenths), 512 a ghost (touches nothing). The
 // engine fields are for the others' engine sound
 function netSample() {
   const nr = net.race; if (!nr.greenL || !net.ch) return;
   const wt = netWT();
-  if (mode === 'done' && doneT > 6) { if (nr.buf.length) netSend(wt); return; } // parked after the finish: nothing more to say
+  if (mode === 'done' && doneT > 6) { if (nr.buf.length) netSend(); return; } // parked after the finish: nothing more to say
   if (car.shiftT > 0) nr.cut = true;
-  if ((mode !== 'countdown' && mode !== 'race' && mode !== 'done') || wt < -4 || wt - nr.lastS < 0.1) return;
+  const fast = net.ch.anyLinked(), dt = wt - nr.lastS;
+  if ((mode !== 'countdown' && mode !== 'race' && mode !== 'done') || wt < -4 || dt < (fast ? NET_DT : 0.1) - 0.004) return;
   nr.lastS = wt;
   const brk = (mode === 'race' && (input.brk > 0.1 || input.hb || net.pause)) || mode === 'done';
   const thr = mode === 'done' ? 0 : car.thrE || input.thr, q = v => Math.round(clamp(v, 0, 1) * 7);
-  nr.buf.push([r3(wt), r2(vis.x), r2(vis.y + susp.heave + 0.02), r2(vis.z), r3(vis.h), r1(car.vx), r1(car.vz), r1(car.s), r3(susp.pitch), r3(susp.roll), r2(vis.steer),
-    (brk ? 1 : 0) | (lightsOn ? 2 : 0) | q(thr) << 2 | q(car.boost) << 5 | (nr.cut ? 256 : 0) | (netGhost() ? 512 : 0), Math.round(car.rpm / 10)]);
+  const s = [r3(wt - STEP), r2(vis.x), r2(vis.y + susp.heave + 0.02), r2(vis.z), r3(vis.h), r1(car.vx), r1(car.vz), r1(car.s), r3(susp.pitch), r3(susp.roll), r2(vis.steer),
+    (brk ? 1 : 0) | (lightsOn ? 2 : 0) | q(thr) << 2 | q(car.boost) << 5 | (nr.cut ? 256 : 0) | (netGhost() ? 512 : 0), Math.round(car.rpm / 10)];
   nr.cut = false;
   nr.hist.push([wt, car.s]);
-  // 1 Hz on the grid, but the last second before the green goes at the race rate so the launch is heard on time
-  if (wt - nr.lastSend >= 1 / (mode === 'countdown' && wt < -1.2 ? 1 : netRate()) - 0.02) netSend(wt);
+  // straight away to everyone with a direct link
+  if (fast) net.ch.fast('st', { f: netId, r: nr.id, p: [s] });
+  if (!netWsNeeded()) { nr.buf.length = 0; nr.cred = 0; return; }
+  // through the server, for the rest: a sample every 0.1 s in the batch, and a batch whenever the rate has earned one
+  // (1 Hz on the grid, but the last second before the green goes at the race rate so the launch is heard on time).
+  // The newest sample always goes in, so a batch is never staler than the moment it leaves
+  nr.cred = Math.min(1, nr.cred + Math.min(dt, 0.5) * (mode === 'countdown' && wt < -1.2 ? 1 : netRate()));
+  const go = nr.cred >= 0.95;
+  if (go || wt - nr.lastB >= 0.096) { if (nr.cutB) s[11] |= 256; nr.cutB = false; nr.buf.push(s); nr.lastB = wt; }
+  else if (s[11] & 256) nr.cutB = true; // a gear change in a sample left out: the next one carries it
+  if (go) { nr.cred -= 1; netSend(); }
 }
-function netSend(wt) { const nr = net.race; net.ch.send('st', { f: netId, r: nr.id, p: nr.buf }); nr.buf = []; nr.lastSend = wt; }
+function netSend() { const nr = net.race; net.ch.send('st', { f: netId, r: nr.id, p: nr.buf }); nr.buf = []; }
 // ---- the cars hit each other ----
 // a ghost touches nothing: on the grid, paused, finished, retired and for a moment after a reset (R)
 function netGhost() { const nr = net.race; return !nr || mode !== 'race' || net.pause || !!nr.fin[netId] || car.ghostT > 0; }
@@ -1496,7 +1543,8 @@ function netCollide(wt) {
     const r = C.carContact(car, P, q, carById(o.c), o, wt);
     if (!r) continue;
     // the first touch of a contact goes to the other driver too, in case their view of it just missed
-    if (r.first && r.jn > 0 && net.ch) net.ch.send('hit', { f: netId, to: o.i, r: nr.id, t: r3(wt), j: [r1(-r.Jx), r1(-r.Jz)], b: [r2(r.bf), r2(r.br)], dv: r.own.map(r3), h: r3(r.h) });
+    // (over the direct link when there is one)
+    if (r.first && r.jn > 0 && net.ch) { const m = { f: netId, to: o.i, r: nr.id, t: r3(wt), j: [r1(-r.Jx), r1(-r.Jz)], b: [r2(r.bf), r2(r.br)], dv: r.own.map(r3), h: r3(r.h) }; if (!net.ch.direct(o.i, 'hit', m)) net.ch.send('hit', m); }
     netContactFx(o, r.first ? -r.vn : 0, Math.abs(r.vt), r.px, r.pz, r.nx, r.nz, r.front);
   }
 }
@@ -1554,22 +1602,26 @@ function netState(p) {
     list.push(s);
   }
   // new samples move the estimate: it keeps being drawn where it was and o.err eases the difference away
-  C.trackTake(o, list, nr.greenL ? netWT() : 0);
+  C.trackTake(o, list, nr.greenL ? netWT() - STEP : 0);
 }
 // where a driver is at wall race time wt (core.js: their samples, carried on past the newest one, plus a contact's kick)
 const netPose = C.seenPose;
 function netUpdate(dt) {
   const nr = net.race; if (!nr || !nr.inRun || !nr.greenL || !W) return;
   const wt = netWT();
+  // test hook (netlag.py): per frame, the wall clock, your car and where each of the others is drawn
+  const tr = net.trace && [nowMs(), vis.x, vis.z, []];
+  if (tr) net.trace.push(tr);
   for (const o of nr.others.values()) {
     o.vis = false;
     if (!o.hist.length) continue;
-    const p = netPose(o, wt, o.pose);
+    const p = netPose(o, wt - STEP, o.pose); // as your car: a physics step back
     // the correction eases out over ~0.2 s, quicker when it's next to your car (what you see is what you hit)
     const k = Math.exp(-dt * (5 + 15 * clamp((14 - Math.hypot(p.x - car.x, p.z - car.z)) / 8, 0, 1)));
     for (let q = 0; q < 4; q++) o.err[q] *= k;
     p.x += o.err[0]; p.y += o.err[1]; p.z += o.err[2]; p.h += o.err[3];
     o.s = p.s;
+    if (tr) tr[3].push([o.n, p.x, p.z, wt - STEP - o.hist[o.hist.length - 1][0]]);
     const f = nr.fin[o.i];
     o.out = !!(f && f.t == null) || (!net.peers.has(o.i) && wt - o.hist[o.hist.length - 1][0] > 2);
     if (o.out || !o.model) continue;
@@ -1781,6 +1833,8 @@ function renderOnline() {
       else if (pr && pr.r === race.id) sub += ` · on stage ${Math.round(clamp((pr.s - rT.startS) / (rT.finishS - rT.startS), 0, 1) * 100)}%`;
       else sub += ' · on stage';
     }
+    // how their car reaches yours: straight from their browser (and the round trip) or through the server
+    if (p.i !== netId) { const ms = net.ch.rtt(p.i); sub += net.ch.linked(p.i) ? ' · direct' + (ms ? ` ${Math.max(1, Math.round(ms))} ms` : '') : ' · via server'; }
     tt.append(nm, el('small', null, sub));
     const pe = room && room.pts[p.i], pts = el('span', 'pts', String(pe ? pe.p : 0));
     pts.append(el('small', null, pe && pe.w ? `${pe.w} win${pe.w > 1 ? 's' : ''}` : 'pts'));

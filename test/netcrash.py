@@ -63,7 +63,8 @@ async def main():
         A = await page(b, 'Alpha', 0, logs)
         B = await page(b, 'Bravo', 2, logs)
         for pg in (A, B):  # count 'hit' messages sent
-            await pg.evaluate("(() => { const n = window.__rally.net; window.__hits = []; const iv = setInterval(() => { if (n.ch && !n.ch.__w) { const s = n.ch.send.bind(n.ch); n.ch.send = (ev, p) => { if (ev === 'hit') window.__hits.push(p); return s(ev, p); }; n.ch.__w = 1; } }, 100); })()")
+            # (through the server or over the direct link)
+            await pg.evaluate("(() => { const n = window.__rally.net; window.__hits = []; const iv = setInterval(() => { if (n.ch && !n.ch.__w) { const s = n.ch.send.bind(n.ch), d = n.ch.direct.bind(n.ch); n.ch.send = (ev, p) => { if (ev === 'hit') window.__hits.push(p); return s(ev, p); }; n.ch.direct = (id, ev, p) => { const ok = d(id, ev, p); if (ok && ev === 'hit') window.__hits.push(p); return ok; }; n.ch.__w = 1; } }, 100); })()")
         await A.click('#tabOnline'); await A.click('#netCreate')
         code = await until(A, "window.__rally.net.status === 'online' && window.__rally.net.code", 10, 'A online')
         print('room', code)

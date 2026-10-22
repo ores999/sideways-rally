@@ -21,7 +21,9 @@ const SC = {
   'f1-rear':   { A: { c: 'f1', a: 0, r: 0, hd: 0, v: 40, inp: go(0.5) }, B: { c: 'foca', a: 14, r: -0.4, hd: 0, v: 25, inp: go(0.5) } },
   'parked':    { A: { c: 'foca', a: 0, r: 0.5, hd: 0, v: 20, inp: go(0.2) }, B: { c: 'delta', a: 15, r: 0, hd: 0, v: 0, inp: t => ({ steer: 0, thr: 0, brk: 0, hb: true, analog: true }) } },
 };
-const NET = { ideal: null, net: { lat: 0.06, jit: 0.02, rate: 6 }, slow: { lat: 0.15, jit: 0.05, rate: 3 } };
+// per: seconds between samples (0.1 through the server); direct: a WebRTC link between two homes in one city, every
+// sample on its own
+const NET = { ideal: null, direct: { lat: 0.015, jit: 0.01, rate: 30, per: 1 / 30 }, net: { lat: 0.06, jit: 0.02, rate: 6 }, slow: { lat: 0.15, jit: 0.05, rate: 3 } };
 
 function place(d) {
   const P = car(d.c), c = C.makeCar(W, P, 300), fx = Math.sin(c.h), fz = Math.cos(c.h);
@@ -63,7 +65,7 @@ function run(name, mode) {
     // the network
     if (N) {
       for (const [x, y] of pairs) {
-        if (t - x.lastS >= 0.1 - 1e-9) { x.lastS = t; x.buf.push([t, x.c.x, x.c.y, x.c.z, x.c.h, x.c.vx, x.c.vz, x.c.s, 0, 0, 0, 0, 0]); }
+        if (t - x.lastS >= (N.per || 0.1) - 1e-9) { x.lastS = t; x.buf.push([t, x.c.x, x.c.y, x.c.z, x.c.h, x.c.vx, x.c.vz, x.c.s, 0, 0, 0, 0, 0]); }
         if (t - x.lastSend >= 1 / N.rate - 1e-9) { x.lastSend = t; mail.push([t + N.lat + R() * N.jit, y, 'st', x.buf]); x.buf = []; }
       }
       mail.sort((m, n) => m[0] - n[0]);
@@ -98,7 +100,7 @@ const f = (v, n = 0, w = 5) => v.toFixed(n).padStart(w);
 if (process.argv[2] === 'fuzz') {
   // random encounters: B somewhere ahead, any heading, both driving with a random steer; how bad does it get
   const R = C.rng(11), ids = C.CARS.map(c => c.id).filter(i => i !== 'saveiro'), pick = () => ids[Math.floor(R() * ids.length)];
-  for (const mode of ['ideal', 'net', 'slow']) {
+  for (const mode of ['ideal', 'direct', 'net', 'slow']) {
     const res = [];
     for (let n = 0; n < 300; n++) {
       // they'd meet about T s in, B's centre `off` m to the side of A's nose; B's heading (+ = left) any way round

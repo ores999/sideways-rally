@@ -1850,14 +1850,16 @@ function boxContact(a, b) {
   const nx = ax[bi][0] * bs, nz = ax[bi][1] * bs, refA = ax[bi][2] === 0;
   // the incident box's corners that reach furthest into the reference box (one for a corner, two for an edge)
   const inc = refA ? b : a, ifx = refA ? bfx : afx, ifz = refA ? bfz : afz, sg = refA ? 1 : -1;
-  let px = 0, pz = 0, n = 0, dmax = -1e9;
+  const rc = refA ? [acx, acz] : [bcx, bcz], tx = -nz, tz = nx, ext = bi % 2 === 0 ? (refA ? a.w : b.w) : (refA ? al : bl);
+  let px = 0, pz = 0, n = 0, dmax = -1e9, ts = 0;
   const cs = [[inc.f, inc.w], [inc.f, -inc.w], [inc.r, inc.w], [inc.r, -inc.w]].map(([f, s]) => [inc.x + ifx * f - ifz * s, inc.z + ifz * f + ifx * s]);
   for (const v of cs) dmax = Math.max(dmax, sg * (v[0] * nx + v[1] * nz));
-  for (const v of cs) if (sg * (v[0] * nx + v[1] * nz) > dmax - 0.08) { px += v[0]; pz += v[1]; n++; }
+  // each corner kept within the reference face: for an edge that's the middle of the stretch where the two faces
+  // overlap, the same point seen from either car (the incident edge's own middle gave each car a different lever)
+  for (const v of cs) if (sg * (v[0] * nx + v[1] * nz) > dmax - 0.08) { px += v[0]; pz += v[1]; ts += clamp((v[0] - rc[0]) * tx + (v[1] - rc[1]) * tz, -ext, ext); n++; }
   px /= n; pz /= n;
-  // kept within the reference face, then moved half way back through the overlap
-  const rc = refA ? [acx, acz] : [bcx, bcz], tx = -nz, tz = nx, ext = bi % 2 === 0 ? (refA ? a.w : b.w) : (refA ? al : bl);
-  const tp = (px - rc[0]) * tx + (pz - rc[1]) * tz, tc = clamp(tp, -ext, ext);
+  // then moved half way back through the overlap
+  const tp = (px - rc[0]) * tx + (pz - rc[1]) * tz, tc = ts / n;
   px += tx * (tc - tp) - sg * nx * best / 2; pz += tz * (tc - tp) - sg * nz * best / 2;
   return { nx, nz, pen: best, px, pz };
 }
@@ -1949,7 +1951,7 @@ function carHitMsg(c, P, k, m, wt, q) {
   let Jx = m.j[0], Jz = m.j[1];
   const dv = Math.hypot(Jx, Jz) / P.mass; if (dv > HIT.dvMax) { Jx *= HIT.dvMax / dv; Jz *= HIT.dvMax / dv; }
   const rx = fx * m.b[0] - fz * m.b[1], rz = fz * m.b[0] + fx * m.b[1];
-  c.vx += Jx / P.mass; c.vz += Jz / P.mass; c.w += clamp((rz * Jx - rx * Jz) / P.Iz, -3, 3);
+  c.vx += Jx / P.mass; c.vz += Jz / P.mass; c.w += clamp((rz * Jx - rx * Jz) / (P.Iz * HIT.yawI), -3, 3); // the same inertia as a contact seen here
   k.ep = wt; k.mute = wt + HIT.mute;
   if (m.dv && wt - m.t < 0.6 && isFinite(m.h)) kickAdd(k, m.t, m.h, m.dv[0], m.dv[1], m.dv[2], q && !k.kick ? [q.vx, q.vz] : null);
   return true;
