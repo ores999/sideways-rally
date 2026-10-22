@@ -35,14 +35,17 @@ settings.dailyKey = C.dailyKey(); // a new day, a new road
 // Measured at 3200x2000 (ms/frame, Pine / Dark Pines / Monaco / Spa): Quality 14.0 / 14.2 / 8.3 / 8.0,
 // Balanced 8.4 / 9.6 / 5.5 / 5.2, Performance 2.7 / 3.2 / 2.5 / 2.8. Resolution is most of it; then the post chain
 // and MSAA (~3 ms each at that size), shadows ~1-2.5 ms. Shorter tree and grass distances changed nothing measurable.
+// Minimum (owner: "una opción extrema, sin árboles ni cosas que cuesten") also bares the scenery: no grass, no crowd,
+// trees as their far, solid shapes (they're still there to hit), and a lower resolution floor.
 const PRESETS = {
-  perf: { res: 0, aa: 0, shadows: false, post: false, rays: false },
-  bal: { res: 1, aa: 1, shadows: true, post: true, rays: false },
-  qual: { res: 2, aa: 2, shadows: true, post: true, rays: true },
+  min: { res: 0, aa: 0, shadows: false, post: false, rays: false, scenery: false },
+  perf: { res: 0, aa: 0, shadows: false, post: false, rays: false, scenery: true },
+  bal: { res: 1, aa: 1, shadows: true, post: true, rays: false, scenery: true },
+  qual: { res: 2, aa: 2, shadows: true, post: true, rays: true, scenery: true },
 };
-const GFX_LV = ['perf', 'bal', 'qual'], GFX_NAME = { auto: 'Auto', perf: 'Performance', bal: 'Balanced', qual: 'Quality', custom: 'Custom' };
+const GFX_LV = ['min', 'perf', 'bal', 'qual'], GFX_NAME = { auto: 'Auto', min: 'Minimum', perf: 'Performance', bal: 'Balanced', qual: 'Quality', custom: 'Custom' };
 const RES_K = [0.5, 0.75, 1]; // of the screen's own pixels (at most 2 per CSS pixel)
-const coarse = matchMedia('(pointer: coarse)').matches, gAuto = { lv: coarse ? 1 : 2 };
+const coarse = matchMedia('(pointer: coarse)').matches, gAuto = { lv: coarse ? 2 : 3 };
 if ('shadows' in settings || 'post' in settings) { // before presets there were two switches: keep what was turned off
   if (settings.shadows === false || (settings.post === false && !coarse)) { // (touch screens started with post off)
     settings.gfx = 'custom';
@@ -437,7 +440,7 @@ function applyGfx(user) {
   renderGfx();
 }
 function setGfx(v) {
-  if (v === 'auto' && settings.gfx !== 'auto') gAuto.lv = coarse ? 1 : 2;
+  if (v === 'auto' && settings.gfx !== 'auto') gAuto.lv = coarse ? 2 : 3;
   settings.gfx = v; delete settings.g; saveSettings(); applyGfx(true);
 }
 // one level by hand: the preset becomes 'custom', starting from what was in use
@@ -453,15 +456,15 @@ function renderGfx() {
   const G = gq(), lv = settings.gfx === 'auto' ? GFX_LV[gAuto.lv] : null;
   for (const id of ['optGfx', 'pGfx']) for (const b of $(id).children) b.setAttribute('aria-pressed', String(b.dataset.v === settings.gfx));
   for (const el of document.querySelectorAll('[data-g]')) for (const b of el.children) b.setAttribute('aria-pressed', String(String(G[el.dataset.g]) === b.dataset.v));
-  for (const k of ['shadows', 'post', 'rays']) $(GFX_OPT[k]).setAttribute('aria-pressed', String(G[k]));
+  for (const k in GFX_OPT) $(GFX_OPT[k]).setAttribute('aria-pressed', String(G[k]));
   $('gfxNote').textContent = settings.gfx === 'auto' ? `Running ${GFX_NAME[lv]}. Auto starts high and steps down if your device can't hold 60 fps.`
     : settings.gfx === 'custom' ? 'Custom: your own mix of the settings below.'
-    : { perf: 'The most frames: lower resolution, no shadows, no glow.', bal: 'Sharp enough and smooth on most laptops.', qual: 'Everything on, at full resolution.' }[settings.gfx];
+    : { min: 'For very slow devices: no grass or crowds, simple trees, low resolution.', perf: 'Lower resolution, no shadows, no glow.', bal: 'Sharp enough and smooth on most laptops.', qual: 'Everything on, at full resolution.' }[settings.gfx];
   $('fps').hidden = !settings.fps;
 }
 for (const id of ['optGfx', 'pGfx']) for (const b of $(id).children) b.addEventListener('click', () => setGfx(b.dataset.v));
 for (const el of document.querySelectorAll('[data-g]')) for (const b of el.children) b.addEventListener('click', () => setGfxLevel(el.dataset.g, +b.dataset.v));
-const GFX_OPT = { shadows: 'optShadows', post: 'optPost', rays: 'optRays' };
+const GFX_OPT = { scenery: 'optScenery', shadows: 'optShadows', post: 'optPost', rays: 'optRays' };
 for (const k in GFX_OPT) $(GFX_OPT[k]).addEventListener('click', () => setGfxLevel(k, !gq()[k]));
 $('gearAuto').addEventListener('click', () => { settings.gearbox = 'auto'; saveSettings(); updateToggles(); });
 $('gearManual').addEventListener('click', () => { settings.gearbox = 'manual'; saveSettings(); updateToggles(); });
@@ -3721,7 +3724,7 @@ function adaptRes(rawDt) {
   }
   else if (avg < 1 / 57 && dyn.scale < 1 && time - dyn.lastDown > 8) dyn.scale = Math.min(1, dyn.scale * 1.1);
 }
-const resFloor = () => gq().res ? 0.6 : 0.9; // never under about 45 % of the screen's pixels across
+const resFloor = () => gq().res ? 0.6 : gq().scenery ? 0.9 : 0.7; // never under about 45 % of the screen's pixels across (35 % at Minimum)
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2) * RES_K[gq().res] * dyn.scale;
   dyn.dpr = dpr;
@@ -3836,7 +3839,7 @@ function tick(dt, doRender) {
     emitEffects(dt); dust.update(dt); chips.update(dt); updateSkids();
     if (S.E.snowfall) updateSnow(dt);
     if (S.E.rain) updateRain(dt);
-    S.updateFans(time, vis.x, vis.z);
+    if (gq().scenery) S.updateFans(time, vis.x, vis.z);
   }
   updateAudio(dt);
   // the city's traffic lights flash amber (a lamp, so it swells and fades rather than blinks)
@@ -3894,7 +3897,7 @@ function render() {
     R.env.shNo = [t0 * 1.2, t1 * 1.2];
     for (let k = 0; k < 2; k++) {
       R.beginShadow(k);
-      for (const c of S.shadowCasters) R.drawDepth(c.m, c.model);
+      for (const c of S.shadowCasters) if (G.scenery || c.m !== S.fanMesh) R.drawDepth(c.m, c.model);
       R.drawDepth(carModel.body, carMat);
       for (let i = 0; i < 4; i++) R.drawDepth(wheelMesh(carModel, i), wheelMatrix(i));
       netDepth();
@@ -3907,6 +3910,10 @@ function render() {
   gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND);
   R.setLitFrame(E);
   for (const { m, o } of S.meshes) {
+    if (!G.scenery) { // bare scenery: no grass or crowd, trees as their last (far) level everywhere
+      if (o.mode === 7 || m === S.fanMesh) continue;
+      if (m.lods) { R.drawLit(m.lods[m.lods.length - 1].m, o); continue; }
+    }
     if (o.farFog) { R.drawLit(m, { mode: 0, fog: [380, 3200], fogRestore: E.fog, fogLo: [E.fog[0], E.fog[1], W.st.kind === 'mesa' ? 100 : 110, (S.farY || 0) - 30] }); continue; }
     if (m === S.road) { gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -2); R.drawLit(m, o); gl.disable(gl.POLYGON_OFFSET_FILL); continue; }
     if (o.decal) { gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-2, -4); R.drawLit(m, o); gl.disable(gl.POLYGON_OFFSET_FILL); continue; }
