@@ -1057,14 +1057,15 @@ $('driverChip').addEventListener('click', () => showWelcome(true));
 // stage in their Stage tab (everyone else's Stage tab follows it) and start the races. Everyone drives the same stage at
 // the same moment, each in their own car (the Saveiro stays out), and the others are drawn from what they send: their
 // pose 10 times a second, batched into 2-6 messages a second depending on how many are in the room (Supabase's free
-// plan allows 100 messages a second for the project, and counts each receiver). Cars pass through each other: the clock
-// decides, and the finishing order gives points (10 8 6 5 4 3) that the room keeps.
+// plan allows 100 messages a second for the project, and counts each receiver). The cars hit each other (C.carContact:
+// each browser resolves its own car against the others as it sees them, see core.js); a paused, finished or just reset
+// car is a ghost. Each driver's clock decides, and the finishing order gives points (10 8 6 5 4 3) that the room keeps.
 // The host holds the room's state (stage, phase, race, points) and sends all of it whenever it changes and every few
 // seconds; everyone keeps the latest copy, so if the host goes the next driver in (by join time) carries on with it.
 // Clocks: each browser pings the host and keeps the offset from the quickest round trip, so the start lights go green
 // at the same moment everywhere. Each driver's time is their own, from their own green light. The others are drawn on
 // "wall race time" (wt: seconds since that shared green), which is also what their samples are stamped with.
-const NET_V = 1, ROOM_MAX = 6, PTS = [10, 8, 6, 5, 4, 3], CLOSE_MS = 60000, LOAD_MS = 12000;
+const NET_V = 2, ROOM_MAX = 6, PTS = [10, 8, 6, 5, 4, 3], CLOSE_MS = 60000, LOAD_MS = 12000;
 const CODE_ABC = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const PCOL = ['#ffd23a', '#5ec8ff', '#ff6b8a', '#8be36f', '#c58bff', '#ff9c48'];
 const nowMs = () => performance.timeOrigin + performance.now();
@@ -1172,6 +1173,7 @@ function netMsg(ev, p) {
   }
   else if (ev === 'ld') { if (typeof p.r === 'string') { netLoaded(p.r).add(p.f); renderOnline(); } }
   else if (ev === 'st') netState(p);
+  else if (ev === 'hit') netHitMsg(p);
   else if (ev === 'fin') netFin(p.f, p);
 }
 function netRoomMsg(p) {
@@ -1321,7 +1323,8 @@ function netLoadRace(race) {
   nr.grid.forEach((g, k) => {
     g.col = PCOL[k % PCOL.length];
     if (g.i === netId) nr.col = g.col;
-    else nr.others.set(g.i, { i: g.i, n: g.n, c: g.c, col: g.col, hist: [], cur: 0, err: [0, 0, 0, 0], spin: 0, pose: {}, mat: M4.create(), model: null, vis: false, alpha: 1, dc: 1e9, s: null, tag: null, bar: null });
+    else nr.others.set(g.i, { i: g.i, n: g.n, c: g.c, col: g.col, hist: [], cur: 0, err: [0, 0, 0, 0], spin: 0, pose: {}, mat: M4.create(), model: null, vis: false, alpha: 1, dc: 1e9, s: null, tag: null, bar: null,
+      kick: null, thru: false, was: false, soft: false, ep: -1e9, mute: -1e9 });
   });
   net.rtt = 1e9; netSync(5);
   $('share').hidden = true; $('welcome').hidden = true;
@@ -1344,13 +1347,14 @@ function netModels() {
     o.model = net.models.get(key);
   }
 }
-// side by side on the start line, up to three abreast (the fourth and on share a lane: they pass through anyway)
+// side by side on the start line, up to three abreast (the fourth and on share a lane: everyone is a ghost until the
+// green, and cars that overlap then pass through each other until they're apart)
 function netGrid() {
   const nr = net.race, n = nr.grid.length, k = Math.max(0, nr.grid.findIndex(g => g.i === netId)), lanes = Math.min(n, 3);
   if (lanes < 2) return;
   const lat = ((k % lanes) - (lanes - 1) / 2) * Math.min(2.4, (2 * W.T.hw - 2.4) / (lanes - 1));
   car.x += car.rd.rx * lat; car.z += car.rd.rz * lat;
-  C.locate(W.T, car); car.y = C.groundAt(W, car, car.x, car.z); car.gyPrev = car.y;
+  C.locate(W.T, car); car.y = C.groundAt(W, car, car.x, car.z); car.gyPrev = car.y; car.ghostT = 0;
   snapVis();
 }
 function netClearRun() {
@@ -1396,8 +1400,8 @@ function netRate() { const n = Math.max(1, net.race.grid.filter(g => g.i === net
 const netWT = () => (nowMs() - net.race.greenL) / 1000;
 // a sample every 0.1 s of race time: [wt, x, y, z, heading, vx, vz, s, pitch, roll, front wheel angle, flags, rpm / 10]
 // flags: 1 brake, 2 lights, bits 2-4 throttle (0-7), bits 5-7 boost (0-7), 256 a gear change since the last sample (not
-// the limiter: at ten samples a second it would cut their engine for whole tenths). The engine fields are for the
-// others' engine sound; clients from before them read the first 12 fields and the two lowest bits only
+// the limiter: at ten samples a second it would cut their engine for whole tenths), 512 a ghost (touches nothing). The
+// engine fields are for the others' engine sound
 function netSample() {
   const nr = net.race; if (!nr.greenL || !net.ch) return;
   const wt = netWT();
@@ -1408,72 +1412,99 @@ function netSample() {
   const brk = (mode === 'race' && (input.brk > 0.1 || input.hb || net.pause)) || mode === 'done';
   const thr = mode === 'done' ? 0 : car.thrE || input.thr, q = v => Math.round(clamp(v, 0, 1) * 7);
   nr.buf.push([r3(wt), r2(vis.x), r2(vis.y + susp.heave + 0.02), r2(vis.z), r3(vis.h), r1(car.vx), r1(car.vz), r1(car.s), r3(susp.pitch), r3(susp.roll), r2(vis.steer),
-    (brk ? 1 : 0) | (lightsOn ? 2 : 0) | q(thr) << 2 | q(car.boost) << 5 | (nr.cut ? 256 : 0), Math.round(car.rpm / 10)]);
+    (brk ? 1 : 0) | (lightsOn ? 2 : 0) | q(thr) << 2 | q(car.boost) << 5 | (nr.cut ? 256 : 0) | (netGhost() ? 512 : 0), Math.round(car.rpm / 10)]);
   nr.cut = false;
   nr.hist.push([wt, car.s]);
   // 1 Hz on the grid, but the last second before the green goes at the race rate so the launch is heard on time
   if (wt - nr.lastSend >= 1 / (mode === 'countdown' && wt < -1.2 ? 1 : netRate()) - 0.02) netSend(wt);
 }
 function netSend(wt) { const nr = net.race; net.ch.send('st', { f: netId, r: nr.id, p: nr.buf }); nr.buf = []; nr.lastSend = wt; }
-const npA = {}, npB = {};
+// ---- the cars hit each other ----
+// a ghost touches nothing: on the grid, paused, finished, retired and for a moment after a reset (R)
+function netGhost() { const nr = net.race; return !nr || mode !== 'race' || net.pause || !!nr.fin[netId] || car.ghostT > 0; }
+// one physics step of your car against the others as this browser sees them (at wall race time wt)
+const netQ = {};
+function netCollide(wt) {
+  const nr = net.race; if (!nr || !nr.greenL) return;
+  car.ghost = netGhost();
+  if (car.ghostT > 0) car.ghostT -= STEP;
+  for (const o of nr.others.values()) {
+    if (o.out || !o.hist.length) continue;
+    const q = netPose(o, wt, netQ); q.ghost = !!(q.fl & 512);
+    const r = C.carContact(car, P, q, carById(o.c), o, wt);
+    if (!r) continue;
+    // the first touch of a contact goes to the other driver too, in case their view of it just missed
+    if (r.first && r.jn > 0 && net.ch) net.ch.send('hit', { f: netId, to: o.i, r: nr.id, t: r3(wt), j: [r1(-r.Jx), r1(-r.Jz)], b: [r2(r.bf), r2(r.br)], dv: r.own.map(r3), h: r3(r.h) });
+    netContactFx(o, r.first ? -r.vn : 0, Math.abs(r.vt), r.px, r.pz, r.nx, r.nz, r.front);
+  }
+}
+// the other driver saw a contact: apply it here if this browser hasn't already (or is about to) on its own
+function netHitMsg(p) {
+  const nr = net.race; if (!nr || p.r !== nr.id || p.to !== netId || mode !== 'race') return;
+  const o = nr.others.get(p.f); if (!o || o.out || !o.hist.length) return;
+  const num = (a, n) => Array.isArray(a) && a.length === n && a.every(v => typeof v === 'number' && isFinite(v));
+  if (!num(p.j, 2) || !num(p.b, 2) || !num(p.dv, 3) || !isFinite(p.t) || !isFinite(p.h) || Math.abs(p.b[0]) > 4 || Math.abs(p.b[1]) > 2) return;
+  const wt = netWT(); if (Math.abs(wt - p.t) > 1) return;
+  car.ghost = netGhost();
+  const q = netPose(o, wt, netQ);
+  if (!C.carHitMsg(car, P, o, { t: p.t, j: p.j, b: p.b, dv: p.dv, h: p.h }, wt, q)) return;
+  const fx = Math.sin(car.h), fz = Math.cos(car.h), px = car.x + fx * p.b[0] - fz * p.b[1], pz = car.z + fz * p.b[0] + fx * p.b[1], jl = Math.hypot(p.j[0], p.j[1]) || 1;
+  carFx.msg = [o, jl / P.mass * 1.6, 0, px, pz, p.j[0] / jl, p.j[1] / jl, p.b[0] > 0]; // shown with the next frame
+}
+// what a contact looks, sounds and feels like: a hit (v, closing speed) goes through onImpact like a tree or a wall,
+// a light touch only thumps; panels sliding along each other (vs) throw sparks and scrape
+const carFx = { scr: 0, x: 0, z: 0, nx: 0, nz: 0, lvl: 0, msg: null };
+function netContactFx(o, v, vs, px, pz, nx, nz, front) {
+  if (v > evt.hit) { evt.hit = v; evt.kind = 'car'; evt.x = px; evt.z = pz; evt.nx = nx; evt.nz = nz; evt.front = front; evt.col = carById(o.c).col; }
+  if (vs > carFx.scr) Object.assign(carFx, { scr: vs, x: px, z: pz, nx, nz });
+}
+function netContactFrame(dt) {
+  if (carFx.msg) { netContactFx(...carFx.msg); carFx.msg = null; }
+  if (evt.kind === 'car' && evt.hit > 0.8 && evt.hit <= 3) {
+    // a nudge: the body rocks, a dull knock, a short buzz
+    const v = evt.hit;
+    susp.rv += (Math.random() < 0.5 ? -1 : 1) * v * 0.05; susp.pv += (evt.front ? 1 : -1) * v * 0.04;
+    cam.shake = Math.max(cam.shake, 0.03 + v * 0.015); rumble(v / 8, v / 5, 90);
+    sfx.thump(v * 0.6);
+  }
+  // scraping: sparks off the contact, more the faster the panels slide
+  if (carFx.scr > 1.5 && mode === 'race') {
+    const n = Math.min(6, Math.floor(carFx.scr * dt * 40 + Math.random()));
+    for (let i = 0; i < n; i++) chips.emit(carFx.x + rnd() * 0.5, vis.gy + 0.25 + Math.random() * 0.4, carFx.z + rnd() * 0.5, car.vx * 0.7 + carFx.nx * 1.5 + rnd() * 3, 0.6 + Math.random() * 2, car.vz * 0.7 + carFx.nz * 1.5 + rnd() * 3, 0.04, 0, 0.25 + Math.random() * 0.2, [3.0, 1.6, 0.5], 1, -9.8, 0.6);
+    if (Math.random() < dt * 8) rumble(0, 0.25, 70);
+  }
+  carFx.lvl = clamp((carFx.scr - 1) / 8, 0, 1);
+  carFx.scr = 0;
+}
 function netState(p) {
   if (!Array.isArray(p.p) || !p.p.length) return;
   const last = p.p[p.p.length - 1];
   if (Array.isArray(last) && isFinite(last[7])) net.prog.set(p.f, { r: p.r, s: +last[7] });
   const nr = net.race; if (!nr || p.r !== nr.id) return;
   const o = nr.others.get(p.f); if (!o) return;
-  const wt = nr.greenL ? netWT() : 0, had = o.hist.length > 0;
-  if (had) { netPose(o, wt, npA); npA.x += o.err[0]; npA.y += o.err[1]; npA.z += o.err[2]; npA.h += o.err[3]; }
+  const list = [];
   for (const s of p.p.slice(0, 60)) {
     if (!Array.isArray(s) || s.length < 12) continue;
     let ok = true; for (let k = 0; k < 12; k++) if (typeof s[k] !== 'number' || !isFinite(s[k])) { ok = false; break; }
-    if (!ok || (o.hist.length && s[0] <= o.hist[o.hist.length - 1][0])) continue;
+    if (!ok) continue;
     s[12] = typeof s[12] === 'number' && isFinite(s[12]) ? clamp(s[12] * 10, 0, 12000) : -1; // rpm (-1: an older client, estimated from speed)
     s.length = 13;
-    o.hist.push(s);
+    list.push(s);
   }
-  if (o.hist.length > 12000) { o.hist.splice(0, o.hist.length - 9000); o.cur = 0; }
-  // new samples move the estimate: keep drawing where it was and ease the difference away (no visible jump)
-  if (had) {
-    netPose(o, wt, npB);
-    const ex = npA.x - npB.x, ey = npA.y - npB.y, ez = npA.z - npB.z;
-    if (ex * ex + ey * ey + ez * ez < 36) { o.err[0] = ex; o.err[1] = ey; o.err[2] = ez; o.err[3] = wrapA(npA.h - npB.h); } else o.err.fill(0);
-  }
+  // new samples move the estimate: it keeps being drawn where it was and o.err eases the difference away
+  C.trackTake(o, list, nr.greenL ? netWT() : 0);
 }
-// where a driver is at wall race time wt: cubic between samples (they carry velocity), and past the newest one
-// carried on along an arc at its speed and yaw rate for up to half a second, which covers the network's delay
-function netPose(o, wt, out) {
-  const H = o.hist, n = H.length;
-  let i = Math.min(o.cur, n - 1);
-  while (i > 0 && H[i][0] > wt) i--;
-  while (i < n - 1 && H[i + 1][0] <= wt) i++;
-  o.cur = i;
-  const a = H[i];
-  if (i < n - 1 && wt >= a[0]) {
-    const b = H[i + 1], T = Math.max(1e-3, b[0] - a[0]), u = (wt - a[0]) / T, u2 = u * u, u3 = u2 * u;
-    const h00 = 2 * u3 - 3 * u2 + 1, h10 = u3 - 2 * u2 + u, h01 = -2 * u3 + 3 * u2, h11 = u3 - u2, tv = T > 0.6 ? 0 : T;
-    out.x = h00 * a[1] + h10 * tv * a[5] + h01 * b[1] + h11 * tv * b[5];
-    out.z = h00 * a[3] + h10 * tv * a[6] + h01 * b[3] + h11 * tv * b[6];
-    out.y = lerp(a[2], b[2], u); out.h = a[4] + wrapA(b[4] - a[4]) * u; out.s = lerp(a[7], b[7], u);
-    out.pitch = lerp(a[8], b[8], u); out.roll = lerp(a[9], b[9], u); out.steer = lerp(a[10], b[10], u);
-    out.vx = lerp(a[5], b[5], u); out.vz = lerp(a[6], b[6], u); out.fl = b[11];
-  } else {
-    const q = i > 0 ? H[i - 1] : a, dq = Math.max(0.02, a[0] - q[0]), dt = clamp(wt - a[0], 0, 0.5);
-    const w = i > 0 ? clamp(wrapA(a[4] - q[4]) / dq, -2.5, 2.5) : 0, vy = i > 0 ? clamp((a[2] - q[2]) / dq, -12, 12) : 0;
-    const th = w * dt, cs = Math.cos(th / 2), sn = Math.sin(th / 2); // the chord of the arc points half way round it
-    out.x = a[1] + (a[5] * cs + a[6] * sn) * dt; out.z = a[3] + (a[6] * cs - a[5] * sn) * dt;
-    out.y = a[2] + vy * dt; out.h = a[4] + th; out.s = a[7] + Math.hypot(a[5], a[6]) * dt;
-    out.pitch = a[8]; out.roll = a[9]; out.steer = a[10]; out.vx = a[5]; out.vz = a[6]; out.fl = a[11];
-  }
-  return out;
-}
+// where a driver is at wall race time wt (core.js: their samples, carried on past the newest one, plus a contact's kick)
+const netPose = C.seenPose;
 function netUpdate(dt) {
   const nr = net.race; if (!nr || !nr.inRun || !nr.greenL || !W) return;
-  const wt = netWT(), k = Math.exp(-dt * 5);
+  const wt = netWT();
   for (const o of nr.others.values()) {
     o.vis = false;
     if (!o.hist.length) continue;
     const p = netPose(o, wt, o.pose);
+    // the correction eases out over ~0.2 s, quicker when it's next to your car (what you see is what you hit)
+    const k = Math.exp(-dt * (5 + 15 * clamp((14 - Math.hypot(p.x - car.x, p.z - car.z)) / 8, 0, 1)));
     for (let q = 0; q < 4; q++) o.err[q] *= k;
     p.x += o.err[0]; p.y += o.err[1]; p.z += o.err[2]; p.h += o.err[3];
     o.s = p.s;
@@ -1481,8 +1512,10 @@ function netUpdate(dt) {
     o.out = !!(f && f.t == null) || (!net.peers.has(o.i) && wt - o.hist[o.hist.length - 1][0] > 2);
     if (o.out || !o.model) continue;
     const dc = Math.hypot(p.x - cam.pos[0], p.y - cam.pos[1], p.z - cam.pos[2]), dm = Math.hypot(p.x - vis.x, p.z - vis.z);
-    // see-through when it sits on the camera or on top of your car (the cars pass through each other)
-    o.alpha = clamp((dc - 3.5) / 6, 0, 1) * (dm < 5.5 ? 0.35 + 0.65 * clamp((dm - 2.5) / 3, 0, 1) : 1);
+    // see-through when it sits on the camera, when it's a ghost (paused, finished, just reset) and when it's passing
+    // through your car (you were overlapping while one of you was a ghost)
+    const gh = mode === 'race' && ((p.fl & 512) || net.pause || car.ghostT > 0);
+    o.alpha = clamp((dc - 3.5) / 6, 0, 1) * (gh ? 0.5 : 1) * (o.thru && dm < 5.5 ? 0.35 + 0.65 * clamp((dm - 2.5) / 3, 0, 1) : 1);
     o.dc = dc;
     const wr = (p.vx * Math.sin(p.h) + p.vz * Math.cos(p.h)) / 0.335, wa = Math.abs(wr);
     o.spin += Math.sign(wr) * (wa < 15 ? wa : 15 + (wa - 15) * 0.25) * dt;
@@ -1882,6 +1915,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && (mo
 function manualReset() {
   if (mode !== 'race') return;
   C.resetCar(W, car, Math.max(W.T.spawnS, car.s - 12));
+  if (netRun()) car.ghostT = 2.5; // back on the road as a ghost for a moment, so it can't land on someone
   snapVis(true); breakSkids(); offT = 0; stuckT = 0; wrongT = 0;
   center('<div class="mid">Back on the road</div>', 1.0);
 }
@@ -2584,6 +2618,8 @@ const sfx = {
     if (kind === 'tree') { this.burst(t, 0.06, 'bandpass', 1700, 1.2, 0.2 + k * 0.3); this.burst(t + 0.06, 0.6 + k * 0.4, 'highpass', 3800, 0.5, 0.03 + k * 0.05); }
     else if (kind === 'rock' || kind === 'wall') this.toneAt(t, 150, 0.1, 'triangle', 0.06 + k * 0.08, 90);
     else if (kind === 'post') { this.toneAt(t, 410, 0.45, 'sine', 0.05 + k * 0.08, 396); this.toneAt(t, 1130, 0.25, 'sine', 0.025 + k * 0.04, 1105); } // a hollow steel pole rings
+    // another car: two thin steel shells boom against each other, and a bumper cracks
+    else if (kind === 'car') { this.toneAt(t, 150 + Math.random() * 20, 0.18, 'sine', 0.08 + k * 0.12, 118); this.toneAt(t + 0.006, 245 + Math.random() * 30, 0.12, 'triangle', 0.03 + k * 0.05, 210); this.burst(t + 0.01, 0.05, 'highpass', 1800, 0.8, 0.08 + k * 0.12); }
   },
 };
 // reverb for the place, rebuilt when the stage changes: [first, last] early reflection, count; tail length; how dark the
@@ -2751,9 +2787,11 @@ function updateAudio(dt) {
   A.rng.gain.setTargetAtTime(wetOn * (settings.cam === 2 && racing ? 0.05 : 0.03), t, 0.3);
   A.wsg.gain.setTargetAtTime(wetOn && active && !car.air ? clamp(spd / 30, 0, 1.2) * 0.08 : 0, t, 0.08);
   // rubbing a canyon wall or a snowbank
-  const scrape = active && car.bankP > 0.05 ? clamp(car.bankP * 2, 0, 1) * clamp(spd / 18, 0, 1) : 0;
-  A.scbp.frequency.setTargetAtTime(W.st.bank ? 700 : 1500 + Math.random() * 700, t, 0.03);
-  A.scg.gain.setTargetAtTime(scrape * (W.st.bank ? 0.35 : 0.55), t, 0.04);
+  // or another car: panels grinding along each other
+  const wallS = active && car.bankP > 0.05 ? clamp(car.bankP * 2, 0, 1) * clamp(spd / 18, 0, 1) : 0, carS = active && netRun() ? carFx.lvl || 0 : 0;
+  const soft = W.st.bank && wallS >= carS;
+  A.scbp.frequency.setTargetAtTime(soft ? 700 : carS > wallS ? 1100 + Math.random() * 1400 : 1500 + Math.random() * 700, t, 0.03);
+  A.scg.gain.setTargetAtTime(soft ? wallS * 0.35 : Math.max(wallS, carS) * 0.55, t, 0.04);
   // ---- the place: reverb send, the gorge's slapback, gravel in the arches, stones off the floor ----
   const inGorge = W.T.walls.some(w => car.s > w.s0 - 15 && car.s < w.s1 + 15);
   A.revIn.gain.setTargetAtTime((A.revWet || 0.15) * (onboard ? 0.35 : 1), t, 0.3);
@@ -3337,10 +3375,11 @@ function onImpact(e) {
   sfx.crash(v, e.kind);
   const hx = e.x, hz = e.z, hy = vis.gy + 0.55, nx = e.nx, nz = e.nz;
   const n = Math.round(clamp(v * 1.3, 3, 24));
-  const body = lin(P.col.base), dark = [0.03, 0.03, 0.035], glass = [0.55, 0.65, 0.75];
+  const body = lin(P.col.base), dark = [0.03, 0.03, 0.035], glass = [0.55, 0.65, 0.75], other = e.kind === 'car' && e.col ? lin(e.col.base) : body;
   if (e.kind !== 'bank' && e.kind !== 'hay' && v > 5) {
     for (let i = 0; i < n; i++) {
-      const cc = Math.random() < 0.45 ? body : (v > 11 && Math.random() < 0.3 ? glass : dark);
+      // another car: flakes of both paints
+      const cc = Math.random() < 0.45 ? (Math.random() < 0.5 ? body : other) : (v > 11 && Math.random() < 0.3 ? glass : dark);
       chips.emit(hx + rnd() * 0.6, hy + rnd() * 0.4, hz + rnd() * 0.6, nx * (2 + Math.random() * 3) + car.vx * 0.3 + rnd() * 3, 1.5 + Math.random() * 3, nz * (2 + Math.random() * 3) + car.vz * 0.3 + rnd() * 3,
         0.06 + Math.random() * 0.07, 0, 0.9 + Math.random() * 0.6, cc, 1, -9.8, 0.35);
     }
@@ -3638,7 +3677,7 @@ function tick(dt, doRender) {
   if (!W || !car) { gl.clearColor(0.04, 0.05, 0.07, 1); gl.clear(gl.COLOR_BUFFER_BIT); return; }
   time += dt;
   readInput();
-  evt.hit = 0; evt.land = 0; evt.shift = false; evt.down = false;
+  evt.hit = 0; evt.land = 0; evt.shift = false; evt.down = false; evt.kind = ''; evt.col = null;
   if (mode === 'countdown') {
     // online the lights run on the shared clock (and wait until the host has everyone on the line)
     if (netRun()) cdT = net.race.greenL ? 3.6 + (nowMs() - net.race.greenL) / 1000 : -1; else cdT += dt;
@@ -3655,6 +3694,8 @@ function tick(dt, doRender) {
       else if (n > 0) { center(`<div class="lights">${[3, 2, 1].map(k => `<i class="${k >= n ? 'r' : ''}"></i>`).join('')}</div><div class="cdn">${n}</div>`, 1.0); sfx.beep(620, 0.12); }
       else { center('<div class="lights go"><i></i><i></i><i></i></div><div class="big yel">Go</div>', 0.9); sfx.beep(1240, 0.35); mode = 'race'; raceT = 0; acc = 0; if (netRun()) net.race.green = true; }
     }
+    // on the grid everyone is a ghost: cars that overlap now (four or more share lanes) pass through until apart
+    if (netRun() && net.race.greenL) netCollide(netWT());
     const Ee = P.engine;
     car.rpm += ((Ee.idle + input.thr * (Ee.redline * 0.82 - Ee.idle) + (input.thr > 0 ? Math.sin(time * 40) * 150 : 0)) - car.rpm) * Math.min(1, dt * 9);
     car.thrE = input.thr; car.boost += (input.thr * 0.3 - car.boost) * Math.min(1, dt * 2);
@@ -3662,6 +3703,7 @@ function tick(dt, doRender) {
   }
   if (mode === 'race' || mode === 'done') {
     acc += dt; let steps = 0;
+    const wtF = netRun() && net.race.greenL ? netWT() : 0;
     while (acc >= STEP && steps < 12) {
       acc -= STEP; steps++;
       savePrev();
@@ -3674,6 +3716,7 @@ function tick(dt, doRender) {
       }
       if (mode === 'done') { const ai = C.aiDrive(W, car, P, aiDone); inp = { steer: ai.steer, thr: 0, brk: 1, hb: false, analog: true }; }
       C.stepCar(W, car, P, inp, STEP);
+      if (wtF) netCollide(wtF - acc);
       if (car.hitV > evt.hit) { evt.hit = car.hitV; evt.kind = car.hitKind; evt.x = car.hitX; evt.z = car.hitZ; evt.nx = car.hitNx; evt.nz = car.hitNz; evt.front = car.hitFront; }
       car.hitV = 0;
       evt.land = Math.max(evt.land, car.landV); car.landV = 0;
@@ -3702,6 +3745,7 @@ function tick(dt, doRender) {
   updateVis(dt);
   if (netRun()) netSample();
   if (mode !== 'paused') {
+    if (netRun()) netContactFrame(dt);
     if (evt.hit > 3 && (mode === 'race' || mode === 'done')) onImpact(evt);
     if (evt.land > 5) rumble(Math.min(1, evt.land / 16), Math.min(0.6, evt.land / 20), 140);
     // a pad hums softly through a slide, more the further the tail is out (light motor only, a few times a second)

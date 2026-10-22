@@ -1819,6 +1819,206 @@ function softWalls(W, c, dt) {
   c.bankP = p;
 }
 
+// ---------------- car against car (online rooms) ----------------
+// Each browser drives its own car and sees the others only through their samples, so each resolves its own side of a
+// contact: the two bodies are boxes, the impulse is the rigid-body one between them (both masses and yaw inertias, the
+// contact point, restitution and sliding friction), and only the own car takes it. Both browsers see nearly the same
+// contact (the others are drawn within ~0.1-0.8 m of where they are), so between them momentum comes out about right.
+// Until the other's samples show its response, its pose here carries on with the change this contact gives it (`kick`):
+// otherwise it would keep coming at its old speed and push again. The side that sees the contact first also sends it
+// ('hit'), for the case where the other's view of it just missed.
+// body outline per SHAPES entry in carmodel.js: front and rear end (z), half width
+const BOXES = { hatch: [2.1, -2.08, 0.91], sedan: [2.22, -2.2, 0.89], boxhatch: [1.98, -1.97, 0.89], small: [1.92, -1.93, 0.89], liftback: [2.18, -2.14, 0.89],
+  pickup: [2.25, -2.25, 0.9], coupe: [2.15, -2.1, 0.92], f1: [2.44, -2.3, 0.88] };
+const HIT = { deep: 0.75, deepT: 0.03, yawI: 2, dy: 1.2, mu: 0.3, push: 0.35, pushMax: 0.05, slop: 0.02, ep: 0.3, mute: 0.3, kickDrop: 0.35, kickMin: 0.8, dvMax: 25 };
+function carBox(P) { const b = BOXES[P.shape] || BOXES.hatch; return { f: b[0], r: b[1], w: b[2] }; }
+// two boxes {x, z, h, f, r, w} (separating axes): the normal pushes a out of b, the point is midway into the overlap
+function boxContact(a, b) {
+  const afx = Math.sin(a.h), afz = Math.cos(a.h), bfx = Math.sin(b.h), bfz = Math.cos(b.h);
+  const al = (a.f - a.r) / 2, bl = (b.f - b.r) / 2, am = (a.f + a.r) / 2, bm = (b.f + b.r) / 2;
+  const acx = a.x + afx * am, acz = a.z + afz * am, bcx = b.x + bfx * bm, bcz = b.z + bfz * bm, dx = acx - bcx, dz = acz - bcz;
+  const ax = [[afx, afz, 0], [-afz, afx, 0], [bfx, bfz, 1], [-bfz, bfx, 1]];
+  let best = 1e9, bi = 0, bs = 1;
+  for (let i = 0; i < 4; i++) {
+    const ux = ax[i][0], uz = ax[i][1];
+    const ra = Math.abs(ux * afx + uz * afz) * al + Math.abs(-ux * afz + uz * afx) * a.w;
+    const rb = Math.abs(ux * bfx + uz * bfz) * bl + Math.abs(-ux * bfz + uz * bfx) * b.w;
+    const d = dx * ux + dz * uz, ov = ra + rb - Math.abs(d);
+    if (ov <= 0) return null;
+    if (ov < best) { best = ov; bi = i; bs = d < 0 ? -1 : 1; }
+  }
+  const nx = ax[bi][0] * bs, nz = ax[bi][1] * bs, refA = ax[bi][2] === 0;
+  // the incident box's corners that reach furthest into the reference box (one for a corner, two for an edge)
+  const inc = refA ? b : a, ifx = refA ? bfx : afx, ifz = refA ? bfz : afz, sg = refA ? 1 : -1;
+  let px = 0, pz = 0, n = 0, dmax = -1e9;
+  const cs = [[inc.f, inc.w], [inc.f, -inc.w], [inc.r, inc.w], [inc.r, -inc.w]].map(([f, s]) => [inc.x + ifx * f - ifz * s, inc.z + ifz * f + ifx * s]);
+  for (const v of cs) dmax = Math.max(dmax, sg * (v[0] * nx + v[1] * nz));
+  for (const v of cs) if (sg * (v[0] * nx + v[1] * nz) > dmax - 0.08) { px += v[0]; pz += v[1]; n++; }
+  px /= n; pz /= n;
+  // kept within the reference face, then moved half way back through the overlap
+  const rc = refA ? [acx, acz] : [bcx, bcz], tx = -nz, tz = nx, ext = bi % 2 === 0 ? (refA ? a.w : b.w) : (refA ? al : bl);
+  const tp = (px - rc[0]) * tx + (pz - rc[1]) * tz, tc = clamp(tp, -ext, ext);
+  px += tx * (tc - tp) - sg * nx * best / 2; pz += tz * (tc - tp) - sg * nz * best / 2;
+  return { nx, nz, pen: best, px, pz };
+}
+// the other car as seen here, plus the change a contact gave it that its samples don't show yet. Along its heading the
+// change carries on (it rolls), sideways its tyres scrub it off within a few tenths, and so does the spin
+const KL = [0.3, 4, 3]; // decay rates (1/s): along, sideways, yaw
+function kickAt(K, wt, out) {
+  const tau = Math.max(0, wt - K.t);
+  for (let i = 0; i < 3; i++) {
+    const e = Math.exp(-KL[i] * tau), s = (1 - e) / KL[i], v = K.v[i];
+    if (i < 2) { out.x += v[0] * s; out.z += v[1] * s; out.vx += v[0] * e; out.vz += v[1] * e; } else { out.h += v * s; out.w += v * e; }
+  }
+  out.x += K.x; out.z += K.z; out.h += K.h;
+  return out;
+}
+// v0: the other's velocity as seen before the contact, to tell when its samples show the response
+function kickAdd(k, wt, h, dvx, dvz, dw, v0) {
+  let K = k.kick;
+  if (!K) K = k.kick = { t: wt, t0: wt, v0, x: 0, z: 0, h: 0, v: [[0, 0], [0, 0], 0] };
+  else {
+    // rebase to now: what has built up so far becomes a fixed offset
+    const tau = Math.max(0, wt - K.t);
+    for (let i = 0; i < 3; i++) {
+      const e = Math.exp(-KL[i] * tau), s = (1 - e) / KL[i];
+      if (i < 2) { K.x += K.v[i][0] * s; K.z += K.v[i][1] * s; K.v[i][0] *= e; K.v[i][1] *= e; } else { K.h += K.v[2] * s; K.v[2] *= e; }
+    }
+    K.t = wt;
+  }
+  const fx = Math.sin(h), fz = Math.cos(h), a = dvx * fx + dvz * fz;
+  K.v[0][0] += fx * a; K.v[0][1] += fz * a; K.v[1][0] += dvx - fx * a; K.v[1][1] += dvz - fz * a; K.v[2] += dw;
+}
+// one physics step of the own car c (spec P) against another car q {x, y, z, h, vx, vz, w, ghost} (spec Q).
+// k is what this browser keeps about the pair: thru (overlapping while one was a ghost: pass through until apart), was
+// (touching last step), soft (easing out of a deep overlap), ep (wall time of the last contact), mute (no impulses until
+// then), kick.
+function carContact(c, P, q, Q, k, wt) {
+  const A = carBox(P), B = carBox(Q);
+  A.x = c.x; A.z = c.z; A.h = c.h; B.x = q.x; B.z = q.z; B.h = q.h;
+  const ct = Math.abs(c.y - q.y) < HIT.dy ? boxContact(A, B) : null;
+  // a ghost (paused, finished, just reset) touches nothing; whoever it overlaps stays see-through until they're apart
+  if (c.ghost || q.ghost) { k.thru = !!ct; k.was = false; return null; }
+  if (!ct) { k.thru = false; k.was = false; return null; }
+  if (k.thru) return null;
+  const { nx, nz, pen, px, pz } = ct, mA = P.mass, mB = Q.mass, IA = P.Iz * HIT.yawI, IB = Q.Iz * HIT.yawI;
+  const rax = px - c.x, raz = pz - c.z, rbx = px - q.x, rbz = pz - q.z;
+  // velocity of the contact point on each body (yaw rate w, + = left: a point at r moves w·(rz, −rx))
+  const vrx = (c.vx + c.w * raz) - (q.vx + q.w * rbz), vrz = (c.vz - c.w * rax) - (q.vz - q.w * rbx);
+  const vn = vrx * nx + vrz * nz, tx = -nz, tz = nx, vt = vrx * tx + vrz * tz;
+  // appearing deep inside (a stalled driver's samples coming back, a scrum seen late) is not a crash: they ease apart
+  // without an impulse (a deep overlap's normal can point anywhere). Closing fast, the first step can be deep anyway
+  if (!k.was && pen > HIT.deep + Math.max(0, -vn) * HIT.deepT) k.soft = true;
+  else if (pen < HIT.deep * 0.4) k.soft = false;
+  k.was = true;
+  const first = wt - k.ep > HIT.ep;
+  k.ep = wt;
+  let jn = 0, jt = 0;
+  if (vn < 0 && wt >= k.mute && !k.soft) {
+    // a soft bump bounces a little, a big hit crumples and hardly bounces at all
+    const e = lerp(0.3, 0.08, clamp((-vn - 1) / 12, 0, 1));
+    const cA = raz * nx - rax * nz, cB = rbz * nx - rbx * nz;
+    jn = -(1 + e) * vn / (1 / mA + 1 / mB + cA * cA / IA + cB * cB / IB);
+    // panels scrape along each other: friction against the sliding, at most mu of the push
+    const tA = raz * tx - rax * tz, tB = rbz * tx - rbx * tz;
+    jt = clamp(-vt / (1 / mA + 1 / mB + tA * tA / IA + tB * tB / IB), -HIT.mu * jn, HIT.mu * jn);
+  }
+  const Jx = nx * jn + tx * jt, Jz = nz * jn + tz * jt;
+  const dwA = (raz * Jx - rax * Jz) / IA;
+  c.vx += Jx / mA; c.vz += Jz / mA; c.w += dwA;
+  // out of the overlap, each car its share (the other browser moves the other car); an overlap that stays (the other
+  // side doesn't see it the same) is taken more and more by this car alone
+  const own = lerp(mB / (mA + mB), 1, clamp((pen - 0.1) / 0.25, 0, 1)), sA = Math.min(HIT.pushMax, Math.max(0, pen - HIT.slop) * HIT.push * own);
+  c.x += nx * sA; c.z += nz * sA;
+  // a hit (not panels leaning on each other) shows here on the other car until its samples catch up: carrying on at its
+  // old speed it would come through again. Leaning is left out: the other driver's own tyres hold it there
+  const dvB = jn / mB;
+  if (dvB > HIT.kickMin) kickAdd(k, wt, q.h, -Jx / mB, -Jz / mB, -(rbz * Jx - rbx * Jz) / IB, [q.vx, q.vz]);
+  // a big hit lifts the car a little, like hitting a post
+  if (-vn > 4 && jn > 0 && !c.air) c.vy = Math.max(c.vy, Math.min(1.0, -vn * 0.05));
+  // where the other car was hit, in its own frame (forward, right), for the 'hit' message
+  const qfx = Math.sin(q.h), qfz = Math.cos(q.h);
+  return { first, vn, vt, jn, jt, Jx, Jz, px, pz, nx, nz, pen, bf: rbx * qfx + rbz * qfz, br: -rbx * qfz + rbz * qfx,
+    own: [Jx / mA, Jz / mA, dwA], h: c.h, front: rax * Math.sin(c.h) + raz * Math.cos(c.h) > 0 };
+}
+// the other side saw a contact this side didn't (or not yet): its impulse on the own car J, at (bf, br) in this car's
+// frame; dv is the change it took itself at wall time t, to carry on here until its samples show it
+function carHitMsg(c, P, k, m, wt, q) {
+  if (wt - k.ep < HIT.ep + 0.1 || k.thru || c.ghost) return false;
+  const fx = Math.sin(c.h), fz = Math.cos(c.h);
+  let Jx = m.j[0], Jz = m.j[1];
+  const dv = Math.hypot(Jx, Jz) / P.mass; if (dv > HIT.dvMax) { Jx *= HIT.dvMax / dv; Jz *= HIT.dvMax / dv; }
+  const rx = fx * m.b[0] - fz * m.b[1], rz = fz * m.b[0] + fx * m.b[1];
+  c.vx += Jx / P.mass; c.vz += Jz / P.mass; c.w += clamp((rz * Jx - rx * Jz) / P.Iz, -3, 3);
+  k.ep = wt; k.mute = wt + HIT.mute;
+  if (m.dv && wt - m.t < 0.6 && isFinite(m.h)) kickAdd(k, m.t, m.h, m.dv[0], m.dv[1], m.dv[2], q && !k.kick ? [q.vx, q.vz] : null);
+  return true;
+}
+// where a driver is at wall race time wt from its samples [wt, x, y, z, h, vx, vz, s, pitch, roll, steer, flags, rpm]:
+// cubic between samples (they carry velocity), and past the newest one carried on along an arc at its speed and yaw
+// rate for up to half a second, which covers the network's delay. o = { hist, cur }
+function trackPose(o, wt, out) {
+  const H = o.hist, n = H.length;
+  let i = Math.min(o.cur, n - 1);
+  while (i > 0 && H[i][0] > wt) i--;
+  while (i < n - 1 && H[i + 1][0] <= wt) i++;
+  o.cur = i;
+  const a = H[i];
+  if (i < n - 1 && wt >= a[0]) {
+    const b = H[i + 1], T = Math.max(1e-3, b[0] - a[0]), u = (wt - a[0]) / T, u2 = u * u, u3 = u2 * u;
+    const h00 = 2 * u3 - 3 * u2 + 1, h10 = u3 - 2 * u2 + u, h01 = -2 * u3 + 3 * u2, h11 = u3 - u2, tv = T > 0.6 ? 0 : T;
+    out.x = h00 * a[1] + h10 * tv * a[5] + h01 * b[1] + h11 * tv * b[5];
+    out.z = h00 * a[3] + h10 * tv * a[6] + h01 * b[3] + h11 * tv * b[6];
+    out.y = lerp(a[2], b[2], u); out.h = a[4] + wrapA(b[4] - a[4]) * u; out.s = lerp(a[7], b[7], u);
+    out.pitch = lerp(a[8], b[8], u); out.roll = lerp(a[9], b[9], u); out.steer = lerp(a[10], b[10], u);
+    out.vx = lerp(a[5], b[5], u); out.vz = lerp(a[6], b[6], u); out.fl = b[11]; out.w = clamp(wrapA(b[4] - a[4]) / T, -6, 6);
+  } else {
+    const q = i > 0 ? H[i - 1] : a, p = i > 1 ? H[i - 2] : q, dq = Math.max(0.02, a[0] - q[0]), dp = Math.max(0.02, q[0] - p[0]), dt = clamp(wt - a[0], 0, 0.8);
+    // rates from the last two intervals, only as far as both agree (minmod): a jolt (a crash, a kerb) is not a trend
+    const mm = (u, v) => (u > 0) === (v > 0) ? (Math.abs(u) < Math.abs(v) ? u : v) : 0;
+    const ang = s => Math.atan2(s[5], s[6]), spd = s => Math.hypot(s[5], s[6]), two = i > 1 && a[0] - p[0] < 0.5;
+    const w = i > 0 ? clamp(two ? mm(wrapA(a[4] - q[4]) / dq, wrapA(q[4] - p[4]) / dp) : wrapA(a[4] - q[4]) / dq, -2.5, 2.5) : 0, vy = i > 0 ? clamp((a[2] - q[2]) / dq, -12, 12) : 0;
+    // the path bends as the velocity turns, which in a slide is not as the nose turns
+    const va = spd(a), wv = two && va > 2 && spd(q) > 2 && spd(p) > 2 ? clamp(mm(wrapA(ang(a) - ang(q)) / dq, wrapA(ang(q) - ang(p)) / dp), -2.5, 2.5) : w;
+    const th = wv * dt, cs = Math.cos(th / 2), sn = Math.sin(th / 2); // the chord of the arc points half way round it
+    // and speeding up or braking (velocities are sent to 0.1 m/s), stopping at rest
+    const vh = va > 0.5 ? ang(a) : a[4], al = two ? clamp(mm((va - spd(q)) / dq, (spd(q) - spd(p)) / dp), -12, 12) : 0;
+    const tA = al < 0 ? Math.min(dt, va / -al) : dt, ds = al * tA * (dt - tA / 2), mx = Math.sin(vh + th / 2), mz = Math.cos(vh + th / 2);
+    out.x = a[1] + (a[5] * cs + a[6] * sn) * dt + mx * ds; out.z = a[3] + (a[6] * cs - a[5] * sn) * dt + mz * ds;
+    out.y = a[2] + vy * dt; out.h = a[4] + w * dt; out.s = a[7] + va * dt + ds;
+    const v2 = va + al * tA, c2 = Math.cos(th), s2 = Math.sin(th);
+    out.pitch = a[8]; out.roll = a[9]; out.steer = a[10]; out.fl = a[11]; out.w = w;
+    out.vx = va > 0.5 ? (a[5] * c2 + a[6] * s2) * v2 / va : a[5]; out.vz = va > 0.5 ? (a[6] * c2 - a[5] * s2) * v2 / va : a[6];
+  }
+  return out;
+}
+// a sample from after the contact that has the other car's velocity changed most of the way the kick says (the other
+// browser has resolved it), or one from well after it (it never did: believe the samples)
+function kickShown(K, smp) {
+  const ts = smp[0]; if (ts <= K.t0) return false;
+  if (ts > K.t0 + HIT.kickDrop || !K.v0) return ts > K.t0 + (K.v0 ? HIT.kickDrop : 0.1);
+  const z = { x: 0, z: 0, h: 0, vx: 0, vz: 0, w: 0 }; kickAt(K, ts, z);
+  const k2 = z.vx * z.vx + z.vz * z.vz;
+  return k2 < 0.25 || ((smp[5] - K.v0[0]) * z.vx + (smp[6] - K.v0[1]) * z.vz) / k2 > 0.5;
+}
+// the other car where this browser puts it: its samples plus a contact's kick (the drawn pose adds o.err on top)
+function seenPose(o, wt, out) { trackPose(o, wt, out); if (o.kick) kickAt(o.kick, wt, out); return out; }
+// new samples (checked, in order) move the estimate: keep drawing where it was and let o.err ease the difference away.
+// Once they reach past a contact, they show the other's own response to it and the kick goes.
+const tpA = {}, tpB = {};
+function trackTake(o, list, wt) {
+  const had = o.hist.length > 0;
+  if (had) { seenPose(o, wt, tpA); tpA.x += o.err[0]; tpA.y += o.err[1]; tpA.z += o.err[2]; tpA.h += o.err[3]; }
+  for (const s of list) if (!o.hist.length || s[0] > o.hist[o.hist.length - 1][0]) o.hist.push(s);
+  if (o.hist.length > 12000) { o.hist.splice(0, o.hist.length - 9000); o.cur = 0; }
+  if (o.kick && o.hist.length && kickShown(o.kick, o.hist[o.hist.length - 1])) o.kick = null;
+  if (had) {
+    seenPose(o, wt, tpB);
+    const ex = tpA.x - tpB.x, ey = tpA.y - tpB.y, ez = tpA.z - tpB.z;
+    if (ex * ex + ey * ey + ez * ez < 36) { o.err[0] = ex; o.err[1] = ey; o.err[2] = ez; o.err[3] = wrapA(tpA.h - tpB.h); } else o.err.fill(0);
+  }
+}
+
 // ---------------- AI driver (rival ghost) ----------------
 function prepAI(W, P, aggr) {
   const T = W.T, st = W.st, n = T.n;
@@ -1944,6 +2144,7 @@ CARS.forEach(measureCar);
 return { TUNE, CARS, STAGES, CONDS, stageDef, stageKey, stageTitle, condName, dailyKey, selfClearance, RADIUS, RW, carStats, torqueAt, engineCurve, measureCar, buildWorld, buildTrack, lapWrap, makeNoise, rng, sampleAt, roadYAt, terrainH, nearest, project,
   makeCar, resetCar, stepCar, locate, groundAt, simulateRun, prepAI, aiDrive, clamp, lerp, sstep, wrapA, hkey, CELL,
   STREET, streetLoop, streetPads, loopSide, loopNear, waterMask, wetAt, shoreDist, hillAt, unpackPts, rayWalls,
-  demAt, woodAt, circuitRun, paveEdge, inGravel };
+  demAt, woodAt, circuitRun, paveEdge, inGravel,
+  HIT, carBox, boxContact, carContact, carHitMsg, kickAt, trackPose, seenPose, trackTake };
 })();
 if (typeof module !== 'undefined') module.exports = RallyCore;
