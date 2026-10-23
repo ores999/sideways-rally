@@ -752,25 +752,27 @@ function sphereGeo(g, cx, cy, cz, r, ry, col, mask, NA, NB) {
     g.quad(P(a0, b0), P(a1, b0), P(a1, b1), P(a0, b1), col, 0, [cx, cy, cz], uv);
   }
 }
-function fanGeo() {
-  const g = new Geo();
+// far: the same figure with a fraction of the segments (and no shoes or neck), for the crowd past FAN_NEAR
+function fanGeo(far) {
+  const g = new Geo(), k = far ? 0.5 : 1, sg = n => Math.max(4, Math.round(n * k));
   const jeans = lin('#2b3a55'), skin = lin('#d8a27c'), shirt = [1, 1, 1], hair = lin('#2a211b'), shoe = lin('#1a1a1c');
   for (const sx of [-1, 1]) {
-    g.cyl(sx * 0.11, 0.0, 0.02, 0.07, 0.06, 0.09, 8, shoe, 0, 'y', true, -1);
-    g.cyl(sx * 0.11, 0.08, 0, 0.075, 0.09, 0.78, 8, jeans, 0, 'y', true, -1);
+    if (!far) g.cyl(sx * 0.11, 0.0, 0.02, 0.07, 0.06, 0.09, 8, shoe, 0, 'y', true, -1);
+    g.cyl(sx * 0.11, far ? 0 : 0.08, 0, 0.075, 0.09, far ? 0.86 : 0.78, sg(8), jeans, 0, 'y', true, -1);
     // arms up, cheering: sleeve, forearm, hand
-    g.cyl(sx * 0.27, 1.22, 0, 0.065, 0.058, 0.3, 7, shirt, 0, 'y', true, 0);
-    g.cyl(sx * 0.29, 1.5, 0, 0.05, 0.045, 0.24, 7, skin, 0, 'y', false, -1);
-    sphereGeo(g, sx * 0.29, 1.76, 0, 0.055, 0.06, skin, -1, 7, 4);
+    g.cyl(sx * 0.27, 1.22, 0, 0.065, 0.058, 0.3, sg(7), shirt, 0, 'y', true, 0);
+    g.cyl(sx * 0.29, 1.5, 0, 0.05, 0.045, 0.24, sg(7), skin, 0, 'y', false, -1);
+    if (!far) sphereGeo(g, sx * 0.29, 1.76, 0, 0.055, 0.06, skin, -1, 7, 4);
   }
-  g.cyl(0, 0.82, 0, 0.19, 0.2, 0.18, 10, jeans, 0, 'y', false, -1);         // hips
-  g.cyl(0, 0.98, 0, 0.2, 0.22, 0.44, 10, shirt, 0, 'y', true, 0);           // torso
-  sphereGeo(g, 0, 1.42, 0, 0.215, 0.07, shirt, 0, 10, 4);                   // shoulders
-  g.cyl(0, 1.44, 0, 0.055, 0.055, 0.08, 7, skin, 0, 'y', false, -1);        // neck
-  sphereGeo(g, 0, 1.62, 0, 0.115, 0.13, skin, -1, 10, 6);                   // head
-  sphereGeo(g, 0, 1.68, -0.015, 0.122, 0.09, hair, -1, 10, 4);              // hair / beanie
+  g.cyl(0, 0.82, 0, 0.19, 0.2, 0.18, sg(10), jeans, 0, 'y', false, -1);         // hips
+  g.cyl(0, 0.98, 0, 0.2, 0.22, 0.44, sg(10), shirt, 0, 'y', true, 0);           // torso
+  sphereGeo(g, 0, 1.42, 0, 0.215, 0.07, shirt, 0, sg(10), far ? 2 : 4);         // shoulders
+  if (!far) g.cyl(0, 1.44, 0, 0.055, 0.055, 0.08, 7, skin, 0, 'y', false, -1);  // neck
+  sphereGeo(g, 0, 1.62, 0, 0.115, 0.13, skin, -1, sg(10), far ? 4 : 6);         // head
+  sphereGeo(g, 0, 1.68, -0.015, 0.122, 0.09, hair, -1, sg(10), far ? 2 : 4);    // hair / beanie
   return smoothGeo(g, 50);
 }
+const FAN_NEAR = 30; // metres from the camera: closer fans get the full figure
 function chevronGeo() {
   const g = new Geo(); const w = 0.85, y0 = 0.75, y1 = 1.55;
   // board (front face +z) uv full texture minus post strip
@@ -2527,20 +2529,39 @@ function buildScene(R, W) {
   // spectators (dynamic)
   const shirts = ['#d8262e', '#1f5fbf', '#f2c230', '#f4f4f0', '#2f9e55', '#f07a1c', '#7a3fb0', '#1a1a1a', '#e85d9f', '#22a6b3', '#b3d334', '#c7c2b8'].map(lin);
   S.fans = O.fans.map(f => ({ ...f, col: shirts[f.c % shirts.length], jump: 0 }));
-  S.fanData = new Float32Array(S.fans.length * 11);
-  const writeFans = (time, carX, carZ) => {
-    S.fans.forEach((f, i) => {
-      const d = Math.hypot(f.x - carX, f.z - carZ);
-      const ex = d < 45 ? 1 : 0;
+  // The crowd is redrawn from scratch every frame (they jump as the car passes): only the fans in view and inside the
+  // fog are written, the near ones with the full figure and the rest with a simple one. Drawing every fan of the stage
+  // with the full figure was the dearest thing in the frame at Monaco and Spa (1100-1300 fans, 2.6 M vertices).
+  const nearD = new Float32Array(S.fans.length * 11), farD = new Float32Array(S.fans.length * 11);
+  const updateFans = (time, carX, carZ) => {
+    for (const f of S.fans) {
+      const ex = Math.hypot(f.x - carX, f.z - carZ) < 45 ? 1 : 0;
       f.jump += (ex - f.jump) * 0.08;
-      const hop = f.jump * Math.max(0, Math.sin(time * 9 + f.ph)) * 0.35;
-      S.fanData.set([f.x, f.y + hop, f.z, f.rot, 1, f.h, 0, 0, f.col[0], f.col[1], f.col[2]], i * 11);
-    });
+      f.hop = f.jump * Math.max(0, Math.sin(time * 9 + f.ph)) * 0.35;
+    }
   };
-  writeFans(0, 1e5, 1e5);
-  S.fanMesh = R.mesh(fanGeo(), S.fanData);
-  S.updateFans = (time, x, z) => { writeFans(time, x, z); R.setInstances(S.fanMesh, S.fanData); };
-  add(S.fanMesh, { mode: 0 }, true);
+  // vp: the camera's view-projection (a frame old is fine: there's a margin), cam: its position, fogEnd: past it nothing shows
+  const cullFans = (vp, cam, fogEnd) => {
+    let nn = 0, nf = 0;
+    const n2 = FAN_NEAR * FAN_NEAR, f2 = (fogEnd + 5) * (fogEnd + 5);
+    for (const f of S.fans) {
+      const dx = f.x - cam[0], dz = f.z - cam[2], d2 = dx * dx + dz * dz;
+      if (d2 > f2) continue;
+      const y = f.y + 0.9, w = vp[3] * f.x + vp[7] * y + vp[11] * f.z + vp[15];
+      if (w < -2) continue;
+      const m = w * 1.08 + 2.5, cx = vp[0] * f.x + vp[4] * y + vp[8] * f.z + vp[12], cy = vp[1] * f.x + vp[5] * y + vp[9] * f.z + vp[13];
+      if (cx > m || cx < -m || cy > m || cy < -m) continue;
+      const a = d2 < n2 ? nearD : farD, o = (d2 < n2 ? nn++ : nf++) * 11;
+      a[o] = f.x; a[o + 1] = f.y + (f.hop || 0); a[o + 2] = f.z; a[o + 3] = f.rot; a[o + 4] = 1; a[o + 5] = f.h; a[o + 6] = 0; a[o + 7] = 0;
+      a[o + 8] = f.col[0]; a[o + 9] = f.col[1]; a[o + 10] = f.col[2];
+    }
+    R.setInstances(S.fanNear, nearD.subarray(0, nn * 11)); R.setInstances(S.fanFar, farD.subarray(0, nf * 11));
+  };
+  S.fans.forEach((f, i) => farD.set([f.x, f.y, f.z, f.rot, 1, f.h, 0, 0, f.col[0], f.col[1], f.col[2]], i * 11));
+  S.fanNear = R.mesh(fanGeo(), farD); S.fanFar = R.mesh(fanGeo(true), farD);
+  S.fanMeshes = new Set([S.fanNear, S.fanFar]);
+  S.updateFans = updateFans; S.cullFans = cullFans;
+  add(S.fanNear, { mode: 0 }, true); add(S.fanFar, { mode: 0 }, true);
   // arches: start, splits, finish
   const placeArch = (s, text, bg, fg, sub, pillar) => {
     const p = C.sampleAt(T, s);

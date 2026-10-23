@@ -111,6 +111,7 @@ kbd { font-family: var(--f-mono); font-size: 11px; font-weight: 500; padding: 1p
 .seg.seg5 { grid-template-columns: auto 1fr 1.25fr 1fr 1fr; }
 .seg.seg5 button { font-size: 13px; padding-left: 7px; padding-right: 7px; }
 .gfx-note { margin: 0 2px; }
+.tune-note.gfx-warn { margin: 6px 2px 0; color: #ffc861; }
 .gfx-rows { display: grid; gap: 6px; }
 .gfx-row { display: grid; grid-template-columns: 112px 1fr; align-items: center; gap: 10px; padding-left: 2px; }
 .gfx-row b { font-weight: 700; font-size: 15px; }
@@ -559,6 +560,7 @@ table.tt { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
         <p class="label group-label">Graphics</p>
         <div class="seg seg5" id="optGfx"><button data-v="auto" aria-pressed="true">Auto</button><button data-v="min" aria-pressed="false">Minimum</button><button data-v="perf" aria-pressed="false">Performance</button><button data-v="bal" aria-pressed="false">Balanced</button><button data-v="qual" aria-pressed="false">Quality</button></div>
         <p class="tune-note gfx-note" id="gfxNote"></p>
+        <p class="tune-note gfx-warn" id="gfxWarn" hidden>Your browser is drawing the game without the graphics card (hardware acceleration is off or blocked), so it will be slow on any setting. In Chrome or Edge: Settings → System → turn on "Use graphics acceleration when available", then restart the browser.</p>
         <div class="gfx-rows">
           <div class="gfx-row"><b>Resolution</b><div class="seg seg3" data-g="res"><button data-v="0" aria-pressed="false">Low</button><button data-v="1" aria-pressed="false">Medium</button><button data-v="2" aria-pressed="false">High</button></div></div>
           <div class="gfx-row"><b>Smooth edges</b><div class="seg seg3" data-g="aa"><button data-v="0" aria-pressed="false">Off</button><button data-v="1" aria-pressed="false">Low</button><button data-v="2" aria-pressed="false">High</button></div></div>

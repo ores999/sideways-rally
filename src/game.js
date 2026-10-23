@@ -30,22 +30,58 @@ if (!C.CONDS.includes(settings.cond)) settings.cond = 'day';
 if (!settings.v2) { settings.voice = false; settings.ghost = false; settings.v2 = 1; }
 settings.dailyKey = C.dailyKey(); // a new day, a new road
 // graphics: a preset sets every level below; touching one of them makes it 'custom' (settings.g). Everything is
-// applied as it renders, nothing rebuilds the stage. Auto starts at Quality (Balanced on touch screens) and steps
-// down for the session when the lowest resolution still can't hold the frame rate.
+// applied as it renders, nothing rebuilds the stage. Auto runs a ladder of its own (AUTO_LV, see adaptRes).
 // Measured at 3200x2000 (ms/frame, Pine / Dark Pines / Monaco / Spa): Quality 14.0 / 14.2 / 8.3 / 8.0,
 // Balanced 8.4 / 9.6 / 5.5 / 5.2, Performance 2.7 / 3.2 / 2.5 / 2.8. Resolution is most of it; then the post chain
 // and MSAA (~3 ms each at that size), shadows ~1-2.5 ms. Shorter tree and grass distances changed nothing measurable.
 // Minimum (owner: "una opción extrema, sin árboles ni cosas que cuesten") also bares the scenery: no grass, no crowd,
-// trees as their far, solid shapes (they're still there to hit), and a lower resolution floor.
+// trees as their far, solid shapes (they're still there to hit), and a lower resolution floor. detail: false = the
+// road, ground, rock and foliage shaders' low-detail variant (gl.js LOWQ: fewer noise layers, no bump; 8-19 % of the
+// frame at 1920x1080), for the levels that already went without effects.
+// Owner, 2026-10-22: "priorizar resolución y fps, es lo que más se nota": the presets keep more pixels and drop
+// effects instead (Balanced is full resolution, Performance 75 % with nothing else), and the picture is stretched to the
+// screen with a sharpening filter when it's drawn smaller.
 const PRESETS = {
-  min: { res: 0, aa: 0, shadows: false, post: false, rays: false, scenery: false },
-  perf: { res: 0, aa: 0, shadows: false, post: false, rays: false, scenery: true },
-  bal: { res: 1, aa: 1, shadows: true, post: true, rays: false, scenery: true },
+  min: { res: 0, aa: 0, shadows: false, post: false, rays: false, scenery: false, detail: false },
+  perf: { res: 1, aa: 0, shadows: false, post: false, rays: false, scenery: true, detail: false },
+  bal: { res: 2, aa: 1, shadows: true, post: true, rays: false, scenery: true },
   qual: { res: 2, aa: 2, shadows: true, post: true, rays: true, scenery: true },
 };
 const GFX_LV = ['min', 'perf', 'bal', 'qual'], GFX_NAME = { auto: 'Auto', min: 'Minimum', perf: 'Performance', bal: 'Balanced', qual: 'Quality', custom: 'Custom' };
 const RES_K = [0.5, 0.75, 1]; // of the screen's own pixels (at most 2 per CSS pixel)
-const coarse = matchMedia('(pointer: coarse)').matches, gAuto = { lv: coarse ? 2 : 3 };
+// Auto's ladder, cheapest first. Going down it drops effects before pixels: full resolution with no effects (2) comes
+// before any loss of resolution, which is the dynamic scale's job from there (and then levels 1 and 0).
+const AUTO_LV = [PRESETS.min, PRESETS.perf,
+  { res: 2, aa: 0, shadows: false, post: false, rays: false, scenery: true, detail: false },
+  { res: 2, aa: 0, shadows: true, post: false, rays: false, scenery: true },
+  { res: 2, aa: 0, shadows: true, post: true, rays: false, scenery: true },
+  PRESETS.bal, PRESETS.qual];
+const AUTO_FULL = 2; // the lowest level at full resolution
+const coarse = matchMedia('(pointer: coarse)').matches;
+// the graphics chip, as the browser names it (Chrome: "ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 …)")
+const GPU = (() => {
+  let s = '';
+  try { const e = gl.getExtension('WEBGL_debug_renderer_info'); s = String(gl.getParameter(e ? e.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || ''); } catch (e) { /* hidden */ }
+  // software rendering: Chrome with hardware acceleration off or its GPU blocked draws everything on the CPU
+  const soft = /swiftshader|llvmpipe|softpipe|basic render|software|microsoft basic/i.test(s);
+  const t = s.replace(/\((R|TM)\)/gi, '');
+  const name = ((t.match(/^ANGLE \([^,]*, (.*?)(?: \(0x[0-9a-f]+\))?(?: Direct3D.*| OpenGL.*| Vulkan.*|, .*)?\)?$/i) || [])[1] || t).replace(/^ANGLE Metal Renderer: /i, '');
+  // a first guess at Auto's level, before it has measured anything: integrated chips start at full resolution with
+  // no effects, mid ones with shadows, gaming GPUs and Apple's at the top
+  let lv = 4;
+  if (soft) lv = 0;
+  else if (/nvidia|geforce|rtx|gtx|quadro|radeon rx|radeon pro|arc\(tm\) a|arc a|apple m|apple gpu/i.test(s)) lv = 6;
+  else if (/iris|radeon\(tm\) (graphics|7[0-9]0m|6[0-9]0m)|radeon 7[0-9]0m|radeon 6[0-9]0m|adreno.*(7[0-9]{2}|6[4-9][0-9])/i.test(s)) lv = 3;
+  else if (/intel|uhd|hd graphics|mali|adreno|powervr|vega [0-9]|radeon r[2-7]|radeon\(tm\) r|videocore/i.test(s)) lv = 2;
+  if (coarse) lv = Math.min(lv, 4);
+  // a chip built into the processor (laptops): Windows may hand the browser this one even when there's a gaming card
+  const igpu = !soft && (lv === 2 || lv === 3) && /intel|amd|radeon/i.test(s);
+  return { s, name: soft ? 'software (no graphics card)' : name.replace(/\s+/g, ' ').trim(), soft, igpu, lv };
+})();
+// Auto's level for this session; what it settled on last time on this chip is where it starts
+const gAuto = { lv: GPU.lv, probe: 0, wait: 8, stable: 0 };
+// the dynamic resolution's state (adaptRes): scale of the level's resolution, the measuring window, the scene's size
+const dyn = { scale: 1, acc: 0, n: 0, js: 0, lastDown: -99, lastUp: -99, dpr: 1, slow: 0, fps: 0, sw: 1, sh: 1 };
 if ('shadows' in settings || 'post' in settings) { // before presets there were two switches: keep what was turned off
   if (settings.shadows === false || (settings.post === false && !coarse)) { // (touch screens started with post off)
     settings.gfx = 'custom';
@@ -55,7 +91,8 @@ if ('shadows' in settings || 'post' in settings) { // before presets there were 
 }
 if (!GFX_NAME[settings.gfx] || (settings.gfx === 'custom' && !settings.g)) settings.gfx = 'auto';
 if (settings.g) settings.g = Object.assign({}, PRESETS.qual, settings.g);
-const gq = () => settings.gfx === 'custom' ? settings.g : PRESETS[settings.gfx === 'auto' ? GFX_LV[gAuto.lv] : settings.gfx];
+{ const a = settings.autoG; if (a && a.gpu === GPU.s && a.lv >= 0 && a.lv < AUTO_LV.length) gAuto.lv = a.lv; }
+const gq = () => settings.gfx === 'custom' ? settings.g : settings.gfx === 'auto' ? AUTO_LV[gAuto.lv] : PRESETS[settings.gfx];
 const saveSettings = () => store.set('settings', settings);
 // ---- bytes <-> text (base64url) ----
 function b64e(u8) { let s = ''; for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
@@ -447,32 +484,39 @@ for (const [id, key] of TOGGLES) {
 // ---- graphics ----
 // after any change: a fresh measuring window for the dynamic resolution, and the menu
 function applyGfx(user) {
-  dyn.acc = 0; dyn.n = 0; dyn.slow = 0;
+  dyn.acc = 0; dyn.n = 0; dyn.js = 0; dyn.slow = 0; gAuto.stable = 0;
   if (user) { dyn.scale = 1; dyn.lastDown = -99; } // a new choice starts at full resolution and is judged from there
   renderGfx();
 }
 function setGfx(v) {
-  if (v === 'auto' && settings.gfx !== 'auto') gAuto.lv = coarse ? 2 : 3;
+  if (v === 'auto' && settings.gfx !== 'auto') { gAuto.lv = settings.autoG && settings.autoG.gpu === GPU.s ? settings.autoG.lv : GPU.lv; gAuto.wait = 8; }
   settings.gfx = v; delete settings.g; saveSettings(); applyGfx(true);
 }
 // one level by hand: the preset becomes 'custom', starting from what was in use
 function setGfxLevel(k, v) {
-  const g = Object.assign({}, gq(), { [k]: v });
+  const g = Object.assign({}, gq(), { [k]: v }); delete g.detail;
   if (k === 'post' && !v) g.rays = false; // the shafts are part of the post chain
   if (k === 'rays' && v) g.post = true;
-  const same = GFX_LV.find(n => Object.keys(PRESETS[n]).every(q => PRESETS[n][q] === g[q]));
+  const same = GFX_LV.find(n => Object.keys(PRESETS[n]).every(q => q === 'detail' || PRESETS[n][q] === g[q]));
   if (same) { settings.gfx = same; delete settings.g; } else { settings.gfx = 'custom'; settings.g = g; }
   saveSettings(); applyGfx(true);
 }
 function renderGfx() {
-  const G = gq(), lv = settings.gfx === 'auto' ? GFX_LV[gAuto.lv] : null;
+  const G = gq();
   for (const id of ['optGfx', 'pGfx']) for (const b of $(id).children) b.setAttribute('aria-pressed', String(b.dataset.v === settings.gfx));
   for (const el of document.querySelectorAll('[data-g]')) for (const b of el.children) b.setAttribute('aria-pressed', String(String(G[el.dataset.g]) === b.dataset.v));
   for (const k in GFX_OPT) $(GFX_OPT[k]).setAttribute('aria-pressed', String(G[k]));
-  $('gfxNote').textContent = settings.gfx === 'auto' ? `Running ${GFX_NAME[lv]}. Auto starts high and steps down if your device can't hold 60 fps.`
+  $('gfxNote').textContent = (settings.gfx === 'auto' ? `Running ${gfxDesc(G)}. Auto keeps 60 fps, dropping effects before resolution.`
     : settings.gfx === 'custom' ? 'Custom: your own mix of the settings below.'
-    : { min: 'For very slow devices: no grass or crowds, simple trees, low resolution.', perf: 'Lower resolution, no shadows, no glow.', bal: 'Sharp enough and smooth on most laptops.', qual: 'Everything on, at full resolution.' }[settings.gfx];
+    : { min: 'For very slow devices: no grass or crowds, simple trees, low resolution.', perf: 'Three-quarter resolution, no shadows, no glow.', bal: 'Full resolution with shadows and glow.', qual: 'Everything on, at full resolution.' }[settings.gfx])
+    + (GPU.name ? ` Graphics: ${GPU.name}.` : '')
+    + (GPU.igpu && /Windows/.test(navigator.userAgent) ? ' If this laptop also has a gaming graphics card, Windows can give it to the browser: Settings → System → Display → Graphics → your browser → High performance.' : '');
+  $('gfxWarn').hidden = !GPU.soft;
   $('fps').hidden = !settings.fps;
+}
+// what a set of levels amounts to, in a few words ("100 % · shadows · glow")
+function gfxDesc(G) {
+  return [Math.round(RES_K[G.res] * (settings.gfx === 'auto' ? dyn.scale : 1) * 100) + ' % resolution', G.shadows && 'shadows', G.post && 'glow', G.aa && 'smooth edges', !G.scenery && 'bare scenery'].filter(Boolean).join(', ');
 }
 for (const id of ['optGfx', 'pGfx']) for (const b of $(id).children) b.addEventListener('click', () => setGfx(b.dataset.v));
 for (const el of document.querySelectorAll('[data-g]')) for (const b of el.children) b.addEventListener('click', () => setGfxLevel(el.dataset.g, +b.dataset.v));
@@ -585,6 +629,7 @@ function loadStage(key, after) {
     if (!rallyOn() && keepCarAllowed(st.key)) renderCarList();
     setupCar();
     buildMinimap(); buildTvSpots(); resetEffects();
+    R.warm(); // the shaders, compiled in the background meanwhile (slow on Windows), are ready before the first frame
     hideLoading();
     mode = prevMode2 === 'boot' || prevMode2 === 'loading' ? 'menu' : 'menu';
     renderStageInfo();
@@ -3842,30 +3887,68 @@ function onSplit(k) {
 // ---------- main loop ----------
 let last = performance.now();
 const proj = M4.create(), view = M4.create(), lightView = M4.create(), lightProj = M4.create();
-// dynamic resolution: when frames run long the canvas renders fewer pixels (the browser scales it up),
-// and it creeps back up once there is headroom again. Judged on 1.5 s windows so single hitches don't count.
-// The frame rate comes first: it aims for 60 fps (on a 60 Hz screen there is no telling how much headroom is left).
-const dyn = { scale: 1, acc: 0, n: 0, lastDown: -99, dpr: 1, slow: 0, fps: 0 };
-function adaptRes(rawDt) {
+// dynamic resolution: when frames run long the scene is drawn with fewer pixels (stretched and sharpened onto the
+// screen), and it creeps back up once there is headroom again. Judged on 1.5 s windows so single hitches don't count.
+// The frame rate comes first: it aims for 60 fps (on a 60 Hz screen there is no telling how much headroom is left, so
+// going up is a probe that's undone if it costs frames).
+const wall = () => performance.now() / 1000;
+function adaptRes(rawDt, jsMs) {
   // gaps over a second are tab switches or loads, not slow rendering; a lone hitch averages out over the window
-  if (rawDt <= 0 || rawDt > 1 || document.hidden || mode === 'loading') { dyn.acc = 0; dyn.n = 0; return; }
-  dyn.acc += rawDt; dyn.n++;
+  if (rawDt <= 0 || rawDt > 1 || document.hidden || mode === 'loading') { dyn.acc = 0; dyn.n = 0; dyn.js = 0; return; }
+  dyn.acc += rawDt; dyn.n++; dyn.js += jsMs;
   if (dyn.acc < 1.5) return;
-  const avg = dyn.acc / dyn.n, floor = resFloor(); dyn.acc = 0; dyn.n = 0;
-  if (avg > 1 / 52 && dyn.scale > floor) { dyn.scale = Math.max(floor, dyn.scale * (avg > 1 / 30 ? 0.75 : 0.85)); dyn.lastDown = time; dyn.slow = 0; }
-  // Auto, already at the lowest resolution and still slow: one level down for this session (nothing is saved), drawing
-  // as many pixels as before, so the frame only loses effects; the resolution climbs back if there's headroom
-  else if (avg > 1 / 50 && settings.gfx === 'auto' && gAuto.lv > 0) {
-    if (++dyn.slow >= 2) { const k = RES_K[gq().res]; gAuto.lv--; dyn.scale = clamp(dyn.scale * k / RES_K[gq().res], resFloor(), 1); dyn.lastDown = time; applyGfx(); }
+  const avg = dyn.acc / dyn.n, js = dyn.js / dyn.n / 1000, floor = resFloor(), now = wall(), auto = settings.gfx === 'auto';
+  dyn.acc = 0; dyn.n = 0; dyn.js = 0;
+  if (avg > 1 / 52) {
+    gAuto.stable = 0;
+    // the frame is spent in our own code (physics, the scene's draw calls), not drawing pixels: fewer pixels or
+    // effects wouldn't buy anything back, so they stay
+    if (js > avg * 0.75) { dyn.cpu = true; return; }
+    dyn.cpu = false;
+    // a level just tried that costs frames: back down, and wait twice as long before trying again
+    if (auto && gAuto.probe && now - gAuto.probe < 6) { gAuto.lv--; gAuto.probe = 0; gAuto.wait = Math.min(240, gAuto.wait * 2); dyn.lastDown = now; applyGfx(); return; }
+    gAuto.probe = 0;
+    if (auto && gAuto.lv > AUTO_FULL) { gAuto.lv--; dyn.lastDown = now; applyGfx(); return; } // effects go first
+    if (dyn.scale > floor) { dyn.scale = Math.max(floor, dyn.scale * (avg > 1 / 30 ? 0.75 : 0.85)); dyn.lastDown = now; dyn.slow = 0; return; }
+    // Auto, at full resolution's floor and still slow: one level down, drawing as many pixels as before, so the
+    // frame only loses what that level drops; the resolution climbs back if there's headroom
+    if (avg > 1 / 50 && auto && gAuto.lv > 0 && ++dyn.slow >= 2) { const k = RES_K[gq().res]; gAuto.lv--; dyn.scale = clamp(dyn.scale * k / RES_K[gq().res], resFloor(), 1); dyn.lastDown = now; applyGfx(); }
+    return;
   }
-  else if (avg < 1 / 57 && dyn.scale < 1 && time - dyn.lastDown > 8) dyn.scale = Math.min(1, dyn.scale * 1.1);
+  dyn.slow = 0;
+  if (avg < 1 / 57) {
+    gAuto.probe = 0;
+    // over 80 fps (a fast screen) there's plainly room to spare: climb sooner and in bigger steps
+    const room = avg < 1 / 80, wait = room ? 2 : 8;
+    if (now - dyn.lastDown < wait || now - dyn.lastUp < (room ? 1.4 : 0)) { if (auto) autoStable(); return; }
+    // headroom: pixels first, then (Auto) the next level up as a probe
+    if (dyn.scale < 1) { dyn.scale = Math.min(1, dyn.scale * (room ? 1.25 : 1.1)); dyn.lastUp = now; gAuto.stable = 0; return; }
+    if (auto && gAuto.lv < AUTO_LV.length - 1 && now - dyn.lastDown > (room ? wait : gAuto.wait) && !(coarse && gAuto.lv >= 4)) {
+      const k = RES_K[gq().res]; gAuto.lv++; gAuto.probe = now; dyn.lastUp = now;
+      dyn.scale = clamp(dyn.scale * k / RES_K[gq().res], resFloor(), 1); applyGfx();
+      return;
+    }
+    if (auto) autoStable();
+  }
+}
+// once Auto has held a level for ~20 s of smooth frames, it's remembered for this chip: the next visit starts there
+function autoStable() {
+  if (++gAuto.stable < 13) return;
+  const a = settings.autoG;
+  if (!a || a.gpu !== GPU.s || a.lv !== gAuto.lv) { settings.autoG = { gpu: GPU.s, lv: gAuto.lv }; saveSettings(); }
+  gAuto.stable = 0;
 }
 const resFloor = () => gq().res ? 0.6 : gq().scenery ? 0.9 : 0.7; // never under about 45 % of the screen's pixels across (35 % at Minimum)
+// the canvas always has the screen's own pixels (at most 2 per CSS pixel); the scene is drawn at the resolution in use
+// (dyn.sw × dyn.sh) and stretched onto it with a sharpening filter (gl.js endScene), which looks crisper than letting
+// the browser scale a small canvas up
 function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2) * RES_K[gq().res] * dyn.scale;
+  const out = Math.min(window.devicePixelRatio || 1, 2), dpr = out * RES_K[gq().res] * dyn.scale;
   dyn.dpr = dpr;
-  const w = Math.max(1, Math.floor(canvas.clientWidth * dpr)), h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
+  const w = Math.max(1, Math.floor(canvas.clientWidth * out)), h = Math.max(1, Math.floor(canvas.clientHeight * out));
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  const k = dpr / out;
+  dyn.sw = k > 0.98 ? w : Math.max(1, Math.round(w * k)); dyn.sh = k > 0.98 ? h : Math.max(1, Math.round(h * k));
 }
 let paused_dbg = false;
 function frame(now) {
@@ -3873,9 +3956,11 @@ function frame(now) {
   const raw = (now - last) / 1000;
   const dt = Math.min(0.05, Math.max(0, raw)); last = now;
   if (paused_dbg) return;
-  adaptRes(raw);
+  adaptRes(raw, dyn.jsMs || 0);
   if (settings.fps) fpsTick(raw);
+  const t0 = performance.now();
   tick(dt, true);
+  dyn.jsMs = performance.now() - t0;
 }
 // the frame-rate readout: frames over the last half second, and the size the scene is drawn at
 const fpsC = { t: 0, n: 0 };
@@ -3883,7 +3968,7 @@ function fpsTick(raw) {
   if (raw <= 0 || raw > 1) return;
   fpsC.t += raw; fpsC.n++;
   if (fpsC.t < 0.5) return;
-  $('fps').textContent = `${Math.round(fpsC.n / fpsC.t)} fps · ${canvas.width}×${canvas.height}` + (settings.gfx === 'auto' ? ' · ' + GFX_NAME[GFX_LV[gAuto.lv]] : '');
+  $('fps').textContent = `${Math.round(fpsC.n / fpsC.t)} fps · ${dyn.sw}×${dyn.sh}` + (settings.gfx === 'auto' ? ` · Auto ${gAuto.lv}` : '') + (dyn.cpu ? ' · CPU' : '');
   fpsC.t = fpsC.n = 0;
 }
 function tick(dt, doRender) {
@@ -3975,7 +4060,7 @@ function tick(dt, doRender) {
     emitEffects(dt); dust.update(dt); chips.update(dt); updateSkids();
     if (S.E.snowfall) updateSnow(dt);
     if (S.E.rain) updateRain(dt);
-    if (gq().scenery) S.updateFans(time, vis.x, vis.z);
+    if (gq().scenery && S.updateFans) S.updateFans(time, vis.x, vis.z);
   }
   updateAudio(dt);
   // the city's traffic lights flash amber (a lamp, so it swells and fades rather than blinks)
@@ -3990,8 +4075,8 @@ function render() {
   resize();
   const E = S.E;
   const G = gq();
-  E.time = time; E.shadows = G.shadows;
-  const w = canvas.width, h = canvas.height;
+  E.time = time; E.shadows = G.shadows; R.env.lowq = G.detail === false;
+  const w = dyn.sw, h = dyn.sh;
   M4.persp(proj, cam.fov * Math.PI / 180, w / h, settings.cam === 2 && mode !== 'menu' ? 0.08 : 0.25, 4500);
   M4.lookAt(view, cam.pos, cam.look, cam.up);
   M4.mul(R.env.vp, proj, view);
@@ -4014,6 +4099,8 @@ function render() {
     for (let i = 0; i < n; i++) { const l = L[ix[i]]; E.pl.set([l[0], l[1], l[2], 2.4 * (1 - C.sstep(0.7 * dmax, dmax, Math.sqrt(d[ix[i]])))], i * 4); }
     E.plN = n;
   } else E.plN = 0;
+  // the crowd in view, from where the camera was last frame (before the shadow pass, which casts with the same fans)
+  if (G.scenery && S.cullFans) S.cullFans(R.env.vp, cam.pos, E.fog[1]);
   // shadow pass: a near cascade (32 m, about 1.5 cm a texel) around the car and a far one (140 m) for the scenery
   if (E.shadows) {
     const sd = E.sunDir;
@@ -4033,7 +4120,7 @@ function render() {
     R.env.shNo = [t0 * 1.2, t1 * 1.2];
     for (let k = 0; k < 2; k++) {
       R.beginShadow(k);
-      for (const c of S.shadowCasters) if (G.scenery || c.m !== S.fanMesh) R.drawDepth(c.m, c.model);
+      for (const c of S.shadowCasters) if (G.scenery || !(S.fanMeshes && S.fanMeshes.has(c.m))) R.drawDepth(c.m, c.model);
       R.drawDepth(carModel.body, carMat);
       for (let i = 0; i < 4; i++) R.drawDepth(wheelMesh(carModel, i), wheelMatrix(i));
       netDepth();
@@ -4069,7 +4156,7 @@ function drawWorld(E, G, mir) {
   R.setLitFrame(E);
   for (const { m, o } of S.meshes) {
     if (!G.scenery || mir) { // no grass or crowd (bare scenery, or the mirror); bare scenery has trees as their last (far) level everywhere
-      if (o.mode === 7 || m === S.fanMesh) continue;
+      if (o.mode === 7 || (S.fanMeshes && S.fanMeshes.has(m))) continue;
       if (m.lods && !G.scenery) { R.drawLit(m.lods[m.lods.length - 1].m, o); continue; }
     }
     if (o.farFog) { R.drawLit(m, { mode: 0, fog: [380, 3200], fogRestore: E.fog, fogLo: [E.fog[0], E.fog[1], W.st.kind === 'mesa' ? 100 : 110, (S.farY || 0) - 30] }); continue; }
@@ -4178,7 +4265,9 @@ function renderMirror(E, G) {
   const env = R.env, keep = { cam: env.cam, fov: env.fov };
   mirVp.set(env.vp); mirIvp.set(env.ivp);
   M4.mul(env.vp, mirProj, mirView); M4.inv(env.ivp, env.vp); env.cam = eye; env.fov = MIR_FOV * Math.PI / 180; env.lodK = MIR_LOD;
-  if (R.beginMirror(b.w, b.h, 4)) {
+  // drawn at the scene's resolution (it's stretched onto the frame like the scene), with less MSAA once effects are off
+  const k = Math.min(1, dyn.sw / canvas.width);
+  if (R.beginMirror(Math.max(16, Math.round(b.w * k)), Math.max(8, Math.round(b.h * k)), G.aa ? 4 : 2)) {
     gl.clearColor(E.fogCol[0], E.fogCol[1], E.fogCol[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND);
@@ -4209,6 +4298,8 @@ function mixLight(E) {
 // ---------- boot ----------
 keepCarAllowed(curKey());
 renderStageInfo(); renderCarList(); updateToggles(); renderGfx(); setMirror(settings.mirror);
+// drawing on the CPU (hardware acceleration off or blocked) makes every setting slow: say so where it can't be missed
+if (GPU.soft) setTimeout(() => toast('Graphics acceleration is off in this browser: see Options → Graphics'), 1500);
 setScreen('menu');
 const fontsReady = document.fonts && document.fonts.load ? Promise.race([
   Promise.all([document.fonts.load('800 60px "Big Shoulders Display"'), document.fonts.load('700 40px "Chivo Mono"'), document.fonts.load('600 20px "Barlow Semi Condensed"')]),
@@ -4237,6 +4328,6 @@ if (location.protocol === 'file:') window.__rally = {
   audio: () => ({ A, sfx, getTune }),
   setDirt(v) { dirt = v; },
   // graphics: a preset name or levels to mix into the current ones; draw(n) renders the same frame n times
-  gfx(v) { if (typeof v === 'string') setGfx(v); else if (v) { settings.g = Object.assign({}, gq(), v); settings.gfx = 'custom'; applyGfx(true); } return { gfx: settings.gfx, g: gq(), auto: gAuto.lv, scale: dyn.scale, w: canvas.width, h: canvas.height }; },
-  draw(n) { for (let i = 0; i < n; i++) render(); }, get mode() { return mode; }, get dbg() { return { dirt, hitFlash, dust: dust.n, chips: chips.n, hitK: S.E.hitK, shake: cam.shake, evt: Object.assign({}, evt) }; }, get car() { return car; }, get W() { return W; }, startRace, settings, keys, toMenu, get raceT() { return raceT; }, net, netJoin, netCreate, netStart, netLeave, netRows: () => (netRun() ? netRows() : null) };
+  gfx(v) { if (typeof v === 'string') setGfx(v); else if (v) { settings.g = Object.assign({}, gq(), v); settings.gfx = 'custom'; applyGfx(true); } return { gfx: settings.gfx, g: gq(), auto: gAuto.lv, scale: dyn.scale, w: dyn.sw, h: dyn.sh }; },
+  draw(n) { for (let i = 0; i < n; i++) render(); }, get R() { return R; }, get S() { return S; }, get mode() { return mode; }, get dbg() { return { dirt, hitFlash, dust: dust.n, chips: chips.n, hitK: S.E.hitK, shake: cam.shake, evt: Object.assign({}, evt) }; }, get car() { return car; }, get W() { return W; }, startRace, settings, keys, toMenu, get raceT() { return raceT; }, net, netJoin, netCreate, netStart, netLeave, netRows: () => (netRun() ? netRows() : null) };
 })();
