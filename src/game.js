@@ -30,22 +30,58 @@ if (!C.CONDS.includes(settings.cond)) settings.cond = 'day';
 if (!settings.v2) { settings.voice = false; settings.ghost = false; settings.v2 = 1; }
 settings.dailyKey = C.dailyKey(); // a new day, a new road
 // graphics: a preset sets every level below; touching one of them makes it 'custom' (settings.g). Everything is
-// applied as it renders, nothing rebuilds the stage. Auto starts at Quality (Balanced on touch screens) and steps
-// down for the session when the lowest resolution still can't hold the frame rate.
+// applied as it renders, nothing rebuilds the stage. Auto runs a ladder of its own (AUTO_LV, see adaptRes).
 // Measured at 3200x2000 (ms/frame, Pine / Dark Pines / Monaco / Spa): Quality 14.0 / 14.2 / 8.3 / 8.0,
 // Balanced 8.4 / 9.6 / 5.5 / 5.2, Performance 2.7 / 3.2 / 2.5 / 2.8. Resolution is most of it; then the post chain
 // and MSAA (~3 ms each at that size), shadows ~1-2.5 ms. Shorter tree and grass distances changed nothing measurable.
 // Minimum (owner: "una opción extrema, sin árboles ni cosas que cuesten") also bares the scenery: no grass, no crowd,
-// trees as their far, solid shapes (they're still there to hit), and a lower resolution floor.
+// trees as their far, solid shapes (they're still there to hit), and a lower resolution floor. detail: false = the
+// road, ground, rock and foliage shaders' low-detail variant (gl.js LOWQ: fewer noise layers, no bump; 8-19 % of the
+// frame at 1920x1080), for the levels that already went without effects.
+// Owner, 2026-10-22: "priorizar resolución y fps, es lo que más se nota": the presets keep more pixels and drop
+// effects instead (Balanced is full resolution, Performance 75 % with nothing else), and the picture is stretched to the
+// screen with a sharpening filter when it's drawn smaller.
 const PRESETS = {
-  min: { res: 0, aa: 0, shadows: false, post: false, rays: false, scenery: false },
-  perf: { res: 0, aa: 0, shadows: false, post: false, rays: false, scenery: true },
-  bal: { res: 1, aa: 1, shadows: true, post: true, rays: false, scenery: true },
+  min: { res: 0, aa: 0, shadows: false, post: false, rays: false, scenery: false, detail: false },
+  perf: { res: 1, aa: 0, shadows: false, post: false, rays: false, scenery: true, detail: false },
+  bal: { res: 2, aa: 1, shadows: true, post: true, rays: false, scenery: true },
   qual: { res: 2, aa: 2, shadows: true, post: true, rays: true, scenery: true },
 };
 const GFX_LV = ['min', 'perf', 'bal', 'qual'], GFX_NAME = { auto: 'Auto', min: 'Minimum', perf: 'Performance', bal: 'Balanced', qual: 'Quality', custom: 'Custom' };
 const RES_K = [0.5, 0.75, 1]; // of the screen's own pixels (at most 2 per CSS pixel)
-const coarse = matchMedia('(pointer: coarse)').matches, gAuto = { lv: coarse ? 2 : 3 };
+// Auto's ladder, cheapest first. Going down it drops effects before pixels: full resolution with no effects (2) comes
+// before any loss of resolution, which is the dynamic scale's job from there (and then levels 1 and 0).
+const AUTO_LV = [PRESETS.min, PRESETS.perf,
+  { res: 2, aa: 0, shadows: false, post: false, rays: false, scenery: true, detail: false },
+  { res: 2, aa: 0, shadows: true, post: false, rays: false, scenery: true },
+  { res: 2, aa: 0, shadows: true, post: true, rays: false, scenery: true },
+  PRESETS.bal, PRESETS.qual];
+const AUTO_FULL = 2; // the lowest level at full resolution
+const coarse = matchMedia('(pointer: coarse)').matches;
+// the graphics chip, as the browser names it (Chrome: "ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 …)")
+const GPU = (() => {
+  let s = '';
+  try { const e = gl.getExtension('WEBGL_debug_renderer_info'); s = String(gl.getParameter(e ? e.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || ''); } catch (e) { /* hidden */ }
+  // software rendering: Chrome with hardware acceleration off or its GPU blocked draws everything on the CPU
+  const soft = /swiftshader|llvmpipe|softpipe|basic render|software|microsoft basic/i.test(s);
+  const t = s.replace(/\((R|TM)\)/gi, '');
+  const name = ((t.match(/^ANGLE \([^,]*, (.*?)(?: \(0x[0-9a-f]+\))?(?: Direct3D.*| OpenGL.*| Vulkan.*|, .*)?\)?$/i) || [])[1] || t).replace(/^ANGLE Metal Renderer: /i, '');
+  // a first guess at Auto's level, before it has measured anything: integrated chips start at full resolution with
+  // no effects, mid ones with shadows, gaming GPUs and Apple's at the top
+  let lv = 4;
+  if (soft) lv = 0;
+  else if (/nvidia|geforce|rtx|gtx|quadro|radeon rx|radeon pro|arc\(tm\) a|arc a|apple m|apple gpu/i.test(s)) lv = 6;
+  else if (/iris|radeon\(tm\) (graphics|7[0-9]0m|6[0-9]0m)|radeon 7[0-9]0m|radeon 6[0-9]0m|adreno.*(7[0-9]{2}|6[4-9][0-9])/i.test(s)) lv = 3;
+  else if (/intel|uhd|hd graphics|mali|adreno|powervr|vega [0-9]|radeon r[2-7]|radeon\(tm\) r|videocore/i.test(s)) lv = 2;
+  if (coarse) lv = Math.min(lv, 4);
+  // a chip built into the processor (laptops): Windows may hand the browser this one even when there's a gaming card
+  const igpu = !soft && (lv === 2 || lv === 3) && /intel|amd|radeon/i.test(s);
+  return { s, name: soft ? 'software (no graphics card)' : name.replace(/\s+/g, ' ').trim(), soft, igpu, lv };
+})();
+// Auto's level for this session; what it settled on last time on this chip is where it starts
+const gAuto = { lv: GPU.lv, probe: 0, wait: 8, stable: 0 };
+// the dynamic resolution's state (adaptRes): scale of the level's resolution, the measuring window, the scene's size
+const dyn = { scale: 1, acc: 0, n: 0, js: 0, lastDown: -99, lastUp: -99, dpr: 1, slow: 0, fps: 0, sw: 1, sh: 1 };
 if ('shadows' in settings || 'post' in settings) { // before presets there were two switches: keep what was turned off
   if (settings.shadows === false || (settings.post === false && !coarse)) { // (touch screens started with post off)
     settings.gfx = 'custom';
@@ -55,7 +91,8 @@ if ('shadows' in settings || 'post' in settings) { // before presets there were 
 }
 if (!GFX_NAME[settings.gfx] || (settings.gfx === 'custom' && !settings.g)) settings.gfx = 'auto';
 if (settings.g) settings.g = Object.assign({}, PRESETS.qual, settings.g);
-const gq = () => settings.gfx === 'custom' ? settings.g : PRESETS[settings.gfx === 'auto' ? GFX_LV[gAuto.lv] : settings.gfx];
+{ const a = settings.autoG; if (a && a.gpu === GPU.s && a.lv >= 0 && a.lv < AUTO_LV.length) gAuto.lv = a.lv; }
+const gq = () => settings.gfx === 'custom' ? settings.g : settings.gfx === 'auto' ? AUTO_LV[gAuto.lv] : PRESETS[settings.gfx];
 const saveSettings = () => store.set('settings', settings);
 // ---- bytes <-> text (base64url) ----
 function b64e(u8) { let s = ''; for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
@@ -447,32 +484,39 @@ for (const [id, key] of TOGGLES) {
 // ---- graphics ----
 // after any change: a fresh measuring window for the dynamic resolution, and the menu
 function applyGfx(user) {
-  dyn.acc = 0; dyn.n = 0; dyn.slow = 0;
+  dyn.acc = 0; dyn.n = 0; dyn.js = 0; dyn.slow = 0; gAuto.stable = 0;
   if (user) { dyn.scale = 1; dyn.lastDown = -99; } // a new choice starts at full resolution and is judged from there
   renderGfx();
 }
 function setGfx(v) {
-  if (v === 'auto' && settings.gfx !== 'auto') gAuto.lv = coarse ? 2 : 3;
+  if (v === 'auto' && settings.gfx !== 'auto') { gAuto.lv = settings.autoG && settings.autoG.gpu === GPU.s ? settings.autoG.lv : GPU.lv; gAuto.wait = 8; }
   settings.gfx = v; delete settings.g; saveSettings(); applyGfx(true);
 }
 // one level by hand: the preset becomes 'custom', starting from what was in use
 function setGfxLevel(k, v) {
-  const g = Object.assign({}, gq(), { [k]: v });
+  const g = Object.assign({}, gq(), { [k]: v }); delete g.detail;
   if (k === 'post' && !v) g.rays = false; // the shafts are part of the post chain
   if (k === 'rays' && v) g.post = true;
-  const same = GFX_LV.find(n => Object.keys(PRESETS[n]).every(q => PRESETS[n][q] === g[q]));
+  const same = GFX_LV.find(n => Object.keys(PRESETS[n]).every(q => q === 'detail' || PRESETS[n][q] === g[q]));
   if (same) { settings.gfx = same; delete settings.g; } else { settings.gfx = 'custom'; settings.g = g; }
   saveSettings(); applyGfx(true);
 }
 function renderGfx() {
-  const G = gq(), lv = settings.gfx === 'auto' ? GFX_LV[gAuto.lv] : null;
+  const G = gq();
   for (const id of ['optGfx', 'pGfx']) for (const b of $(id).children) b.setAttribute('aria-pressed', String(b.dataset.v === settings.gfx));
   for (const el of document.querySelectorAll('[data-g]')) for (const b of el.children) b.setAttribute('aria-pressed', String(String(G[el.dataset.g]) === b.dataset.v));
   for (const k in GFX_OPT) $(GFX_OPT[k]).setAttribute('aria-pressed', String(G[k]));
-  $('gfxNote').textContent = settings.gfx === 'auto' ? `Running ${GFX_NAME[lv]}. Auto starts high and steps down if your device can't hold 60 fps.`
+  $('gfxNote').textContent = (settings.gfx === 'auto' ? `Running ${gfxDesc(G)}. Auto keeps 60 fps, dropping effects before resolution.`
     : settings.gfx === 'custom' ? 'Custom: your own mix of the settings below.'
-    : { min: 'For very slow devices: no grass or crowds, simple trees, low resolution.', perf: 'Lower resolution, no shadows, no glow.', bal: 'Sharp enough and smooth on most laptops.', qual: 'Everything on, at full resolution.' }[settings.gfx];
+    : { min: 'For very slow devices: no grass or crowds, simple trees, low resolution.', perf: 'Three-quarter resolution, no shadows, no glow.', bal: 'Full resolution with shadows and glow.', qual: 'Everything on, at full resolution.' }[settings.gfx])
+    + (GPU.name ? ` Graphics: ${GPU.name}.` : '')
+    + (GPU.igpu && /Windows/.test(navigator.userAgent) ? ' If this laptop also has a gaming graphics card, Windows can give it to the browser: Settings → System → Display → Graphics → your browser → High performance.' : '');
+  $('gfxWarn').hidden = !GPU.soft;
   $('fps').hidden = !settings.fps;
+}
+// what a set of levels amounts to, in a few words ("100 % · shadows · glow")
+function gfxDesc(G) {
+  return [Math.round(RES_K[G.res] * (settings.gfx === 'auto' ? dyn.scale : 1) * 100) + ' % resolution', G.shadows && 'shadows', G.post && 'glow', G.aa && 'smooth edges', !G.scenery && 'bare scenery'].filter(Boolean).join(', ');
 }
 for (const id of ['optGfx', 'pGfx']) for (const b of $(id).children) b.addEventListener('click', () => setGfx(b.dataset.v));
 for (const el of document.querySelectorAll('[data-g]')) for (const b of el.children) b.addEventListener('click', () => setGfxLevel(el.dataset.g, +b.dataset.v));
@@ -585,6 +629,7 @@ function loadStage(key, after) {
     if (!rallyOn() && keepCarAllowed(st.key)) renderCarList();
     setupCar();
     buildMinimap(); buildTvSpots(); resetEffects();
+    R.warm(); // the shaders, compiled in the background meanwhile (slow on Windows), are ready before the first frame
     hideLoading();
     mode = prevMode2 === 'boot' || prevMode2 === 'loading' ? 'menu' : 'menu';
     renderStageInfo();
@@ -1955,12 +2000,14 @@ function startRace() {
     rally.tries[k] = (rally.tries[k] || 0) + 1; saveRally();
   }
   $('share').hidden = true;
+  repOff();
   setLights(!!S.E.night, true);
   initAudio(); warmSpeech();
   C.resetCar(W, car, W.T.spawnS); snapVis(); resetEffects();
   raceT = 0; cdT = 0; cdShown = -1; finishT = 0; doneT = 0; splitsHit = []; ghostRec = []; ghostTimer = 0;
   Object.assign(lap, { n: 0, t0: 0, next: W.T.startS + (W.T.lap || 0), best: lapsOn() ? lapBest(W.st.key, P.id) : null, last: null, rec: [], list: [] });
   noteIdx = 0; called = []; offT = 0; stuckT = 0; wrongT = 0; resultsShown = false; acc = 0;
+  recStart();
   $('hStage').textContent = (rallyOn() ? `SS${rally.idx + 1} · ` : netRun() ? 'Online · ' : '') + W.st.name + (W.st.rev ? ' ⇄' : '');
   net.pause = false; $('pTitle').textContent = 'Paused'; $('pNote').hidden = true; $('pLaps').hidden = true;
   $('hSurf').textContent = W.st.surface + (W.st.cond !== 'day' ? ' · ' + C.condName(W.st) : '');
@@ -1978,7 +2025,7 @@ function startRace() {
 }
 let lastRun = null, rallyLeg = null;
 function finish() {
-  finishT = raceT; mode = 'done'; doneT = 0;
+  finishT = raceT; mode = 'done'; doneT = 0; rec.kFin = rec.on ? rec.n : -1;
   const key = W.st.key, rt = rival.time;
   const medal = finishT <= rt ? 3 : finishT <= rt * 1.06 ? 2 : finishT <= rt * 1.15 ? 1 : 0;
   lastMedal = medal;
@@ -2037,6 +2084,7 @@ function buildResults(old, isPB, medal, oldBest) {
   const inNet = netRun();
   $('rTable').hidden = inRally || inNet; $('rTargets').hidden = inRally || inNet; $('rRally').hidden = !inRally;
   $('rRetry').hidden = inRally || inNet; $('rShare').hidden = false; $('rNext').hidden = inNet; $('rNet').hidden = !inNet;
+  $('rReplay').hidden = inNet || rec.kFin < 0;
   $('rMenu').textContent = inNet ? 'Lobby' : 'Menu'; $('rMenu').classList.toggle('primary', inNet);
   if (inRally) buildRallyTable();
   if (inNet) renderNetResults();
@@ -2063,7 +2111,7 @@ function nextStage() {
 function toMenu() {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
-  rallyLeg = null;
+  rallyLeg = null; repOff(); rec.kFin = -1;
   if (netRun()) { if (!net.race.fin[netId]) netRetire(); net.race.inRun = false; netClearRun(); if (inRoom()) $('tabOnline').click(); }
   mode = 'menu'; C.resetCar(W, car, W.T.spawnS); snapVis(); resetEffects();
   renderStageInfo(); renderCarList();
@@ -2072,6 +2120,7 @@ function toMenu() {
   if (curKey() !== loadedKey) loadStage(curKey());
 }
 function togglePause() {
+  if (rp.on) { repExit(); return; }
   if (netRun() && (mode === 'race' || mode === 'countdown' || (mode === 'done' && !resultsShown))) {
     net.pause = !net.pause;
     if (!net.pause) { setScreen('race'); return; }
@@ -2104,15 +2153,185 @@ $('touchLights').addEventListener('click', toggleLights);
 $('hNet').addEventListener('click', () => { net.boardTap = !net.boardTap; net.boardT = 0; });
 $('netBoard').addEventListener('click', () => { net.boardTap = false; });
 $('pLights').addEventListener('click', toggleLights);
-document.addEventListener('visibilitychange', () => { if (document.hidden && (mode === 'race' || mode === 'countdown') && !net.pause) togglePause(); if (A.ctx) { if (document.hidden) A.ctx.suspend(); else A.ctx.resume(); } });
+document.addEventListener('visibilitychange', () => { if (rp.on) { if (document.hidden) repPlay(false); } else if (document.hidden && (mode === 'race' || mode === 'countdown') && !net.pause) togglePause(); if (A.ctx) { if (document.hidden) A.ctx.suspend(); else A.ctx.resume(); } });
 
 function manualReset() {
-  if (mode !== 'race') return;
-  C.resetCar(W, car, Math.max(W.T.spawnS, car.s - 12));
+  if (mode !== 'race' || rp.on) return;
+  const s = Math.max(W.T.spawnS, car.s - 12);
+  if (rec.on) rec.resets.push([rec.n, s]); // before the next step, which is where a replay puts it back
+  C.resetCar(W, car, s);
   if (netRun()) car.ghostT = 2.5; // back on the road as a ghost for a moment, so it can't land on someone
   snapVis(true); breakSkids(); offT = 0; stuckT = 0; wrongT = 0;
   center('<div class="mid">Back on the road</div>', 1.0);
 }
+
+// ---------- replays ----------
+// A finished run plays again from the results card. Nothing of the picture is stored: the physics runs once more on
+// the input of every step, and stepCar is deterministic, so the same inputs from the same car give the same run to the
+// bit (slides, hits and jumps included). Resets (R, or too long off the road) happen between steps and are kept with
+// the step they came before. A copy of the car every second lets the replay jump about: back to the copy before the
+// spot, then the steps up to it. Offline runs only: online the others push your car, endless laps move it back a lap.
+const REC_SNAP = 120, REC_TAIL = 4; // steps between copies of the car; seconds kept after the finish
+const rec = { on: false, n: 0, st: null, th: null, bk: null, fl: null, snaps: [], resets: [], kFin: -1, key: '', car: '' };
+function recStart() {
+  rec.on = !netRun() && !lapsOn(); rec.n = 0; rec.kFin = -1; rec.snaps = []; rec.resets = []; rec.key = W.st.key; rec.car = P.id;
+  if (rec.on && !rec.st) { const n = 120 * 240; rec.st = new Float64Array(n); rec.th = new Float64Array(n); rec.bk = new Float64Array(n); rec.fl = new Uint8Array(n); }
+}
+// one step's input, and every REC_SNAP steps a copy of the car as it was before it
+function recStep(inp) {
+  if (rec.n % REC_SNAP === 0) rec.snaps.push({ k: rec.n, c: structuredClone(car), raceT, dirt });
+  if (rec.n >= rec.st.length) for (const f of ['st', 'th', 'bk', 'fl']) { const a = new rec[f].constructor(rec[f].length * 2); a.set(rec[f]); rec[f] = a; }
+  const k = rec.n++;
+  rec.st[k] = inp.steer; rec.th[k] = inp.thr; rec.bk[k] = inp.brk;
+  rec.fl[k] = (inp.hb ? 1 : 0) | (inp.analog ? 2 : 0) | (inp.manual ? 4 : 0) | (inp.shiftUp ? 8 : 0) | (inp.shiftDown ? 16 : 0) | (lightsOn ? 32 : 0);
+  if (rec.kFin >= 0 && rec.n >= rec.kFin + REC_TAIL * 120) rec.on = false;
+}
+const recOK = () => !!(W && rec.kFin > 0 && rec.n > rec.kFin && rec.key === W.st.key && rec.car === P.id);
+// what a physics step leaves for the frame: the hardest hit, the hardest landing, an upshift
+function stepEvents() {
+  if (car.hitV > evt.hit) { evt.hit = car.hitV; evt.kind = car.hitKind; evt.x = car.hitX; evt.z = car.hitZ; evt.nx = car.hitNx; evt.nz = car.hitNz; evt.front = car.hitFront; }
+  car.hitV = 0;
+  evt.land = Math.max(evt.land, car.landV); car.landV = 0;
+  if (car.shifted === 1) evt.shift = true;
+}
+
+// cameras to pick from (C cycles them): Auto is the director, the rest are camera modes (4 and 5 only exist here)
+const REP_CAMS = [['Auto', -1], ['TV', 3], ['Helicopter', 4], ['Chase', 0], ['Far chase', 1], ['Bonnet', 2], ['Wheel', 5]];
+const REP_SPEEDS = [0.25, 0.5, 1, 2], REP_PITCH = [0.7, 0.82, 1, 1];
+const rp = { on: false, k: 0, acc: 0, play: true, sp: 2, cam: 0, cm: 3, shot: null, shotN: 0, idle: 0, uiT: 0, drag: false,
+  inp: { steer: 0, thr: 0, brk: 0, hb: false, analog: false } };
+const camMode = () => rp.on ? rp.cm : mode === 'done' && doneT > 0.3 ? 3 : settings.cam;
+const repDt = dt => rp.play ? dt * REP_SPEEDS[rp.sp] : 0;
+function startReplay() {
+  if (!recOK() || rp.on) return;
+  rec.on = false; // the run is over: whatever the car does after this isn't part of it
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  Object.assign(rp, { on: true, play: true, sp: 2, shot: null, shotN: 0, idle: 0, uiT: 0 });
+  setScreen('race'); $('touch').hidden = true; $('repBar').hidden = false; $('app').classList.add('replay');
+  $('centerMsg').innerHTML = ''; centerT = 0;
+  repSeek(0); repUI(0, true);
+  center('<div class="mid">Replay</div>', 1.2);
+}
+function repOff() {
+  if (!rp.on) return;
+  rp.on = false; $('repBar').hidden = true; $('app').classList.remove('replay', 'cine', 'idle');
+}
+// back to the results, with the car where the run left it
+function repExit() {
+  if (!rp.on) return;
+  repSeek(rec.n - 1); repOff();
+  mode = 'done'; doneT = 99; resultsShown = true; setScreen('results');
+}
+function repRestore(sn) {
+  const c = structuredClone(sn.c);
+  for (const k in car) if (!(k in c)) delete car[k];
+  Object.assign(car, c);
+  resetEffects(); dirt = sn.dirt; raceT = sn.raceT; rp.k = sn.k; rp.acc = 0;
+}
+// to step k: the copy before it, then the steps up to it with no sound or dust
+function repSeek(k) {
+  k = clamp(Math.round(k), 0, rec.n - 1);
+  let sn = rec.snaps[0];
+  for (const s of rec.snaps) { if (s.k > k) break; sn = s; }
+  repRestore(sn);
+  while (rp.k < k) repStep(false);
+  snapVis(true); rp.shot = null; cam.tv = null;
+  repMode();
+}
+function repStep(fx) {
+  const k = rp.k;
+  for (const r of rec.resets) if (r[0] === k) { C.resetCar(W, car, r[1]); if (fx) { snapVis(true); breakSkids(); } }
+  if (fx) savePrev();
+  const f = rec.fl[k], inp = { steer: rec.st[k], thr: rec.th[k], brk: rec.bk[k], hb: !!(f & 1), analog: !!(f & 2), manual: !!(f & 4), shiftUp: !!(f & 8), shiftDown: !!(f & 16) };
+  C.stepCar(W, car, P, inp, STEP);
+  if (fx) stepEvents(); else { car.hitV = 0; car.landV = 0; }
+  rp.inp = inp;
+  if (!!(f & 32) !== lightsOn) setLights(!!(f & 32), true);
+  rp.k++;
+  if (k < rec.kFin) raceT += STEP;
+  if (fx && rp.k === rec.kFin) center(`<div class="mid yel">Finish</div><div class="sub">${fmt(finishT)}</div>`, 2.4);
+}
+function repMode() {
+  mode = rp.k >= rec.kFin ? 'done' : 'race';
+  doneT = Math.max(0, (rp.k + rp.acc / STEP - rec.kFin) * STEP);
+}
+function repTick(dt) {
+  rp.acc += repDt(dt);
+  let steps = 0;
+  while (rp.acc >= STEP && steps < 40) {
+    rp.acc -= STEP; steps++;
+    if (rp.k >= rec.n) { repSeek(0); rp.acc = 0; break; } // from the top again
+    repStep(true);
+  }
+  if (steps >= 40) rp.acc = 0;
+  alpha = rp.acc / STEP;
+  repMode();
+  input = rp.inp; // the brake lights, skids and engine follow the run, not the keys
+}
+// the director (Auto): mostly the trackside cameras, cut now and then with a helicopter, a chase or a wheel shot
+function repCamFor() {
+  const fixed = REP_CAMS[rp.cam][1];
+  if (fixed >= 0) return fixed;
+  if (mode === 'done') return 3; // round the car once it has stopped
+  const sh = rp.shot, rt = rp.k * STEP;
+  if (sh && rt < sh.end && !(sh.tv && car.s > sh.tv.s + 22)) return sh.cm;
+  const n = rp.shotN++, hash = k => (Math.imul(n * 3 + k, 2654435761) >>> 0) / 4294967296, h = hash(1);
+  const tv = tvSpots.find(t => t.s > car.s + 25), tvOK = !!tv && tv.s - car.s < 120;
+  // every other shot is trackside, and a quarter of the rest too
+  let cm = tvOK && (n % 2 === 0 || hash(2) < 0.25) ? 3 : h < 0.36 ? 4 : h < 0.58 ? 0 : h < 0.8 ? 5 : h < 0.9 ? 1 : 2;
+  if (sh && cm === sh.cm && cm !== 3) cm = cm === 4 ? 0 : 4;
+  rp.shot = { cm, tv: cm === 3 ? tv : null, end: rt + (cm === 3 ? 14 : cm === 4 ? 7 : cm === 5 ? 3.5 : 5), side: hash(3) < 0.5 ? 1 : -1 };
+  if (cm === 3) cam.tv = tv;
+  cam.snap = true;
+  return cm;
+}
+function repPlay(on) { rp.play = on == null ? !rp.play : on; rp.idle = 0; repUI(0, true); }
+function repJump(sec) { repSeek(rp.k + sec / STEP); rp.idle = 0; repUI(0, true); }
+function repSpeed(d) { rp.sp = clamp(rp.sp + d, 0, REP_SPEEDS.length - 1); rp.idle = 0; repUI(0, true); }
+function repCam(d) {
+  rp.cam = (rp.cam + d + REP_CAMS.length) % REP_CAMS.length; rp.shot = null; cam.snap = true; rp.idle = 0;
+  $('camTag').textContent = 'Camera · ' + REP_CAMS[rp.cam][0] + ' (C)'; camTagT = 2.5; repUI(0, true);
+}
+function repKey(k) {
+  if (k === 'Space' || k === 'KeyK') repPlay();
+  else if (k === 'ArrowLeft') repJump(-5);
+  else if (k === 'ArrowRight') repJump(5);
+  else if (k === 'ArrowUp') repSpeed(1);
+  else if (k === 'ArrowDown') repSpeed(-1);
+  else if (k === 'KeyC') repCam(1);
+  else if (k === 'Home') repJump(-1e4);
+  else if (k === 'KeyH') $('app').classList.toggle('cine');
+  else if (k === 'Escape' || k === 'Backspace' || k === 'KeyP') repExit();
+  else if (k === 'KeyM') { settings.sound = !settings.sound; saveSettings(); updateToggles(); }
+  rp.idle = 0;
+}
+function repPad(edge) {
+  if (edge(9) || edge(1)) repExit();
+  if (edge(0)) repPlay();
+  if (edge(3)) repCam(1);
+  if (edge(14)) repJump(-5);
+  if (edge(15)) repJump(5);
+  if (edge(4)) repSpeed(-1);
+  if (edge(5)) repSpeed(1);
+}
+// the control bar: it fades out after a few seconds of nobody touching anything (not while paused)
+function repUI(dt, now) {
+  rp.idle += dt; rp.uiT -= dt;
+  $('app').classList.toggle('idle', rp.play && rp.idle > 3);
+  if (rp.uiT > 0 && !now) return;
+  rp.uiT = 0.1;
+  if (!rp.drag) $('repSeek').value = Math.round(rp.k / Math.max(1, rec.n - 1) * 1000);
+  $('repT').innerHTML = `${fmt(mode === 'done' ? finishT : raceT)}<span> / ${fmt(finishT)}</span>`;
+  $('repPlay').classList.toggle('paused', !rp.play); $('repPlay').setAttribute('aria-label', rp.play ? 'Pause' : 'Play');
+  $('repSpeed').textContent = REP_SPEEDS[rp.sp] + '×';
+  $('repCam').textContent = REP_CAMS[rp.cam][0];
+}
+$('rReplay').addEventListener('click', startReplay);
+for (const [id, fn] of [['repPlay', () => repPlay()], ['repBack', () => repJump(-5)], ['repFwd', () => repJump(5)], ['repSpeed', () => repSpeed(rp.sp === REP_SPEEDS.length - 1 ? -9 : 1)], ['repCam', () => repCam(1)], ['repExit', repExit]])
+  $(id).addEventListener('click', e => { fn(); e.currentTarget.blur(); });
+$('repSeek').addEventListener('input', e => { rp.drag = true; repSeek(e.target.value / 1000 * (rec.n - 1)); rp.idle = 0; });
+$('repSeek').addEventListener('change', e => { rp.drag = false; e.target.blur(); });
+for (const ev of ['pointermove', 'pointerdown']) addEventListener(ev, () => { if (rp.on) rp.idle = 0; }, { passive: true });
 
 // ---------- center messages / hints ----------
 let centerT = 0;
@@ -2138,6 +2357,7 @@ addEventListener('keydown', e => {
   if (k === 'Space' && mode === 'menu' && document.activeElement && document.activeElement.tagName === 'BUTTON') return;
   const first = !keys[k]; keys[k] = true;
   if (!first) return;
+  if (rp.on) { repKey(k); return; }
   if (k === 'Escape' || k === 'KeyP') togglePause();
   else if (k === 'KeyC' && mode !== 'menu') { settings.cam = (settings.cam + 1) % 4; saveSettings(); showCamTag(); }
   else if (k === 'KeyR') manualReset();
@@ -2180,6 +2400,7 @@ function readInput() {
     thr = Math.max(thr, bv(7)); brk = Math.max(brk, bv(6));
     if (bv(0) > 0.5 || bv(2) > 0.5) hb = true;
     const edge = i => { const now = bv(i) > 0.5; const was = padPrev[p.index + ':' + i]; padPrev[p.index + ':' + i] = now; return now && !was; };
+    if (rp.on) { repPad(edge); break; }
     if (edge(9) && $('welcome').hidden) { if (mode === 'menu') menuGo(); else if (resultsShown && !$('results').hidden) retry(); else togglePause(); }
     if (edge(3) && mode !== 'menu') { settings.cam = (settings.cam + 1) % 4; saveSettings(); showCamTag(); }
     if (edge(8)) manualReset();
@@ -2234,7 +2455,7 @@ const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 42
 class Engine extends AudioWorkletProcessor {
   static get parameterDescriptors() {
     const k = (name, def, max) => ({ name, defaultValue: def, minValue: 0, maxValue: max, automationRate: 'k-rate' });
-    return [k('rpm', 900, 21000), k('load', 0, 1), k('boost', 0, 2), k('cut', 0, 1), k('inside', 0, 1), k('pop', 0, 1)];
+    return [k('rpm', 600, 26000), k('load', 0, 1), k('boost', 0, 2), k('cut', 0, 1), k('inside', 0, 1), k('pop', 0, 1)];
   }
   constructor(o) {
     super();
@@ -2906,11 +3127,12 @@ function updateAudio(dt) {
   const rpm = pv ? A.revRpm : car.rpm, thr = racing ? car.thrE || input.thr : pv ? A.revThr : 0, boost = pv ? A.revB : car.boost;
   const tune = getTune(P.id), sport = tune.exhaust === 'sport';
   const lim = car.limiter > 0 ? 0.35 : 1;
-  A.pz.gain.setTargetAtTime(mode === 'paused' ? 0 : 1, t, mode === 'paused' ? 0.03 : 0.08);
+  const hush = mode === 'paused' || (rp.on && !rp.play);
+  A.pz.gain.setTargetAtTime(hush ? 0 : 1, t, hush ? 0.03 : 0.08);
   updateBeat(c, t);
   // ---- where the car is for the listener (the camera) ----
   buildReverb();
-  const onboard = settings.cam === 2 && racing;
+  const onboard = camMode() === 2 && racing;
   const ldx = vis.x - cam.pos[0], ldy = vis.y + 0.6 - cam.pos[1], ldz = vis.z - cam.pos[2], dist = Math.max(0.5, Math.hypot(ldx, ldy, ldz));
   const cfx = cam.look[0] - cam.pos[0], cfz = cam.look[2] - cam.pos[2], cfl = Math.hypot(cfx, cfz) || 1, crx = -cfz / cfl, crz = cfx / cfl;
   if (dt > 0) {
@@ -2919,7 +3141,8 @@ function updateAudio(dt) {
   }
   // doppler: the car's speed away from the listener (only really moves off 1 on the TV camera, the others travel with it)
   const vr = ((car.vx - A.camVel[0]) * ldx + (car.vz - A.camVel[2]) * ldz) / dist;
-  A.dopp += (clamp(343 / (343 + (racing || mode === 'done' ? vr : 0)), 0.82, 1.22) - A.dopp) * Math.min(1, dt * 6);
+  // (a replay in slow motion plays everything lower, as a slowed recording would)
+  A.dopp += (clamp(343 / (343 + (racing || mode === 'done' ? vr : 0)), 0.82, 1.22) * (rp.on ? REP_PITCH[rp.sp] : 1) - A.dopp) * Math.min(1, dt * 6);
   const dk = dist <= 9 ? 1 : Math.pow(9 / dist, 0.9);
   A.car.gain.setTargetAtTime(dk, t, 0.05);
   A.carLp.frequency.setTargetAtTime(clamp(20000 / (1 + Math.pow(dist / 40, 1.5)), 900, 20000), t, 0.06);
@@ -2934,7 +3157,7 @@ function updateAudio(dt) {
     // overrun crackle: a little on any car, more with anti-lag, a lot with the sport exhaust just after a lift
     const pop = (sport ? 0.3 : V.antilag > 0 ? 0.1 : 0.04) + (A.alT > 0 ? (sport ? 0.6 : 0.25 * V.antilag) : 0);
     if (pr.get('pop')) pr.get('pop').setTargetAtTime(pop, t, 0.05);
-    pr.get('inside').setTargetAtTime(settings.cam === 2 ? 1 : 0, t, 0.1);
+    pr.get('inside').setTargetAtTime(camMode() === 2 ? 1 : 0, t, 0.1);
     Vc.eg.gain.setTargetAtTime(active ? Vc.EN.gain * (0.75 + (rpm / E.redline) * 0.35) * (1.45 - 0.45 * thr) : 0, t, 0.03);
   } else {
     const f0 = rpm / 60;
@@ -2981,7 +3204,7 @@ function updateAudio(dt) {
   A.sqg.gain.setTargetAtTime(sq * 0.07, t, 0.04);
   A.wg.gain.setTargetAtTime(active ? Math.pow(spd / 55, 2) * 0.16 + (S.E.blizzard ? 0.05 : 0) : S.E.blizzard ? 0.03 : 0, t, 0.1);
   const wetOn = S.E.rain ? 1 : 0;
-  A.rng.gain.setTargetAtTime(wetOn * (settings.cam === 2 && racing ? 0.05 : 0.03), t, 0.3);
+  A.rng.gain.setTargetAtTime(wetOn * (camMode() === 2 && racing ? 0.05 : 0.03), t, 0.3);
   A.wsg.gain.setTargetAtTime(wetOn && active && !car.air ? clamp(spd / 30, 0, 1.2) * 0.08 : 0, t, 0.08);
   // rubbing a canyon wall or a snowbank
   // or another car: panels grinding along each other
@@ -3372,7 +3595,7 @@ function updateCamera(dt) {
     clampCam();
     return;
   }
-  const cm = mode === 'done' && doneT > 0.3 ? 3 : settings.cam;
+  const cm = rp.on ? (rp.cm = repCamFor()) : mode === 'done' && doneT > 0.3 ? 3 : settings.cam;
   if (cm === 0 || cm === 1) {
     const [dist0, hgt, ahead] = camOffsets[cm];
     // the car pulls away a little under power and the camera closes in under braking, so g-forces read on screen
@@ -3403,6 +3626,24 @@ function updateCamera(dt) {
     const p = sh.cam ? mulPoint(carMat, 0, sh.cam[0], sh.cam[1]) : mulPoint(carMat, 0, sh.hoodB + 0.22, sh.zW + 0.14), l = mulPoint(carMat, 0, sh.cam ? sh.cam[2] : sh.hoodB + 0.05, 14);
     cam.pos = p; cam.look = l; fovT = 66 + clamp(spd * 0.12, 0, 8);
     rollT = susp.roll * 0.6; // onboard: the camera is bolted to the body, so it rolls with it (partly, for comfort)
+  } else if (cm === 4) {
+    // replays, helicopter: high off one side and behind, following on a lag, so the car slides across the picture
+    const sd = rp.shot ? rp.shot.side : 1, up = W.st.town ? 30 : 13;
+    const vdir = spd > 4 ? Math.atan2(car.vx, car.vz) : vis.h;
+    if (cam.snap) cam.yaw = vdir;
+    cam.yaw += wrapA(vdir - cam.yaw) * (1 - Math.exp(-dt * 0.7));
+    const sy = Math.sin(cam.yaw), cy = Math.cos(cam.yaw);
+    const tgt = [vis.x - sy * 28 + cy * 14 * sd, vis.y + up, vis.z - cy * 28 - sy * 14 * sd];
+    if (cam.snap || !cam.hp) cam.hp = tgt;
+    for (let a = 0; a < 3; a++) cam.hp[a] += (tgt[a] - cam.hp[a]) * (1 - Math.exp(-dt * 1.4));
+    cam.pos = cam.hp.slice();
+    cam.look = [vis.x + fx * 5, vis.y + 0.8, vis.z + fz * 5];
+    fovT = clamp(2 * Math.atan(9 / Math.max(1, Math.hypot(cam.pos[0] - vis.x, cam.pos[1] - vis.y, cam.pos[2] - vis.z))) * 180 / Math.PI, 16, 50);
+  } else if (cm === 5) {
+    // replays, wheel camera: low off a rear corner, looking forward along the flank
+    const sd = rp.shot ? rp.shot.side : 1, hx = (halfTrack(carModel.shape, 2) + 0.95) * sd;
+    cam.pos = mulPoint(carMat, hx, 0.5, carModel.rz - 1.7); cam.look = mulPoint(carMat, hx * 0.3, 0.55, 12);
+    fovT = 58; rollT = susp.roll * 0.6;
   } else {
     // TV / trackside
     if (!cam.tv || car.s > cam.tv.s + 22 || car.s < cam.tv.s - 160) cam.tv = tvSpots.find(t => t.s > car.s + 8) || tvSpots[tvSpots.length - 1];
@@ -3422,7 +3663,7 @@ function updateCamera(dt) {
   if (evt.land > 3) cam.shake = Math.max(cam.shake, Math.min(0.5, evt.land * 0.04));
   const rough = car.air || (!car.onRoad && !W.st.town) ? 0.03 : (W.st.tarmac ? 0.003 : W.st.kind === 'pine' ? 0.012 : W.st.kind === 'frost' ? 0.007 : 0.003);
   const sk = cam.shake + rough * clamp(spd / 30, 0, 1.5);
-  if (cm !== 3 && sk > 0.0005) {
+  if (cm !== 3 && cm !== 4 && sk > 0.0005) {
     // smooth multi-sine shake rather than per-frame noise, so it reads as a jolt and not as jitter
     const t = time, s = sk * 0.5;
     cam.pos[0] += (Math.sin(t * 31.7) * 0.6 + Math.sin(t * 53.1 + 1.3) * 0.4) * s;
@@ -3438,7 +3679,7 @@ function updateCamera(dt) {
   const cr = Math.cos(cam.roll), sr = Math.sin(cam.roll);
   cam.up = [rx * sr, cr, rz * sr];
   // speed blur at the screen edges, only well above town speed and not on the TV camera
-  const blurT = mode === 'race' && cm !== 3 ? clamp((spd - 30) / 25, 0, 1) : 0;
+  const blurT = mode === 'race' && cm !== 3 && cm !== 4 ? clamp((spd - 30) / 25, 0, 1) : 0;
   cam.blur += (blurT - cam.blur) * Math.min(1, dt * 3);
   cam.snap = false;
   clampCam();
@@ -3566,9 +3807,11 @@ function onImpact(e) {
   susp.rv += (Math.random() < 0.5 ? -1 : 1) * Math.min(1.1, v * 0.065);
   susp.hv += Math.min(0.8, v * 0.035);
   cam.shake = Math.max(cam.shake, Math.min(0.45, 0.05 + v * 0.028));
-  if (v > 7) hitFlash = Math.max(hitFlash, Math.min(0.7, 0.22 + (v - 7) * 0.06));
-  rumble(Math.min(1, v / 14), Math.min(1, v / 9), 120 + Math.min(300, v * 18));
-  if (isTouch && v > 7 && navigator.vibrate) try { navigator.vibrate(Math.round(Math.min(90, 25 + v * 3))); } catch (err) { /* not supported */ }
+  if (!rp.on) { // a replay shows the hit, it doesn't hit you
+    if (v > 7) hitFlash = Math.max(hitFlash, Math.min(0.7, 0.22 + (v - 7) * 0.06));
+    rumble(Math.min(1, v / 14), Math.min(1, v / 9), 120 + Math.min(300, v * 18));
+    if (isTouch && v > 7 && navigator.vibrate) try { navigator.vibrate(Math.round(Math.min(90, 25 + v * 3))); } catch (err) { /* not supported */ }
+  }
   sfx.crash(v, e.kind);
   const hx = e.x, hz = e.z, hy = vis.gy + 0.55, nx = e.nx, nz = e.nz;
   const n = Math.round(clamp(v * 1.3, 3, 24));
@@ -3799,7 +4042,8 @@ function updateHUD(dt) {
       if (mode === 'race' && lb && lap.n > 0 && ls > 30) { const d = t - refTimeAt(lb.sArr, ls); dEl.className = 'd ' + (d <= 0 ? 'ahead' : 'behind'); dEl.innerHTML = `<small>${info}</small>${fmtD(d)}`; }
       else { dEl.className = 'd'; dEl.innerHTML = `<small>${info}</small>${lap.last != null ? 'last ' + fmt(lap.last) : lb ? fmt(lb.t) : '–'}`; }
     } else if (mode === 'race' && car.s > T.startS + 30) {
-      const ref = chal || pb || rival;
+      // (a replay of a new best would compare the run with itself)
+      const ref = chal || (pb && !(rp.on && Math.abs(pb.t - finishT) < 1e-6) ? pb : null) || rival;
       const d = raceT - refTimeAt(ref.sArr, car.s);
       dEl.className = 'd ' + (d <= 0 ? 'ahead' : 'behind');
       dEl.innerHTML = `<small>${refLabel()}</small>${fmtD(d)}`;
@@ -3817,7 +4061,7 @@ function updateHUD(dt) {
 // ---------- race logic per frame ----------
 function raceChecks(dt) {
   const T = W.T;
-  if (mode !== 'race') { hint(''); return; }
+  if (mode !== 'race' || rp.on) { hint(''); return; }
   const off = Math.abs(car.lat) - T.hw;
   const spd = Math.hypot(car.vx, car.vz);
   offT = off > 7 ? offT + dt : 0;
@@ -3831,7 +4075,7 @@ function raceChecks(dt) {
   else hint('');
 }
 const escapeHTML = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-const refLabel = () => chal ? 'vs ' + escapeHTML(chal.n) : pb ? 'vs best' : 'vs rival';
+const refLabel = () => chal ? 'vs ' + escapeHTML(chal.n) : pb && !(rp.on && Math.abs(pb.t - finishT) < 1e-6) ? 'vs best' : 'vs rival';
 function onSplit(k) {
   const ref = chal ? chal.s[k] : pb ? pb.splits[k] : rival.splits[k];
   const d = raceT - ref;
@@ -3842,30 +4086,68 @@ function onSplit(k) {
 // ---------- main loop ----------
 let last = performance.now();
 const proj = M4.create(), view = M4.create(), lightView = M4.create(), lightProj = M4.create();
-// dynamic resolution: when frames run long the canvas renders fewer pixels (the browser scales it up),
-// and it creeps back up once there is headroom again. Judged on 1.5 s windows so single hitches don't count.
-// The frame rate comes first: it aims for 60 fps (on a 60 Hz screen there is no telling how much headroom is left).
-const dyn = { scale: 1, acc: 0, n: 0, lastDown: -99, dpr: 1, slow: 0, fps: 0 };
-function adaptRes(rawDt) {
+// dynamic resolution: when frames run long the scene is drawn with fewer pixels (stretched and sharpened onto the
+// screen), and it creeps back up once there is headroom again. Judged on 1.5 s windows so single hitches don't count.
+// The frame rate comes first: it aims for 60 fps (on a 60 Hz screen there is no telling how much headroom is left, so
+// going up is a probe that's undone if it costs frames).
+const wall = () => performance.now() / 1000;
+function adaptRes(rawDt, jsMs) {
   // gaps over a second are tab switches or loads, not slow rendering; a lone hitch averages out over the window
-  if (rawDt <= 0 || rawDt > 1 || document.hidden || mode === 'loading') { dyn.acc = 0; dyn.n = 0; return; }
-  dyn.acc += rawDt; dyn.n++;
+  if (rawDt <= 0 || rawDt > 1 || document.hidden || mode === 'loading') { dyn.acc = 0; dyn.n = 0; dyn.js = 0; return; }
+  dyn.acc += rawDt; dyn.n++; dyn.js += jsMs;
   if (dyn.acc < 1.5) return;
-  const avg = dyn.acc / dyn.n, floor = resFloor(); dyn.acc = 0; dyn.n = 0;
-  if (avg > 1 / 52 && dyn.scale > floor) { dyn.scale = Math.max(floor, dyn.scale * (avg > 1 / 30 ? 0.75 : 0.85)); dyn.lastDown = time; dyn.slow = 0; }
-  // Auto, already at the lowest resolution and still slow: one level down for this session (nothing is saved), drawing
-  // as many pixels as before, so the frame only loses effects; the resolution climbs back if there's headroom
-  else if (avg > 1 / 50 && settings.gfx === 'auto' && gAuto.lv > 0) {
-    if (++dyn.slow >= 2) { const k = RES_K[gq().res]; gAuto.lv--; dyn.scale = clamp(dyn.scale * k / RES_K[gq().res], resFloor(), 1); dyn.lastDown = time; applyGfx(); }
+  const avg = dyn.acc / dyn.n, js = dyn.js / dyn.n / 1000, floor = resFloor(), now = wall(), auto = settings.gfx === 'auto';
+  dyn.acc = 0; dyn.n = 0; dyn.js = 0;
+  if (avg > 1 / 52) {
+    gAuto.stable = 0;
+    // the frame is spent in our own code (physics, the scene's draw calls), not drawing pixels: fewer pixels or
+    // effects wouldn't buy anything back, so they stay
+    if (js > avg * 0.75) { dyn.cpu = true; return; }
+    dyn.cpu = false;
+    // a level just tried that costs frames: back down, and wait twice as long before trying again
+    if (auto && gAuto.probe && now - gAuto.probe < 6) { gAuto.lv--; gAuto.probe = 0; gAuto.wait = Math.min(240, gAuto.wait * 2); dyn.lastDown = now; applyGfx(); return; }
+    gAuto.probe = 0;
+    if (auto && gAuto.lv > AUTO_FULL) { gAuto.lv--; dyn.lastDown = now; applyGfx(); return; } // effects go first
+    if (dyn.scale > floor) { dyn.scale = Math.max(floor, dyn.scale * (avg > 1 / 30 ? 0.75 : 0.85)); dyn.lastDown = now; dyn.slow = 0; return; }
+    // Auto, at full resolution's floor and still slow: one level down, drawing as many pixels as before, so the
+    // frame only loses what that level drops; the resolution climbs back if there's headroom
+    if (avg > 1 / 50 && auto && gAuto.lv > 0 && ++dyn.slow >= 2) { const k = RES_K[gq().res]; gAuto.lv--; dyn.scale = clamp(dyn.scale * k / RES_K[gq().res], resFloor(), 1); dyn.lastDown = now; applyGfx(); }
+    return;
   }
-  else if (avg < 1 / 57 && dyn.scale < 1 && time - dyn.lastDown > 8) dyn.scale = Math.min(1, dyn.scale * 1.1);
+  dyn.slow = 0;
+  if (avg < 1 / 57) {
+    gAuto.probe = 0;
+    // over 80 fps (a fast screen) there's plainly room to spare: climb sooner and in bigger steps
+    const room = avg < 1 / 80, wait = room ? 2 : 8;
+    if (now - dyn.lastDown < wait || now - dyn.lastUp < (room ? 1.4 : 0)) { if (auto) autoStable(); return; }
+    // headroom: pixels first, then (Auto) the next level up as a probe
+    if (dyn.scale < 1) { dyn.scale = Math.min(1, dyn.scale * (room ? 1.25 : 1.1)); dyn.lastUp = now; gAuto.stable = 0; return; }
+    if (auto && gAuto.lv < AUTO_LV.length - 1 && now - dyn.lastDown > (room ? wait : gAuto.wait) && !(coarse && gAuto.lv >= 4)) {
+      const k = RES_K[gq().res]; gAuto.lv++; gAuto.probe = now; dyn.lastUp = now;
+      dyn.scale = clamp(dyn.scale * k / RES_K[gq().res], resFloor(), 1); applyGfx();
+      return;
+    }
+    if (auto) autoStable();
+  }
+}
+// once Auto has held a level for ~20 s of smooth frames, it's remembered for this chip: the next visit starts there
+function autoStable() {
+  if (++gAuto.stable < 13) return;
+  const a = settings.autoG;
+  if (!a || a.gpu !== GPU.s || a.lv !== gAuto.lv) { settings.autoG = { gpu: GPU.s, lv: gAuto.lv }; saveSettings(); }
+  gAuto.stable = 0;
 }
 const resFloor = () => gq().res ? 0.6 : gq().scenery ? 0.9 : 0.7; // never under about 45 % of the screen's pixels across (35 % at Minimum)
+// the canvas always has the screen's own pixels (at most 2 per CSS pixel); the scene is drawn at the resolution in use
+// (dyn.sw × dyn.sh) and stretched onto it with a sharpening filter (gl.js endScene), which looks crisper than letting
+// the browser scale a small canvas up
 function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2) * RES_K[gq().res] * dyn.scale;
+  const out = Math.min(window.devicePixelRatio || 1, 2), dpr = out * RES_K[gq().res] * dyn.scale;
   dyn.dpr = dpr;
-  const w = Math.max(1, Math.floor(canvas.clientWidth * dpr)), h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
+  const w = Math.max(1, Math.floor(canvas.clientWidth * out)), h = Math.max(1, Math.floor(canvas.clientHeight * out));
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  const k = dpr / out;
+  dyn.sw = k > 0.98 ? w : Math.max(1, Math.round(w * k)); dyn.sh = k > 0.98 ? h : Math.max(1, Math.round(h * k));
 }
 let paused_dbg = false;
 function frame(now) {
@@ -3873,9 +4155,11 @@ function frame(now) {
   const raw = (now - last) / 1000;
   const dt = Math.min(0.05, Math.max(0, raw)); last = now;
   if (paused_dbg) return;
-  adaptRes(raw);
+  adaptRes(raw, dyn.jsMs || 0);
   if (settings.fps) fpsTick(raw);
+  const t0 = performance.now();
   tick(dt, true);
+  dyn.jsMs = performance.now() - t0;
 }
 // the frame-rate readout: frames over the last half second, and the size the scene is drawn at
 const fpsC = { t: 0, n: 0 };
@@ -3883,7 +4167,7 @@ function fpsTick(raw) {
   if (raw <= 0 || raw > 1) return;
   fpsC.t += raw; fpsC.n++;
   if (fpsC.t < 0.5) return;
-  $('fps').textContent = `${Math.round(fpsC.n / fpsC.t)} fps · ${canvas.width}×${canvas.height}` + (settings.gfx === 'auto' ? ' · ' + GFX_NAME[GFX_LV[gAuto.lv]] : '');
+  $('fps').textContent = `${Math.round(fpsC.n / fpsC.t)} fps · ${dyn.sw}×${dyn.sh}` + (settings.gfx === 'auto' ? ` · Auto ${gAuto.lv}` : '') + (dyn.cpu ? ' · CPU' : '');
   fpsC.t = fpsC.n = 0;
 }
 function tick(dt, doRender) {
@@ -3891,7 +4175,8 @@ function tick(dt, doRender) {
   time += dt;
   readInput();
   evt.hit = 0; evt.land = 0; evt.shift = false; evt.down = false; evt.kind = ''; evt.col = null;
-  if (mode === 'countdown') {
+  if (rp.on) repTick(dt);
+  else if (mode === 'countdown') {
     // online the lights run on the shared clock (and wait until the host has everyone on the line)
     if (netRun()) cdT = net.race.greenL ? 3.6 + (nowMs() - net.race.greenL) / 1000 : -1; else cdT += dt;
     const n = cdT < 0 ? 5 : cdT < 0.6 ? 4 : cdT < 1.6 ? 3 : cdT < 2.6 ? 2 : cdT < 3.6 ? 1 : 0;
@@ -3914,7 +4199,7 @@ function tick(dt, doRender) {
     car.thrE = input.thr; car.boost += (input.thr * 0.3 - car.boost) * Math.min(1, dt * 2);
     savePrev(); alpha = 1;
   }
-  if (mode === 'race' || mode === 'done') {
+  if (!rp.on && (mode === 'race' || mode === 'done')) {
     acc += dt; let steps = 0;
     const wtF = netRun() && net.race.greenL ? netWT() : 0;
     while (acc >= STEP && steps < 12) {
@@ -3928,12 +4213,10 @@ function tick(dt, doRender) {
         if (net.pause) { const v = car.vF; inp = { steer: 0, thr: v < -0.5 ? 1 : 0, brk: v > 0.5 ? 1 : 0, hb: Math.abs(v) < 3, analog: true }; }
       }
       if (mode === 'done') { const ai = C.aiDrive(W, car, P, aiDone); inp = { steer: ai.steer, thr: 0, brk: 1, hb: false, analog: true }; }
+      if (rec.on) recStep(inp);
       C.stepCar(W, car, P, inp, STEP);
       if (wtF) netCollide(wtF - acc);
-      if (car.hitV > evt.hit) { evt.hit = car.hitV; evt.kind = car.hitKind; evt.x = car.hitX; evt.z = car.hitZ; evt.nx = car.hitNx; evt.nz = car.hitNz; evt.front = car.hitFront; }
-      car.hitV = 0;
-      evt.land = Math.max(evt.land, car.landV); car.landV = 0;
-      if (car.shifted === 1) evt.shift = true;
+      stepEvents();
       if (mode === 'race') {
         raceT += STEP; ghostTimer += STEP;
         if (ghostTimer >= 0.05) { ghostTimer -= 0.05; ghostRec.push(car.x, car.y, car.z, car.h); }
@@ -3955,33 +4238,36 @@ function tick(dt, doRender) {
     if (mode === 'done') { doneT += dt; if (doneT > 2.2 && !resultsShown) { resultsShown = true; net.pause = false; setScreen('results'); } }
   }
   if (mode === 'paused') { alpha = 1; }
-  updateVis(dt);
+  // a replay's world runs at its speed: slow motion, or held still while it's paused
+  const fdt = rp.on ? repDt(dt) : dt;
+  updateVis(fdt);
   if (netRun()) netSample();
   if (mode !== 'paused') {
     if (netRun()) netContactFrame(dt);
     if (evt.hit > 3 && (mode === 'race' || mode === 'done')) onImpact(evt);
-    if (evt.land > 5) rumble(Math.min(1, evt.land / 16), Math.min(0.6, evt.land / 20), 140);
+    if (evt.land > 5 && !rp.on) rumble(Math.min(1, evt.land / 16), Math.min(0.6, evt.land / 20), 140);
     // a pad hums softly through a slide, more the further the tail is out (light motor only, a few times a second)
     slideRumbleT -= dt;
-    if (mode === 'race' && slideRumbleT <= 0 && !car.air) {
+    if (mode === 'race' && !rp.on && slideRumbleT <= 0 && !car.air) {
       const sl = clamp((Math.abs(car.beta) - 0.12) / 0.45, 0, 1) * clamp(Math.hypot(car.vx, car.vz) / 14, 0, 1);
       if (sl > 0.05) { rumble(0, 0.12 + 0.35 * sl, 140); slideRumbleT = 0.12; }
     }
-    updateDirt(dt);
-    S.E.hitK *= Math.exp(-dt * 2.2);
+    updateDirt(fdt);
+    S.E.hitK *= Math.exp(-fdt * 2.2);
     if (hitFlash > 0.002 || flashShown) { hitFlash *= Math.exp(-dt * 5); flashEl.style.opacity = hitFlash.toFixed(3); flashShown = hitFlash > 0.002; }
-    updateCamera(dt);
+    updateCamera(fdt);
     netUpdate(dt);
-    emitEffects(dt); dust.update(dt); chips.update(dt); updateSkids();
-    if (S.E.snowfall) updateSnow(dt);
-    if (S.E.rain) updateRain(dt);
-    if (gq().scenery) S.updateFans(time, vis.x, vis.z);
+    emitEffects(fdt); dust.update(fdt); chips.update(fdt); updateSkids();
+    if (S.E.snowfall) updateSnow(fdt);
+    if (S.E.rain) updateRain(fdt);
+    if (gq().scenery && S.updateFans) S.updateFans(time, vis.x, vis.z);
   }
   updateAudio(dt);
   // the city's traffic lights flash amber (a lamp, so it swells and fades rather than blinks)
   if (S.amber) { const k = clamp(Math.sin(time * 5.7) * 2.2 + 0.4, 0, 1); S.amber.tint = [0.1 + 2.5 * k, 0.06 + 1.55 * k, 0.012 + 0.34 * k]; }
   if (flameT > 0) flameT -= dt;
   if (!$('hud').hidden) { raceChecks(dt); updateHUD(dt); }
+  if (rp.on) repUI(dt);
   if (doRender) render();
 }
 
@@ -3990,9 +4276,9 @@ function render() {
   resize();
   const E = S.E;
   const G = gq();
-  E.time = time; E.shadows = G.shadows;
-  const w = canvas.width, h = canvas.height;
-  M4.persp(proj, cam.fov * Math.PI / 180, w / h, settings.cam === 2 && mode !== 'menu' ? 0.08 : 0.25, 4500);
+  E.time = time; E.shadows = G.shadows; R.env.lowq = G.detail === false;
+  const w = dyn.sw, h = dyn.sh;
+  M4.persp(proj, cam.fov * Math.PI / 180, w / h, (camMode() === 2 || camMode() === 5) && mode !== 'menu' ? 0.08 : 0.25, 4500);
   M4.lookAt(view, cam.pos, cam.look, cam.up);
   M4.mul(R.env.vp, proj, view);
   M4.inv(R.env.ivp, R.env.vp);
@@ -4014,6 +4300,8 @@ function render() {
     for (let i = 0; i < n; i++) { const l = L[ix[i]]; E.pl.set([l[0], l[1], l[2], 2.4 * (1 - C.sstep(0.7 * dmax, dmax, Math.sqrt(d[ix[i]])))], i * 4); }
     E.plN = n;
   } else E.plN = 0;
+  // the crowd in view, from where the camera was last frame (before the shadow pass, which casts with the same fans)
+  if (G.scenery && S.cullFans) S.cullFans(R.env.vp, cam.pos, E.fog[1]);
   // shadow pass: a near cascade (32 m, about 1.5 cm a texel) around the car and a far one (140 m) for the scenery
   if (E.shadows) {
     const sd = E.sunDir;
@@ -4033,7 +4321,7 @@ function render() {
     R.env.shNo = [t0 * 1.2, t1 * 1.2];
     for (let k = 0; k < 2; k++) {
       R.beginShadow(k);
-      for (const c of S.shadowCasters) if (G.scenery || c.m !== S.fanMesh) R.drawDepth(c.m, c.model);
+      for (const c of S.shadowCasters) if (G.scenery || !(S.fanMeshes && S.fanMeshes.has(c.m))) R.drawDepth(c.m, c.model);
       R.drawDepth(carModel.body, carMat);
       for (let i = 0; i < 4; i++) R.drawDepth(wheelMesh(carModel, i), wheelMatrix(i));
       netDepth();
@@ -4069,7 +4357,7 @@ function drawWorld(E, G, mir) {
   R.setLitFrame(E);
   for (const { m, o } of S.meshes) {
     if (!G.scenery || mir) { // no grass or crowd (bare scenery, or the mirror); bare scenery has trees as their last (far) level everywhere
-      if (o.mode === 7 || m === S.fanMesh) continue;
+      if (o.mode === 7 || (S.fanMeshes && S.fanMeshes.has(m))) continue;
       if (m.lods && !G.scenery) { R.drawLit(m.lods[m.lods.length - 1].m, o); continue; }
     }
     if (o.farFog) { R.drawLit(m, { mode: 0, fog: [380, 3200], fogRestore: E.fog, fogLo: [E.fog[0], E.fog[1], W.st.kind === 'mesa' ? 100 : 110, (S.farY || 0) - 30] }); continue; }
@@ -4084,7 +4372,7 @@ function drawWorld(E, G, mir) {
     if (carModel.spk) { M4.trs(spkT, 0, 0, -spkPump(), 0, 0, 0, 1); M4.mul(spkM, carMat, spkT); R.drawLit(carModel.spk, { model: spkM, dirt: dirt * 0.4, carY: baseY, dirtCol: dcol }); }
     for (let i = 0; i < 4; i++) R.drawLit(wheelMesh(carModel, i), { model: wheelMatrix(i), mode: 11, tex: carModel.tyreTex, dirt: dirt * 0.9, carY: baseY, dirtCol: dcol });
     for (let i = 0; i < 4; i++) R.drawLit(carModel.caliper, { model: wheelMatrix(i, true), dirt: dirt * 0.6, carY: baseY, dirtCol: dcol });
-    if (!(settings.cam === 2 && (mode === 'race' || mode === 'countdown'))) R.drawLit(carModel.lightF, { model: carMat, mode: 4, tint: lightsOn ? (E.night ? [2.6, 2.6, 2.6] : [1.9, 1.9, 1.9]) : [0.3, 0.3, 0.3] });
+    if (!(camMode() === 2 && (mode === 'race' || mode === 'countdown'))) R.drawLit(carModel.lightF, { model: carMat, mode: 4, tint: lightsOn ? (E.night ? [2.6, 2.6, 2.6] : [1.9, 1.9, 1.9]) : [0.3, 0.3, 0.3] });
     if (flameT > 0) R.drawLit(carModel.flame, { model: carMat, mode: 4, tint: [2.6 + Math.random(), 1.6 + Math.random() * 0.6, 0.9] });
     const braking = (mode === 'race' && input.brk > 0.1) || mode === 'done' || (mode === 'race' && input.hb);
     // the F1's only lamp is its rain light: on in the rain and at night, not a brake light
@@ -4152,7 +4440,7 @@ function drawWorld(E, G, mir) {
 // ---- the rear-view mirror (top of the screen): online races by default, Options → Always / Off, B in a run ----
 // A camera on the roof of your car looking back (it moves with the body, pitch and roll included), drawn into a small
 // target of its own and from there into the frame the page puts at the top of the HUD (#hMirror)
-const mirShown = () => !!W && mirWanted() && !$('hud').hidden;
+const mirShown = () => !!W && mirWanted() && !$('hud').hidden && !rp.on;
 // vertical field of view (°); the frame's inner corner radius (CSS px, as in page.html); how much nearer trees and terrain
 // switch to their simpler levels (a mirror pixel covers about three times the angle of a screen pixel)
 const MIR_FOV = 20, MIR_RAD = 9, MIR_LOD = 3;
@@ -4178,7 +4466,9 @@ function renderMirror(E, G) {
   const env = R.env, keep = { cam: env.cam, fov: env.fov };
   mirVp.set(env.vp); mirIvp.set(env.ivp);
   M4.mul(env.vp, mirProj, mirView); M4.inv(env.ivp, env.vp); env.cam = eye; env.fov = MIR_FOV * Math.PI / 180; env.lodK = MIR_LOD;
-  if (R.beginMirror(b.w, b.h, 4)) {
+  // drawn at the scene's resolution (it's stretched onto the frame like the scene), with less MSAA once effects are off
+  const k = Math.min(1, dyn.sw / canvas.width);
+  if (R.beginMirror(Math.max(16, Math.round(b.w * k)), Math.max(8, Math.round(b.h * k)), G.aa ? 4 : 2)) {
     gl.clearColor(E.fogCol[0], E.fogCol[1], E.fogCol[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.disable(gl.CULL_FACE); gl.disable(gl.BLEND);
@@ -4209,6 +4499,8 @@ function mixLight(E) {
 // ---------- boot ----------
 keepCarAllowed(curKey());
 renderStageInfo(); renderCarList(); updateToggles(); renderGfx(); setMirror(settings.mirror);
+// drawing on the CPU (hardware acceleration off or blocked) makes every setting slow: say so where it can't be missed
+if (GPU.soft) setTimeout(() => toast('Graphics acceleration is off in this browser: see Options → Graphics'), 1500);
 setScreen('menu');
 const fontsReady = document.fonts && document.fonts.load ? Promise.race([
   Promise.all([document.fonts.load('800 60px "Big Shoulders Display"'), document.fonts.load('700 40px "Chivo Mono"'), document.fonts.load('600 20px "Barlow Semi Condensed"')]),
@@ -4237,6 +4529,6 @@ if (location.protocol === 'file:') window.__rally = {
   audio: () => ({ A, sfx, getTune }),
   setDirt(v) { dirt = v; },
   // graphics: a preset name or levels to mix into the current ones; draw(n) renders the same frame n times
-  gfx(v) { if (typeof v === 'string') setGfx(v); else if (v) { settings.g = Object.assign({}, gq(), v); settings.gfx = 'custom'; applyGfx(true); } return { gfx: settings.gfx, g: gq(), auto: gAuto.lv, scale: dyn.scale, w: canvas.width, h: canvas.height }; },
-  draw(n) { for (let i = 0; i < n; i++) render(); }, get mode() { return mode; }, get dbg() { return { dirt, hitFlash, dust: dust.n, chips: chips.n, hitK: S.E.hitK, shake: cam.shake, evt: Object.assign({}, evt) }; }, get car() { return car; }, get W() { return W; }, startRace, settings, keys, toMenu, get raceT() { return raceT; }, net, netJoin, netCreate, netStart, netLeave, netRows: () => (netRun() ? netRows() : null) };
+  gfx(v) { if (typeof v === 'string') setGfx(v); else if (v) { settings.g = Object.assign({}, gq(), v); settings.gfx = 'custom'; applyGfx(true); } return { gfx: settings.gfx, g: gq(), auto: gAuto.lv, scale: dyn.scale, w: dyn.sw, h: dyn.sh }; },
+  draw(n) { for (let i = 0; i < n; i++) render(); }, get R() { return R; }, get S() { return S; }, get mode() { return mode; }, get dbg() { return { dirt, hitFlash, dust: dust.n, chips: chips.n, hitK: S.E.hitK, shake: cam.shake, evt: Object.assign({}, evt) }; }, get car() { return car; }, get W() { return W; }, startRace, settings, keys, toMenu, get raceT() { return raceT; }, get finishT() { return finishT; }, get rp() { return rp; }, get rec() { return rec; }, get cam() { return cam; }, startReplay, repSeek, repExit, net, netJoin, netCreate, netStart, netLeave, netRows: () => (netRun() ? netRows() : null) };
 })();

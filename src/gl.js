@@ -182,6 +182,27 @@ float cloudLo(float cover){ return 0.7 - cover * 0.3; }
 float cloudN(vec2 uv, float k){ float bd = cbillow(uv * 5.3 + 7.0) * 0.6 + cbillow(uv * 11.7 - 3.0) * 0.4; return cfbm(uv, k) - (1.0 - bd) * 0.11 * k; }
 `;
 
+// The lit shaders' per-frame uniforms live in one uniform buffer (std140), shared by the vertex and fragment stage and
+// by every lit variant: one upload a frame instead of ~45 uniform calls per program. Offsets come from this list.
+const FRAME_U = [['mat4', 'u_vp'], ['mat4', 'u_svp'], ['mat4', 'u_svp2'],
+  ['vec3', 'u_sunDir'], ['float', 'u_cld'], ['vec3', 'u_sunCol'], ['float', 'u_time'], ['vec3', 'u_sky'], ['float', 'u_exp'],
+  ['vec3', 'u_gnd'], ['float', 'u_shOn'], ['vec3', 'u_fogCol'], ['float', 'u_lines'], ['vec3', 'u_cam'], ['float', 'u_icy'],
+  ['vec3', 'u_zen'], ['float', 'u_gbump'], ['vec3', 'u_hor'], ['float', 'u_hlOn'], ['vec3', 'u_fol'], ['float', 'u_wet'],
+  ['vec3', 'u_r1'], ['float', 'u_hitK'], ['vec3', 'u_r2'], ['float', 'u_night'], ['vec3', 'u_r3'], ['int', 'u_plN'],
+  ['vec3', 'u_verge'], ['int', 'u_occN'], ['vec3', 'u_tt'], ['vec3', 'u_glw'], ['vec3', 'u_hlPos'], ['vec3', 'u_hlDir'],
+  ['vec3', 'u_skyline'], ['vec3', 'u_hitPos'], ['vec3', 'u_plCol'], ['vec2', 'u_shNo'], ['vec2', 'u_shTex'],
+  ['vec4', 'u_pl', 16], ['vec4', 'u_occ', 8], ['vec4', 'u_occB', 8]];
+const FRAME_OFF = {}; // name -> offset in floats (std140: vec3/vec4/mat4/arrays on 16 bytes, vec2 on 8)
+const FRAME_SIZE = (() => {
+  let o = 0;
+  for (const [t, n, c] of FRAME_U) {
+    const al = c || t === 'vec3' || t === 'vec4' || t === 'mat4' ? 4 : t === 'vec2' ? 2 : 1;
+    o = Math.ceil(o / al) * al; FRAME_OFF[n] = o;
+    o += c ? c * 4 : { mat4: 16, vec4: 4, vec3: 3, vec2: 2 }[t] || 1;
+  }
+  return Math.ceil(o / 4) * 4;
+})();
+const FRAME_GLSL = 'layout(std140) uniform Frame {\n' + FRAME_U.map(([t, n, c]) => `  highp ${t} ${n}${c ? `[${c}]` : ''};`).join('\n') + '\n};';
 const LIT_VS = `#version 300 es
 layout(location=0) in vec3 a_pos;
 layout(location=1) in vec3 a_nrm;
@@ -190,11 +211,9 @@ layout(location=3) in vec2 a_uv;
 layout(location=4) in vec4 a_i0;
 layout(location=5) in vec4 a_i1;
 layout(location=6) in vec3 a_ic;
-uniform mat4 u_model, u_vp, u_svp, u_svp2;
-uniform vec2 u_shNo;
-uniform float u_sway, u_time;
-uniform vec3 u_hitPos; uniform float u_hitK;
-uniform vec3 u_sunDir; uniform float u_cld; uniform vec3 u_cam;
+uniform mat4 u_model;
+uniform float u_sway;
+${FRAME_GLSL}
 out vec3 v_wp; out vec3 v_n; out vec4 v_col; out vec2 v_uv; out vec4 v_sp; out vec3 v_ic; out vec3 v_lp; out vec4 v_sp2; out float v_cs; out float v_ld;
 ${COMMON}
 ${CLOUDS}
@@ -239,24 +258,16 @@ precision highp sampler2DShadow;
 precision mediump sampler2DArray;
 in vec3 v_wp; in vec3 v_n; in vec4 v_col; in vec2 v_uv; in vec4 v_sp; in vec3 v_ic; in vec3 v_lp; in vec4 v_sp2; in float v_cs; in float v_ld;
 uniform vec4 u_lodB; // dissolve band below this level (x,y) and above it (z,w), in metres of ground distance
-uniform vec3 u_sunDir, u_sunCol, u_sky, u_gnd, u_fogCol, u_cam;
 uniform vec2 u_fog;
 uniform int u_mode;
 uniform vec3 u_tint;
-uniform float u_alpha, u_exp;
+uniform float u_alpha;
 uniform sampler2D u_tex;
 uniform sampler2DShadow u_shadow;
-uniform float u_shOn; uniform vec2 u_shTex;
-uniform vec3 u_r1, u_r2, u_r3; uniform float u_lines, u_icy;
-uniform vec3 u_hlPos, u_hlDir; uniform float u_hlOn;
 uniform float u_dirt, u_carY; uniform vec3 u_dirtCol;
-uniform vec3 u_zen, u_hor; uniform vec3 u_fol;
-uniform vec3 u_verge, u_tt;
-uniform vec3 u_glw; uniform float u_cld, u_time, u_gbump; uniform vec4 u_fogLo;
-uniform float u_wet; uniform vec3 u_skyline;
-uniform sampler2DArray u_arr; uniform vec4 u_fac[16]; uniform float u_night;
-uniform vec4 u_pl[16]; uniform int u_plN; uniform vec3 u_plCol;
-uniform vec4 u_occ[8], u_occB[8]; uniform int u_occN;
+uniform vec4 u_fogLo;
+uniform sampler2DArray u_arr; uniform vec4 u_fac[16];
+${FRAME_GLSL}
 out vec4 o;
 ${COMMON}
 ${OUTC}
@@ -330,11 +341,20 @@ void main(){
     float n4 = vnoise(vec2(u*14.0, v*2.5));
     float wob = (vnoise(vec2(3.0, v*0.035)) - 0.5) * 0.12; // the ruts wander a little
     float rut = exp(-pow((au - 0.42 + wob)/0.13, 2.0)) * (0.75 + 0.25*n4);
+#ifdef LOWQ
+    float damp = 0.0; // (the low-detail variant skips the finer layers: no damp patches, cracks, repairs or big stones)
+#else
     float damp = smoothstep(0.45, 0.8, vnoise(m*vec2(0.3, 0.07) + 11.0));
+#endif
     vec3 c = mix(u_r1, u_r2, clamp(rut*(0.55+0.5*n1), 0.0, 1.0));
     if (u_lines > 0.5) {
       // tarmac: aggregate grain, rubbered-in wheel lines, repair patches, sealed cracks
       vec2 wg = v_wp.xz; // grain in world space: it doesn't squash and stretch round tight bends like road coordinates do
+#ifdef LOWQ
+      float agg = vnoise(wg*30.0);
+      c *= 1.0 + (mix(0.5, agg, fine) - 0.5) * 0.24;
+      float box = 0.0, crack = 0.0;
+#else
       float agg = vnoise(wg*30.0)*0.55 + vnoise(wg*83.0)*0.45;
       c *= 1.0 + (mix(0.5, agg, fine) - 0.5) * 0.24;
       c = mix(c, u_r3, smoothstep(0.74, 0.92, vnoise(m*57.0 + 9.0)) * 0.3 * fine);
@@ -346,6 +366,7 @@ void main(){
       float cn = vnoise(vec2(m.x * 1.3, m.y * 0.09) + vec2(vnoise(wq), vnoise(wq + 4.0)) * 0.6);
       float crack = (1.0 - smoothstep(0.0, 0.005 + fw*0.5, abs(cn - 0.5))) * smoothstep(0.6, 0.8, vnoise(m * vec2(0.25, 0.04) + 3.0)) * mid;
       c = mix(c, u_r2 * 0.5, crack * 0.75);
+#endif
       c = mix(c, u_verge, smoothstep(0.78, 1.02, au + (n1 - 0.5)*0.16) * (u_lines > 1.5 ? 0.1 : 0.3)); // sand blown onto the edges
       c *= 0.9 + 0.2*n3;
       float e = smoothstep(0.855, 0.87, au) * (1.0 - smoothstep(0.905, 0.92, au));
@@ -376,7 +397,11 @@ void main(){
       // the stones are laid in world space, so they stay round on the inside and outside of a hairpin
       vec2 wg = v_wp.xz;
       vec4 ga = texture(u_tex, vec2(wg.x * 0.94 - wg.y * 0.34, wg.x * 0.34 + wg.y * 0.94));
+#ifdef LOWQ
+      vec4 gb = vec4(0.0);
+#else
       vec4 gb = texture(u_tex, vec2(wg.x * 0.82 + wg.y * 0.57, wg.y * 0.82 - wg.x * 0.57) + 0.37);
+#endif
       float big = smoothstep(0.03, 0.2, gb.a) * loose, bs = clamp((gb.a - 0.25) / 0.75, 0.0, 1.0);
       float flat0 = mix(1.0, 0.45, rut);  // wheels have pressed the small stones into the surface
       c *= 1.0 + (ga.r - 0.5) * 0.36 * fine * flat0;
@@ -391,7 +416,11 @@ void main(){
       bh = (ga.b * ga.g * 0.5 * flat0 + gb.a * loose * 0.7) * fine + loose * 0.5 * mid; bk = 0.006;
     }
     // ragged edge where the surface meets the verge, instead of a ruled line
+#ifdef LOWQ
+    float edge = au + (n1 - 0.5)*0.08;
+#else
     float edge = au + (vnoise(vec2(v*0.5, 1.0)) - 0.5)*0.1 + (vnoise(m*2.5) - 0.5)*0.06;
+#endif
     c = mix(c, u_verge, smoothstep(0.93, 1.02, edge) * (u_lines > 0.5 ? 0.5 : 0.8));
     if (u_wet > 0.0) {
       // rain: a dark, glossy film everywhere, and standing water in the dips of the wheel lines that mirrors the sky
@@ -416,7 +445,9 @@ void main(){
       float nd = vnoise(vec2(fu * 13.0, v_wp.y * 1.6)) * 0.55 + vnoise(vec2(fu * 31.0, v_wp.y * 4.5)) * 0.45;
       float clump = vnoise(vec2(fu * 3.1, v_wp.y * 0.8 + 3.0));
       base *= mix(1.0, 0.62 + 0.8 * nd + 0.3 * (clump - 0.5), 0.9 * fl);
+#ifndef LOWQ
       base = mix(base, base * vec3(1.25, 1.3, 0.8), smoothstep(0.78, 0.95, vnoise(vec2(fu * 17.0, v_wp.y * 5.0 + 9.0))) * 0.5 * fl);
+#endif
     }
     if (spec > 0.015 && spec < 0.03) {
       // cactus: vertical ribs with pale spines along the crests, a waxy dull sheen
@@ -522,10 +553,17 @@ void main(){
     // ground: the same broad variation as mode 3, then two layers of a tiling detail texture (blades, needles,
     // ripples or grain depending on the stage) sampled at different scales and rotations. Mipmaps average it out
     // with distance, so it never shimmers; its luminance doubles as a height for the bump shading.
+#ifdef LOWQ
+    float d = vnoise(v_wp.xz*0.45)*0.6 + vnoise(v_wp.xz*0.05)*0.5;
+    base *= 0.68 + 0.45*d;
+    float up = smoothstep(0.5, 0.88, n.y);
+    float pm = smoothstep(0.42, 0.78, vnoise(v_wp.xz*0.021 + 31.0));
+#else
     float d = vnoise(v_wp.xz*0.45)*0.45 + vnoise(v_wp.xz*1.9)*0.25 + vnoise(v_wp.xz*0.05)*0.5;
     base *= 0.68 + 0.45*d;
     float up = smoothstep(0.5, 0.88, n.y);
     float pm = smoothstep(0.42, 0.78, vnoise(v_wp.xz*0.021 + 31.0) * 0.7 + vnoise(v_wp.xz*0.09) * 0.3);
+#endif
     base = mix(base, base * u_tt, pm * 0.6 * up);
     vec2 gp = v_wp.xz;
     vec3 d1 = texture(u_tex, gp / 3.4).rgb, d2 = texture(u_tex, mat2(0.8, 0.6, -0.6, 0.8) * gp / 1.17 + 0.37).rgb;
@@ -537,7 +575,11 @@ void main(){
     if (steep > 0.01) {
       // cliffs and cut banks: layered rock (bands that wander a little in height) instead of ground texture smeared down the face
       float wy = v_wp.y + (vnoise(vec2(v_wp.x + v_wp.z, 0.0) * 0.12) - 0.5) * 3.0;
+#ifdef LOWQ
+      float bands = vnoise(vec2((v_wp.x * 0.7 + v_wp.z * 0.5) * 0.25, wy * 2.3)) * 0.85 + 0.075;
+#else
       float bands = vnoise(vec2((v_wp.x * 0.7 + v_wp.z * 0.5) * 0.25, wy * 2.3)) * 0.55 + vnoise(vec2((v_wp.x - v_wp.z) * 0.9, wy * 7.5)) * 0.3 + vnoise(v_wp.xy * 3.1 + v_wp.zz * 2.3) * 0.15;
+#endif
       base *= 1.0 + (bands - 0.5) * 0.5 * steep;
       bh += bands * steep * 1.5;
     }
@@ -549,8 +591,12 @@ void main(){
     // rock: strata bands that tilt with the slice of the world they're cut from, speckle, a few hairline cracks
     float fr = 1.0 - smoothstep(0.03, 0.12, length(fwidth(v_wp)));
     float bands = vnoise(vec2((v_wp.x * 0.7 + v_wp.z * 0.5) * 0.35, v_wp.y * 7.0)) * 0.6 + vnoise(vec2((v_wp.x - v_wp.z) * 1.4, v_wp.y * 19.0)) * 0.4;
+#ifdef LOWQ
+    float spk = 0.5, crk = 0.0;
+#else
     float spk = vnoise(v_wp.xy * 11.0 + v_wp.z * 7.0);
     float crk = 1.0 - smoothstep(0.0, 0.045, abs(vnoise(v_wp.xy * 2.3 + v_wp.zz * 1.7) - 0.5));
+#endif
     float steep = 1.0 - smoothstep(0.55, 0.9, n.y);
     base *= 1.0 + ((bands - 0.5) * 0.55 + (spk - 0.5) * 0.3 * fr - crk * 0.35 * fr) * mix(0.35, 1.0, steep);
     // ground: broad patches with a hue shift (dry grass, wind-packed snow, redder sand), close-up grain with relief
@@ -592,6 +638,9 @@ void main(){
     base = mix(base, u_dirtCol, m);
     spec *= 1.0 - m * 0.85;
   }
+#ifdef LOWQ
+  bk = 0.0;
+#endif
   if (bk > 0.0) {
     // bump from the procedural height (surface-gradient method, no tangents needed)
     vec3 dpx = dFdx(v_wp), dpy = dFdy(v_wp);
@@ -935,6 +984,7 @@ uniform sampler2D u_scene, u_bloom;
 uniform float u_bloomK, u_sat, u_con, u_vig, u_time, u_asp, u_blur;
 uniform sampler2D u_rays; uniform vec3 u_rayCol;
 uniform vec3 u_lift, u_gain;
+uniform vec2 u_sharp; // amount, and 1 when the scene is drawn smaller than the screen (clamp to the neighbours)
 out vec4 o;
 ${COMMON}
 void main(){
@@ -947,11 +997,15 @@ void main(){
     for (int i = 1; i <= 5; i++) c += texture(u_scene, v_uv - d * k * (float(i) - j) / 5.0).rgb;
     c /= 6.0;
   }
-  // a light unsharp mask: the resolve and the dynamic resolution soften fine detail a touch, this brings it back
+  // a light unsharp mask: the resolve and the dynamic resolution soften fine detail a touch, this brings it back.
+  // Drawn smaller than the screen, the picture is stretched here (bilinear) and sharpened harder, but never past its
+  // four neighbours, so edges get crisper without bright or dark rims
   if (u_blur <= 0.001) {
     vec2 px = 1.0 / vec2(textureSize(u_scene, 0));
-    vec3 nb = texture(u_scene, v_uv + vec2(px.x, 0.0)).rgb + texture(u_scene, v_uv - vec2(px.x, 0.0)).rgb + texture(u_scene, v_uv + vec2(0.0, px.y)).rgb + texture(u_scene, v_uv - vec2(0.0, px.y)).rgb;
-    c = max(c + (c - nb * 0.25) * 0.32, vec3(0.0));
+    vec3 a = texture(u_scene, v_uv + vec2(px.x, 0.0)).rgb, b = texture(u_scene, v_uv - vec2(px.x, 0.0)).rgb;
+    vec3 d = texture(u_scene, v_uv + vec2(0.0, px.y)).rgb, e = texture(u_scene, v_uv - vec2(0.0, px.y)).rgb;
+    vec3 s = max(c + (c - (a + b + d + e) * 0.25) * u_sharp.x, vec3(0.0));
+    c = u_sharp.y > 0.5 ? clamp(s, min(c, min(min(a, b), min(d, e))), max(c, max(max(a, b), max(d, e)))) : s;
   }
   c += texture(u_bloom, v_uv).rgb * u_bloomK;
   c += texture(u_rays, v_uv).rgb * u_rayCol;
@@ -965,6 +1019,19 @@ void main(){
   c *= 1.0 - u_vig * smoothstep(0.35, 1.05, length(q) * 1.15);
   c += (hash12(gl_FragCoord.xy + fract(u_time) * 61.0) - 0.5) / 255.0;
   o = vec4(clamp(c, 0.0, 1.0), 1.0);
+}`;
+// the picture without post, drawn smaller than the screen: stretched (bilinear) and sharpened within its neighbours
+const UP_FS = `#version 300 es
+precision highp float;
+in vec2 v_uv; uniform sampler2D u_src; uniform float u_k;
+out vec4 o;
+void main(){
+  vec2 px = 1.0 / vec2(textureSize(u_src, 0));
+  vec3 c = texture(u_src, v_uv).rgb;
+  vec3 a = texture(u_src, v_uv + vec2(px.x, 0.0)).rgb, b = texture(u_src, v_uv - vec2(px.x, 0.0)).rgb;
+  vec3 d = texture(u_src, v_uv + vec2(0.0, px.y)).rgb, e = texture(u_src, v_uv - vec2(0.0, px.y)).rgb;
+  vec3 s = c + (c - (a + b + d + e) * 0.25) * u_k;
+  o = vec4(clamp(s, min(c, min(min(a, b), min(d, e))), max(c, max(max(a, b), max(d, e)))), 1.0);
 }`;
 // the rear-view mirror over the screen: its picture flipped left to right (a mirror), the same grade as the screen when
 // post is on (the mirror is drawn without post, so its picture is already tonemapped), darker towards the rim, a faint
@@ -993,23 +1060,77 @@ function createRenderer(canvas) {
   const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance', depth: false, stencil: false });
   if (!gl) return null;
 
+  // KHR_parallel_shader_compile: the driver compiles in the background and nothing waits on a program until it is
+  // first used (on Windows, ANGLE turns every shader into HLSL and compiles it with FXC, which is slow)
+  gl.getExtension('KHR_parallel_shader_compile');
   function compile(vs, fs) {
-    const mk = (type, src) => {
-      const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) + '\n' + src.split('\n').map((l, i) => (i + 1) + ': ' + l).join('\n'));
-      return s;
-    };
-    const p = gl.createProgram();
-    gl.attachShader(p, mk(gl.VERTEX_SHADER, vs)); gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fs));
+    const mk = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
+    const p = gl.createProgram(), sv = mk(gl.VERTEX_SHADER, vs), sf = mk(gl.FRAGMENT_SHADER, fs);
+    gl.attachShader(p, sv); gl.attachShader(p, sf);
     gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
-    const u = {};
-    const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
-    for (let i = 0; i < n; i++) { const info = gl.getActiveUniform(p, i); u[info.name] = gl.getUniformLocation(p, info.name); }
-    return { p, u };
+    const P = { p, u: null, ok: true,
+      // the first use checks the link and reads the uniform locations
+      ready() {
+        if (P.u) return P.ok;
+        P.u = {};
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+          P.ok = false;
+          const log = s => gl.getShaderInfoLog(s) || '';
+          console.error('shader failed: ' + gl.getProgramInfoLog(p) + '\n' + log(sv) + '\n' + log(sf));
+          return false;
+        }
+        const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+        for (let i = 0; i < n; i++) { const info = gl.getActiveUniform(p, i); P.u[info.name] = gl.getUniformLocation(p, info.name); }
+        return true;
+      } };
+    return P;
+  }
+  // The lit shader is one source with a branch per mode, but it is compiled once per mode with the mode as a
+  // constant, so each program only carries its own branch: the uber-shader's register pressure (which every lit pixel
+  // paid for, whatever its mode) goes away. Uniforms set once a frame are recorded by setLitFrame and replayed on each
+  // variant the first time it's used in that frame. A variant that fails falls back to the uber-shader.
+  const LIT_MODES = 14;
+  // The surfaces that cover the screen (road, ground, rock, foliage) also get a low-detail variant (LOWQ: fewer noise
+  // layers, no bump), used by the levels that already gave up their effects (env.lowq), where every pixel counts.
+  const LOWQ_MODES = [1, 3, 8, 9];
+  const litSrc = (m, lo) => LIT_FS.replace('uniform int u_mode;', `const int u_mode = ${m};`).replace('#version 300 es\n', lo ? '#version 300 es\n#define LOWQ\n' : '#version 300 es\n');
+  const litVar = [], litLo = [];
+  for (let m = 0; m < LIT_MODES; m++) litVar.push(compile(LIT_VS, litSrc(m)));
+  for (const m of LOWQ_MODES) litLo[m] = compile(LIT_VS, litSrc(m, true));
+  let litUber = null, litCur = null, litFrame = 0;
+  const litCalls = [];
+  function litReady(P) {
+    if (P.u) return P.ok;
+    if (!P.ready()) return false;
+    gl.uniformBlockBinding(P.p, gl.getUniformBlockIndex(P.p, 'Frame'), 0);
+    gl.useProgram(P.p); litCur = null;
+    gl.uniform1i(P.u.u_tex, 0); gl.uniform1i(P.u.u_shadow, 1); gl.uniform1i(P.u.u_arr, 2);
+    return true;
+  }
+  function litProg(m) {
+    if (env.lowq && litLo[m] && litReady(litLo[m])) return litLo[m];
+    const v = litVar[m] || litVar[0];
+    if (litReady(v)) return v;
+    if (!litUber) { litUber = compile(LIT_VS, LIT_FS); if (!litReady(litUber)) throw new Error('lit shader failed'); }
+    return litUber;
+  }
+  function litUse(P, m) {
+    if (litCur !== P) {
+      gl.useProgram(P.p); litCur = P;
+      if (P.frame !== litFrame) { P.frame = litFrame; const u = P.u; for (let i = 0; i < litCalls.length; i += 3) gl[litCalls[i]](u[litCalls[i + 1]], ...litCalls[i + 2]); }
+    }
+    if (P === litUber) gl.uniform1i(P.u.u_mode, m);
+    return P.u;
+  }
+  function useProg(p) { gl.useProgram(p); litCur = null; }
+  // wait for every program now (behind a loading screen) rather than on the first frame that needs it; the driver has
+  // been compiling them in the background since the renderer started
+  function warm() {
+    for (const v of litVar) litReady(v);
+    for (const v of litLo) if (v) litReady(v);
+    for (const k in prog) prog[k].ready();
   }
   const prog = {
-    lit: compile(LIT_VS, LIT_FS),
     depth: compile(DEPTH_VS, DEPTH_FS),
     sky: compile(SKY_VS, SKY_FS),
     pt: compile(PT_VS, PT_FS),
@@ -1021,7 +1142,9 @@ function createRenderer(canvas) {
     comp: compile(FS_VS, COMPOSITE_FS),
     rays: compile(FS_VS, RAYS_FS),
     mir: compile(FS_VS, MIRROR_FS),
+    up: compile(FS_VS, UP_FS),
   };
+  for (const k in prog) { const P = prog[k]; Object.defineProperty(P, 'U', { get() { if (!P.ready()) throw new Error(k + ' shader failed'); return P.u; } }); }
 
   // shadow map
   const SHADOW = 2048;
@@ -1065,21 +1188,20 @@ function createRenderer(canvas) {
   try { const sc = gl.getInternalformatParameter(gl.RENDERBUFFER, gl.RGBA8, gl.SAMPLES); ldr.maxSamples = sc && sc.length ? Math.min(4, Math.max(...sc)) : 0; } catch (e) { ldr.maxSamples = 0; }
   // ns 1 (no MSAA): the canvas has no depth buffer of its own, so the scene still needs this target, blitted straight over
   function buildLdr(w, h, ns) {
-    if (ldr.fbo) { gl.deleteFramebuffer(ldr.fbo); gl.deleteRenderbuffer(ldr.color); gl.deleteRenderbuffer(ldr.depth); if (ldr.rFbo) { gl.deleteFramebuffer(ldr.rFbo); gl.deleteRenderbuffer(ldr.rColor); } }
-    ldr.rFbo = ldr.rColor = null;
+    if (ldr.fbo) { gl.deleteFramebuffer(ldr.fbo); if (ldr.color) gl.deleteRenderbuffer(ldr.color); gl.deleteRenderbuffer(ldr.depth); if (ldr.rFbo !== ldr.fbo) gl.deleteFramebuffer(ldr.rFbo); gl.deleteTexture(ldr.rTex); }
+    ldr.rFbo = ldr.color = null;
     const store = (fmt) => ns > 1 ? gl.renderbufferStorageMultisample(gl.RENDERBUFFER, ns, fmt, w, h) : gl.renderbufferStorage(gl.RENDERBUFFER, fmt, w, h);
-    if (ns > 1) {
-      // single-sample stage for the resolve: a multisample blit needs identical formats, and the canvas may be RGB8
-      ldr.rFbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, ldr.rFbo);
-      ldr.rColor = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, ldr.rColor);
-      gl.renderbufferStorage(gl.RENDERBUFFER, gl.RGBA8, w, h);
-      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, ldr.rColor);
-    }
+    // the single-sample picture is a texture, so it can be stretched onto a larger screen; with MSAA it's the resolve's
+    // target (a multisample blit needs identical formats, and the canvas may be RGB8), without it it's drawn into directly
+    ldr.rTex = ftex(w, h, gl.RGBA8);
+    if (ns > 1) ldr.rFbo = fbo(ldr.rTex);
     ldr.w = w; ldr.h = h; ldr.samples = ns;
     ldr.fbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, ldr.fbo);
-    ldr.color = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, ldr.color);
-    store(gl.RGBA8);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, ldr.color);
+    if (ns > 1) {
+      ldr.color = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, ldr.color);
+      store(gl.RGBA8);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, ldr.color);
+    } else { gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, ldr.rTex, 0); ldr.rFbo = ldr.fbo; }
     ldr.depth = gl.createRenderbuffer(); gl.bindRenderbuffer(gl.RENDERBUFFER, ldr.depth);
     store(gl.DEPTH_COMPONENT24);
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, ldr.depth);
@@ -1170,7 +1292,7 @@ function createRenderer(canvas) {
     if (mir.ok && (mir.w !== w || mir.h !== h || mir.samples !== ns)) buildMirror(w, h, ns);
     if (!mir.ok) return false;
     gl.bindFramebuffer(gl.FRAMEBUFFER, mir.fbo); gl.viewport(0, 0, w, h);
-    mir.hdr = env.hdr; env.hdr = 0; mir.on = true;
+    mir.hdr = env.hdr; env.hdr = 0; mir.on = true; env.vh = h;
     return true;
   }
   function endMirror() {
@@ -1180,14 +1302,14 @@ function createRenderer(canvas) {
       gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    env.hdr = mir.hdr; mir.on = false;
+    env.hdr = mir.hdr; mir.on = false; env.vh = env.sh;
   }
   // onto the screen at (x, y) from the bottom left, w × h pixels, corners of radius rad; G: the grade, or null
   function drawMirror(x, y, w, h, rad, G) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(x, y, w, h);
     gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE); gl.depthMask(false);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    const u = prog.mir.u; gl.useProgram(prog.mir.p);
+    const u = prog.mir.U; useProg(prog.mir.p);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, mir.tex); gl.uniform1i(u.u_src, 0);
     gl.uniform2f(u.u_size, w, h); gl.uniform1f(u.u_rad, rad);
     gl.uniform1f(u.u_sat, G ? G.sat : 1); gl.uniform1f(u.u_con, G ? G.con : 0);
@@ -1214,20 +1336,34 @@ function createRenderer(canvas) {
       if (!ldr.on) gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
     env.hdr = post.on ? 1 : 0;
+    env.sw = w; env.sh = h; env.vh = h;
     gl.viewport(0, 0, w, h);
     return post.on;
   }
+  // how hard to sharpen a picture stretched to ow pixels across: more the more it's stretched
+  function upSharp(ow) { return 0.32 + 0.9 * Math.min(1, Math.max(0, ow / env.sw - 1)); }
   function fsDraw() { gl.bindVertexArray(skyVao); gl.drawArrays(gl.TRIANGLES, 0, 3); }
   // rays: { uv: sun position on screen, col: shaft colour × strength } or null
   function endScene(G, time, blur, rays) {
+    const ow = gl.drawingBufferWidth, oh = gl.drawingBufferHeight, up = ow !== env.sw || oh !== env.sh;
     if (ldr.on) {
-      if (ldr.rFbo) {
+      if (ldr.rFbo !== ldr.fbo) {
         gl.bindFramebuffer(gl.READ_FRAMEBUFFER, ldr.fbo); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, ldr.rFbo);
         gl.blitFramebuffer(0, 0, ldr.w, ldr.h, 0, 0, ldr.w, ldr.h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
       }
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, ldr.rFbo || ldr.fbo); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-      gl.blitFramebuffer(0, 0, ldr.w, ldr.h, 0, 0, ldr.w, ldr.h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      if (!up) {
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, ldr.rFbo); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+        gl.blitFramebuffer(0, 0, ldr.w, ldr.h, 0, 0, ldr.w, ldr.h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        return;
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, ow, oh);
+      gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.disable(gl.CULL_FACE); gl.depthMask(false);
+      const u = prog.up.U; useProg(prog.up.p);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, ldr.rTex); gl.uniform1i(u.u_src, 0);
+      gl.uniform1f(u.u_k, upSharp(ow));
+      fsDraw();
+      gl.depthMask(true); gl.enable(gl.DEPTH_TEST);
       return;
     }
     if (!post.on) return;
@@ -1241,19 +1377,19 @@ function createRenderer(canvas) {
     gl.activeTexture(gl.TEXTURE0);
     const L = post.levels;
     // prefilter into level 0, then down the chain
-    let u = prog.bpre.u; gl.useProgram(prog.bpre.p);
+    let u = prog.bpre.U; useProg(prog.bpre.p);
     gl.bindFramebuffer(gl.FRAMEBUFFER, L[0].fbo); gl.viewport(0, 0, L[0].w, L[0].h);
     gl.bindTexture(gl.TEXTURE_2D, post.resTex); gl.uniform1i(u.u_src, 0);
     gl.uniform2f(u.u_texel, 1 / w, 1 / h); gl.uniform1f(u.u_thr, G.thr); gl.uniform1f(u.u_knee, G.thr * 0.5);
     fsDraw();
-    u = prog.bdown.u; gl.useProgram(prog.bdown.p); gl.uniform1i(u.u_src, 0);
+    u = prog.bdown.U; useProg(prog.bdown.p); gl.uniform1i(u.u_src, 0);
     for (let i = 1; i < L.length; i++) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, L[i].fbo); gl.viewport(0, 0, L[i].w, L[i].h);
       gl.bindTexture(gl.TEXTURE_2D, L[i - 1].tex); gl.uniform2f(u.u_texel, 0.5 / L[i - 1].w, 0.5 / L[i - 1].h);
       fsDraw();
     }
     // back up, adding each smaller level onto the next larger one
-    u = prog.bup.u; gl.useProgram(prog.bup.p); gl.uniform1i(u.u_src, 0); gl.uniform1f(u.u_k, 1);
+    u = prog.bup.U; useProg(prog.bup.p); gl.uniform1i(u.u_src, 0); gl.uniform1f(u.u_k, 1);
     gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
     for (let i = L.length - 1; i > 0; i--) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, L[i - 1].fbo); gl.viewport(0, 0, L[i - 1].w, L[i - 1].h);
@@ -1263,15 +1399,16 @@ function createRenderer(canvas) {
     gl.disable(gl.BLEND);
     const doRays = rays && post.rays && (rays.col[0] + rays.col[1] + rays.col[2]) > 0.001;
     if (doRays) {
-      u = prog.rays.u; gl.useProgram(prog.rays.p);
+      u = prog.rays.U; useProg(prog.rays.p);
       gl.bindFramebuffer(gl.FRAMEBUFFER, post.rays.fbo); gl.viewport(0, 0, post.rays.w, post.rays.h);
       gl.bindTexture(gl.TEXTURE_2D, post.resTex); gl.uniform1i(u.u_src, 0);
       gl.uniform2fv(u.u_sun, rays.uv); gl.uniform1f(u.u_asp, w / h);
       fsDraw();
     }
-    // composite to the screen
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, w, h);
-    u = prog.comp.u; gl.useProgram(prog.comp.p);
+    // composite to the screen (stretched to it, if the scene was drawn smaller)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, ow, oh);
+    u = prog.comp.U; useProg(prog.comp.p);
+    gl.uniform2f(u.u_sharp, up ? upSharp(ow) : 0.32, up ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, post.resTex); gl.uniform1i(u.u_scene, 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, L[0].tex); gl.uniform1i(u.u_bloom, 1);
     gl.uniform1f(u.u_bloomK, G.bloom / Math.max(1, L.length - 1)); gl.uniform1f(u.u_sat, G.sat); gl.uniform1f(u.u_con, G.con);
@@ -1393,7 +1530,7 @@ function createRenderer(canvas) {
       // view where a pixel covers more (the rear-view mirror)
       const L = m.lods, K = env.lodK || 1;
       if (!cullDistOn) { const last = L[L.length - 1].m; gl.bindVertexArray(last.vao); instRuns(m, last, maxD, null); return; }
-      const u = prog.lit.u.u_lodB;
+      const u = litCur.u.u_lodB;
       for (let i = 0; i < L.length; i++) {
         const a = i ? L[i - 1] : null, b = i < L.length - 1 ? L[i] : null;
         const aD = a ? a.dist / K : 0, aB = a ? a.band / K : 0, bD = b ? b.dist / K : 0, bB = b ? b.band / K : 0;
@@ -1533,8 +1670,8 @@ function createRenderer(canvas) {
   }
   function drawLines(Ln, E, light) {
     if (!Ln.count) return;
-    const u = prog.ln.u;
-    gl.useProgram(prog.ln.p);
+    const u = prog.ln.U;
+    useProg(prog.ln.p);
     gl.uniformMatrix4fv(u.u_vp, false, env.vp); gl.uniform3fv(u.u_cam, env.cam);
     gl.uniform3fv(u.u_fogCol, E.fogCol); gl.uniform2fv(u.u_fog, E.fog); gl.uniform3fv(u.u_light, light); gl.uniform1f(u.u_exp, E.exp);
     gl.uniform1f(u.u_hdr, env.hdr || 0);
@@ -1550,51 +1687,56 @@ function createRenderer(canvas) {
   }
 
   const I4 = M4.create();
-  const env = { vp: M4.create(), svp: M4.create(), svp2: M4.create(), ivp: M4.create(), cam: [0, 0, 0], exp: 1, hdr: 0, shNo: [0.02, 0.08], lodK: 1 };
+  const env = { vp: M4.create(), svp: M4.create(), svp2: M4.create(), ivp: M4.create(), cam: [0, 0, 0], exp: 1, hdr: 0, shNo: [0.02, 0.08], lodK: 1, lowq: false };
 
+  // the frame's uniforms for the lit shaders: written into the uniform buffer (a fresh one each call, so the mirror's
+  // pass doesn't wait on the main one), plus the few that draws override, replayed on each variant when first used
+  const frameF = new Float32Array(FRAME_SIZE), frameI = new Int32Array(frameF.buffer);
+  const frameBufs = [gl.createBuffer(), gl.createBuffer(), gl.createBuffer()];
+  let frameBi = 0;
+  for (const b of frameBufs) { gl.bindBuffer(gl.UNIFORM_BUFFER, b); gl.bufferData(gl.UNIFORM_BUFFER, FRAME_SIZE * 4, gl.DYNAMIC_DRAW); }
+  gl.bindBuffer(gl.UNIFORM_BUFFER, null);
+  function F(n, v) { const o = FRAME_OFF[n]; if (typeof v === 'number') frameF[o] = v; else for (let i = 0; i < v.length; i++) frameF[o + i] = v[i]; }
   function setLitFrame(E) {
-    const u = prog.lit.u;
-    gl.useProgram(prog.lit.p);
+    litFrame++; litCalls.length = 0;
     setCull(env.vp, env.cam);
-    gl.uniformMatrix4fv(u.u_vp, false, env.vp);
-    gl.uniformMatrix4fv(u.u_svp, false, env.svp); gl.uniformMatrix4fv(u.u_svp2, false, env.svp2); gl.uniform2fv(u.u_shNo, env.shNo);
-    gl.uniform3fv(u.u_sunDir, E.sunDir); gl.uniform3fv(u.u_sunCol, E.sunCol);
-    gl.uniform3fv(u.u_sky, E.sky); gl.uniform3fv(u.u_gnd, E.gnd);
-    gl.uniform3fv(u.u_fogCol, E.fogCol); gl.uniform2fv(u.u_fog, E.fog);
-    gl.uniform3fv(u.u_cam, env.cam);
-    gl.uniform1f(u.u_exp, E.exp);
-    gl.uniform1f(u.u_hdr, env.hdr || 0);
-    gl.uniform3fv(u.u_zen, E.zen); gl.uniform3fv(u.u_hor, E.fogCol);
-    gl.uniform3fv(u.u_fol, [E.folFade ? E.folFade[0] : 60, E.folFade ? E.folFade[1] : 90, (mir.on ? mir.samples : post.on ? post.samples : ldr.on ? ldr.samples : 0) > 1 ? 1 : 0]);
-    gl.uniform1f(u.u_time, E.time);
-    gl.uniform1f(u.u_shOn, E.shadows ? 1 : 0);
-    gl.uniform2f(u.u_shTex, 1 / (2 * SHADOW), 1 / SHADOW);
-    gl.uniform3fv(u.u_r1, E.r1); gl.uniform3fv(u.u_r2, E.r2); gl.uniform3fv(u.u_r3, E.r3);
-    gl.uniform1f(u.u_lines, E.lines === 2 ? 2 : E.lines ? 1 : 0); gl.uniform1f(u.u_icy, E.icy || 0);
-    gl.uniform3fv(u.u_verge, E.verge || E.r3); gl.uniform3fv(u.u_tt, E.tt || [1, 1, 1]);
-    gl.uniform1f(u.u_gbump, E.gbump == null ? 0.05 : E.gbump);
-    gl.uniform3fv(u.u_glw, E.glow ? [E.glow[0] * 0.35, E.glow[1] * 0.35, E.glow[2] * 0.35] : [0, 0, 0]); gl.uniform1f(u.u_cld, E.clouds || 0);
-    gl.uniform3fv(u.u_hlPos, E.hlPos || [0, 0, 0]); gl.uniform3fv(u.u_hlDir, E.hlDir || [0, 0, 1]); gl.uniform1f(u.u_hlOn, E.hlOn || 0);
-    gl.uniform1f(u.u_wet, E.wet || 0);
-    gl.uniform4f(u.u_lodB, -1e9, -1e9 + 1, 1e9, 1e9 + 1);
-    gl.uniform3fv(u.u_skyline, E.skyline || E.gnd);
-    gl.uniform3fv(u.u_hitPos, E.hitPos || [0, -999, 0]); gl.uniform1f(u.u_hitK, E.hitK || 0);
-    gl.uniform1f(u.u_dirt, 0);
-    gl.uniform1f(u.u_night, E.night ? 1 : 0);
-    gl.uniform1i(u.u_plN, E.plN || 0);
-    gl.uniform1i(u.u_occN, E.occN || 0);
-    if (E.occN) { gl.uniform4fv(u['u_occ[0]'], E.occ); gl.uniform4fv(u['u_occB[0]'], E.occB); }
-    if (E.plN) { gl.uniform4fv(u['u_pl[0]'], E.pl); gl.uniform3fv(u.u_plCol, [1.0, 0.85, 0.66]); }
-    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D_ARRAY, whiteArr); gl.uniform1i(u.u_arr, 2);
-    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, shTex); gl.uniform1i(u.u_shadow, 1);
-    gl.activeTexture(gl.TEXTURE0); gl.uniform1i(u.u_tex, 0);
+    F('u_vp', env.vp); F('u_svp', env.svp); F('u_svp2', env.svp2); F('u_shNo', env.shNo);
+    F('u_sunDir', E.sunDir); F('u_sunCol', E.sunCol); F('u_sky', E.sky); F('u_gnd', E.gnd);
+    F('u_fogCol', E.fogCol); F('u_cam', env.cam); F('u_exp', E.exp);
+    F('u_zen', E.zen); F('u_hor', E.fogCol);
+    F('u_fol', [E.folFade ? E.folFade[0] : 60, E.folFade ? E.folFade[1] : 90, (mir.on ? mir.samples : post.on ? post.samples : ldr.on ? ldr.samples : 0) > 1 ? 1 : 0]);
+    F('u_time', E.time); F('u_shOn', E.shadows ? 1 : 0); F('u_shTex', [1 / (2 * SHADOW), 1 / SHADOW]);
+    F('u_r1', E.r1); F('u_r2', E.r2); F('u_r3', E.r3);
+    F('u_lines', E.lines === 2 ? 2 : E.lines ? 1 : 0); F('u_icy', E.icy || 0);
+    F('u_verge', E.verge || E.r3); F('u_tt', E.tt || [1, 1, 1]);
+    F('u_gbump', E.gbump == null ? 0.05 : E.gbump);
+    F('u_glw', E.glow ? [E.glow[0] * 0.35, E.glow[1] * 0.35, E.glow[2] * 0.35] : [0, 0, 0]); F('u_cld', E.clouds || 0);
+    F('u_hlPos', E.hlPos || [0, 0, 0]); F('u_hlDir', E.hlDir || [0, 0, 1]); F('u_hlOn', E.hlOn || 0);
+    F('u_wet', E.wet || 0);
+    F('u_skyline', E.skyline || E.gnd);
+    F('u_hitPos', E.hitPos || [0, -999, 0]); F('u_hitK', E.hitK || 0);
+    F('u_night', E.night ? 1 : 0);
+    frameI[FRAME_OFF.u_plN] = E.plN || 0; frameI[FRAME_OFF.u_occN] = E.occN || 0;
+    if (E.occN) { F('u_occ', E.occ); F('u_occB', E.occB); }
+    if (E.plN) { F('u_pl', E.pl); F('u_plCol', [1.0, 0.85, 0.66]); }
+    const fb = frameBufs[frameBi = (frameBi + 1) % frameBufs.length];
+    gl.bindBuffer(gl.UNIFORM_BUFFER, fb); gl.bufferData(gl.UNIFORM_BUFFER, frameF, gl.DYNAMIC_DRAW);
+    gl.bindBufferBase(gl.UNIFORM_BUFFER, 0, fb);
+    U('uniform2fv', 'u_fog', E.fog); U('uniform1f', 'u_hdr', env.hdr || 0); U('uniform1f', 'u_dirt', 0);
+    U('uniform4f', 'u_lodB', -1e9, -1e9 + 1, 1e9, 1e9 + 1);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D_ARRAY, whiteArr);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, shTex);
+    gl.activeTexture(gl.TEXTURE0);
+    litCur = null;
   }
+  // a uniform that draws may change: kept (values copied) and set on every lit variant the first time it's used this frame
+  function U(f, n, ...a) { litCalls.push(f, n, a.map(v => v && v.length != null ? Array.from(v) : v)); }
   // draw opts: model, mode, tint, alpha, tex, sway, fog(override)
   function drawLit(m, o) {
+    if (m.instBuf && !m.inst) return; // an instanced mesh with none to draw this frame (the crowd out of view)
     o = o || {};
-    const u = prog.lit.u;
+    const u = litUse(litProg(o.mode || 0), o.mode || 0);
     gl.uniformMatrix4fv(u.u_model, false, o.model || I4);
-    gl.uniform1i(u.u_mode, o.mode || 0);
     gl.uniform3fv(u.u_tint, o.tint || [1, 1, 1]);
     gl.uniform1f(u.u_alpha, o.alpha == null ? 1 : o.alpha);
     gl.uniform1f(u.u_sway, o.sway || 0);
@@ -1621,7 +1763,8 @@ function createRenderer(canvas) {
     if (o.dirt != null) gl.uniform1f(u.u_dirt, 0);
   }
   function drawDepth(m, model) {
-    const u = prog.depth.u;
+    const u = prog.depth.U;
+    if (m.instBuf && !m.inst) return;
     gl.uniformMatrix4fv(u.u_model, false, model || I4);
     gl.bindVertexArray(m.vao);
     if (!m.inst) { gl.vertexAttrib4f(4, 0, 0, 0, 0); gl.vertexAttrib4f(5, 1, 1, 0, 0); }
@@ -1642,8 +1785,8 @@ function createRenderer(canvas) {
     gl.viewport(c * SHADOW, 0, SHADOW, SHADOW);
     gl.enable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
     gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.5, 2.0);
-    gl.useProgram(prog.depth.p);
-    gl.uniformMatrix4fv(prog.depth.u.u_svp, false, m);
+    useProg(prog.depth.p);
+    gl.uniformMatrix4fv(prog.depth.U.u_svp, false, m);
     setCull(m, null);
     // the shadow pass keeps every caster, but far from the camera the simple tree casts a shadow just as good
     if (env.cam) { cullCam[0] = env.cam[0]; cullCam[1] = env.cam[1]; cullCam[2] = env.cam[2]; shadowLod = true; }
@@ -1653,8 +1796,8 @@ function createRenderer(canvas) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
   function drawSky(E) {
-    const u = prog.sky.u;
-    gl.useProgram(prog.sky.p);
+    const u = prog.sky.U;
+    useProg(prog.sky.p);
     gl.uniformMatrix4fv(u.u_ivp, false, env.ivp);
     gl.uniform3fv(u.u_cam, env.cam);
     gl.uniform3fv(u.u_zen, E.zen); gl.uniform3fv(u.u_hor, E.fogCol); gl.uniform3fv(u.u_sunDir, E.sunDir);
@@ -1664,30 +1807,29 @@ function createRenderer(canvas) {
     gl.depthMask(false);
     gl.bindVertexArray(skyVao); gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.depthMask(true);
-    gl.useProgram(prog.lit.p); // drawn mid-frame: hand the lit program (and its uniforms) back to the passes that follow
   }
   function drawPoints(P, E, light, soft) {
     if (!P.count) return;
-    const u = prog.pt.u;
-    gl.useProgram(prog.pt.p);
+    const u = prog.pt.U;
+    useProg(prog.pt.p);
     gl.uniformMatrix4fv(u.u_vp, false, env.vp);
     gl.uniform3fv(u.u_cam, env.cam);
-    gl.uniform1f(u.u_ps, gl.drawingBufferHeight / (2 * Math.tan(env.fov / 2)));
+    gl.uniform1f(u.u_ps, (env.vh || gl.drawingBufferHeight) / (2 * Math.tan(env.fov / 2)));
     gl.uniform3fv(u.u_fogCol, E.fogCol); gl.uniform2fv(u.u_fog, E.fog);
     gl.uniform3fv(u.u_light, light); gl.uniform1f(u.u_exp, E.exp); gl.uniform1f(u.u_soft, soft == null ? 1 : soft); gl.uniform1f(u.u_hdr, env.hdr || 0);
     gl.bindVertexArray(P.vao); gl.drawArrays(gl.POINTS, 0, P.count);
   }
   function drawTrail(Tr, E, light, count) {
     if (!count) return;
-    const u = prog.tr.u;
-    gl.useProgram(prog.tr.p);
+    const u = prog.tr.U;
+    useProg(prog.tr.p);
     gl.uniformMatrix4fv(u.u_vp, false, env.vp);
     gl.uniform3fv(u.u_cam, env.cam);
     gl.uniform3fv(u.u_fogCol, E.fogCol); gl.uniform2fv(u.u_fog, E.fog); gl.uniform3fv(u.u_light, light); gl.uniform1f(u.u_exp, E.exp);
     gl.uniform1f(u.u_hdr, env.hdr || 0);
     gl.bindVertexArray(Tr.vao); gl.drawArrays(gl.TRIANGLES, 0, count);
   }
-  return { gl, env, mesh, disposeMesh, setInstances, texture, textureArray, points, trail, lines, drawLines, disposeAll, setLitFrame, drawLit, drawDepth, beginShadow, endShadow, drawSky, drawPoints, drawTrail, SHADOW,
+  return { gl, env, warm, mesh, disposeMesh, setInstances, texture, textureArray, points, trail, lines, drawLines, disposeAll, setLitFrame, drawLit, drawDepth, beginShadow, endShadow, drawSky, drawPoints, drawTrail, SHADOW,
     beginScene, endScene, post, beginMirror, endMirror, drawMirror };
 }
 
