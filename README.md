@@ -7,6 +7,7 @@ A rally game that runs in the browser. Pick a stage and a car and drive it again
 - 4 stages: Pine Ridge, Frostvik, Red Mesa and Dark Pines (gravel, snow and tarmac)
 - 7 classic rally cars, from the Peugeot 205 T16 and Audi Sport Quattro S1 to the Subaru Impreza WRC
 - Ghost cars: race an AI rival and your personal best
+- Replays of every run, with TV cameras, a helicopter and slow motion
 - Works on keyboard and on phones (touch controls)
 
 Best in Chrome on a desktop or laptop.

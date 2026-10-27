@@ -2000,12 +2000,14 @@ function startRace() {
     rally.tries[k] = (rally.tries[k] || 0) + 1; saveRally();
   }
   $('share').hidden = true;
+  repOff();
   setLights(!!S.E.night, true);
   initAudio(); warmSpeech();
   C.resetCar(W, car, W.T.spawnS); snapVis(); resetEffects();
   raceT = 0; cdT = 0; cdShown = -1; finishT = 0; doneT = 0; splitsHit = []; ghostRec = []; ghostTimer = 0;
   Object.assign(lap, { n: 0, t0: 0, next: W.T.startS + (W.T.lap || 0), best: lapsOn() ? lapBest(W.st.key, P.id) : null, last: null, rec: [], list: [] });
   noteIdx = 0; called = []; offT = 0; stuckT = 0; wrongT = 0; resultsShown = false; acc = 0;
+  recStart();
   $('hStage').textContent = (rallyOn() ? `SS${rally.idx + 1} · ` : netRun() ? 'Online · ' : '') + W.st.name + (W.st.rev ? ' ⇄' : '');
   net.pause = false; $('pTitle').textContent = 'Paused'; $('pNote').hidden = true; $('pLaps').hidden = true;
   $('hSurf').textContent = W.st.surface + (W.st.cond !== 'day' ? ' · ' + C.condName(W.st) : '');
@@ -2023,7 +2025,7 @@ function startRace() {
 }
 let lastRun = null, rallyLeg = null;
 function finish() {
-  finishT = raceT; mode = 'done'; doneT = 0;
+  finishT = raceT; mode = 'done'; doneT = 0; rec.kFin = rec.on ? rec.n : -1;
   const key = W.st.key, rt = rival.time;
   const medal = finishT <= rt ? 3 : finishT <= rt * 1.06 ? 2 : finishT <= rt * 1.15 ? 1 : 0;
   lastMedal = medal;
@@ -2082,6 +2084,7 @@ function buildResults(old, isPB, medal, oldBest) {
   const inNet = netRun();
   $('rTable').hidden = inRally || inNet; $('rTargets').hidden = inRally || inNet; $('rRally').hidden = !inRally;
   $('rRetry').hidden = inRally || inNet; $('rShare').hidden = false; $('rNext').hidden = inNet; $('rNet').hidden = !inNet;
+  $('rReplay').hidden = inNet || rec.kFin < 0;
   $('rMenu').textContent = inNet ? 'Lobby' : 'Menu'; $('rMenu').classList.toggle('primary', inNet);
   if (inRally) buildRallyTable();
   if (inNet) renderNetResults();
@@ -2108,7 +2111,7 @@ function nextStage() {
 function toMenu() {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   if (rally && rally.playing) { rally.playing = false; saveRally(); }
-  rallyLeg = null;
+  rallyLeg = null; repOff(); rec.kFin = -1;
   if (netRun()) { if (!net.race.fin[netId]) netRetire(); net.race.inRun = false; netClearRun(); if (inRoom()) $('tabOnline').click(); }
   mode = 'menu'; C.resetCar(W, car, W.T.spawnS); snapVis(); resetEffects();
   renderStageInfo(); renderCarList();
@@ -2117,6 +2120,7 @@ function toMenu() {
   if (curKey() !== loadedKey) loadStage(curKey());
 }
 function togglePause() {
+  if (rp.on) { repExit(); return; }
   if (netRun() && (mode === 'race' || mode === 'countdown' || (mode === 'done' && !resultsShown))) {
     net.pause = !net.pause;
     if (!net.pause) { setScreen('race'); return; }
@@ -2149,15 +2153,185 @@ $('touchLights').addEventListener('click', toggleLights);
 $('hNet').addEventListener('click', () => { net.boardTap = !net.boardTap; net.boardT = 0; });
 $('netBoard').addEventListener('click', () => { net.boardTap = false; });
 $('pLights').addEventListener('click', toggleLights);
-document.addEventListener('visibilitychange', () => { if (document.hidden && (mode === 'race' || mode === 'countdown') && !net.pause) togglePause(); if (A.ctx) { if (document.hidden) A.ctx.suspend(); else A.ctx.resume(); } });
+document.addEventListener('visibilitychange', () => { if (rp.on) { if (document.hidden) repPlay(false); } else if (document.hidden && (mode === 'race' || mode === 'countdown') && !net.pause) togglePause(); if (A.ctx) { if (document.hidden) A.ctx.suspend(); else A.ctx.resume(); } });
 
 function manualReset() {
-  if (mode !== 'race') return;
-  C.resetCar(W, car, Math.max(W.T.spawnS, car.s - 12));
+  if (mode !== 'race' || rp.on) return;
+  const s = Math.max(W.T.spawnS, car.s - 12);
+  if (rec.on) rec.resets.push([rec.n, s]); // before the next step, which is where a replay puts it back
+  C.resetCar(W, car, s);
   if (netRun()) car.ghostT = 2.5; // back on the road as a ghost for a moment, so it can't land on someone
   snapVis(true); breakSkids(); offT = 0; stuckT = 0; wrongT = 0;
   center('<div class="mid">Back on the road</div>', 1.0);
 }
+
+// ---------- replays ----------
+// A finished run plays again from the results card. Nothing of the picture is stored: the physics runs once more on
+// the input of every step, and stepCar is deterministic, so the same inputs from the same car give the same run to the
+// bit (slides, hits and jumps included). Resets (R, or too long off the road) happen between steps and are kept with
+// the step they came before. A copy of the car every second lets the replay jump about: back to the copy before the
+// spot, then the steps up to it. Offline runs only: online the others push your car, endless laps move it back a lap.
+const REC_SNAP = 120, REC_TAIL = 4; // steps between copies of the car; seconds kept after the finish
+const rec = { on: false, n: 0, st: null, th: null, bk: null, fl: null, snaps: [], resets: [], kFin: -1, key: '', car: '' };
+function recStart() {
+  rec.on = !netRun() && !lapsOn(); rec.n = 0; rec.kFin = -1; rec.snaps = []; rec.resets = []; rec.key = W.st.key; rec.car = P.id;
+  if (rec.on && !rec.st) { const n = 120 * 240; rec.st = new Float64Array(n); rec.th = new Float64Array(n); rec.bk = new Float64Array(n); rec.fl = new Uint8Array(n); }
+}
+// one step's input, and every REC_SNAP steps a copy of the car as it was before it
+function recStep(inp) {
+  if (rec.n % REC_SNAP === 0) rec.snaps.push({ k: rec.n, c: structuredClone(car), raceT, dirt });
+  if (rec.n >= rec.st.length) for (const f of ['st', 'th', 'bk', 'fl']) { const a = new rec[f].constructor(rec[f].length * 2); a.set(rec[f]); rec[f] = a; }
+  const k = rec.n++;
+  rec.st[k] = inp.steer; rec.th[k] = inp.thr; rec.bk[k] = inp.brk;
+  rec.fl[k] = (inp.hb ? 1 : 0) | (inp.analog ? 2 : 0) | (inp.manual ? 4 : 0) | (inp.shiftUp ? 8 : 0) | (inp.shiftDown ? 16 : 0) | (lightsOn ? 32 : 0);
+  if (rec.kFin >= 0 && rec.n >= rec.kFin + REC_TAIL * 120) rec.on = false;
+}
+const recOK = () => !!(W && rec.kFin > 0 && rec.n > rec.kFin && rec.key === W.st.key && rec.car === P.id);
+// what a physics step leaves for the frame: the hardest hit, the hardest landing, an upshift
+function stepEvents() {
+  if (car.hitV > evt.hit) { evt.hit = car.hitV; evt.kind = car.hitKind; evt.x = car.hitX; evt.z = car.hitZ; evt.nx = car.hitNx; evt.nz = car.hitNz; evt.front = car.hitFront; }
+  car.hitV = 0;
+  evt.land = Math.max(evt.land, car.landV); car.landV = 0;
+  if (car.shifted === 1) evt.shift = true;
+}
+
+// cameras to pick from (C cycles them): Auto is the director, the rest are camera modes (4 and 5 only exist here)
+const REP_CAMS = [['Auto', -1], ['TV', 3], ['Helicopter', 4], ['Chase', 0], ['Far chase', 1], ['Bonnet', 2], ['Wheel', 5]];
+const REP_SPEEDS = [0.25, 0.5, 1, 2], REP_PITCH = [0.7, 0.82, 1, 1];
+const rp = { on: false, k: 0, acc: 0, play: true, sp: 2, cam: 0, cm: 3, shot: null, shotN: 0, idle: 0, uiT: 0, drag: false,
+  inp: { steer: 0, thr: 0, brk: 0, hb: false, analog: false } };
+const camMode = () => rp.on ? rp.cm : mode === 'done' && doneT > 0.3 ? 3 : settings.cam;
+const repDt = dt => rp.play ? dt * REP_SPEEDS[rp.sp] : 0;
+function startReplay() {
+  if (!recOK() || rp.on) return;
+  rec.on = false; // the run is over: whatever the car does after this isn't part of it
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  Object.assign(rp, { on: true, play: true, sp: 2, shot: null, shotN: 0, idle: 0, uiT: 0 });
+  setScreen('race'); $('touch').hidden = true; $('repBar').hidden = false; $('app').classList.add('replay');
+  $('centerMsg').innerHTML = ''; centerT = 0;
+  repSeek(0); repUI(0, true);
+  center('<div class="mid">Replay</div>', 1.2);
+}
+function repOff() {
+  if (!rp.on) return;
+  rp.on = false; $('repBar').hidden = true; $('app').classList.remove('replay', 'cine', 'idle');
+}
+// back to the results, with the car where the run left it
+function repExit() {
+  if (!rp.on) return;
+  repSeek(rec.n - 1); repOff();
+  mode = 'done'; doneT = 99; resultsShown = true; setScreen('results');
+}
+function repRestore(sn) {
+  const c = structuredClone(sn.c);
+  for (const k in car) if (!(k in c)) delete car[k];
+  Object.assign(car, c);
+  resetEffects(); dirt = sn.dirt; raceT = sn.raceT; rp.k = sn.k; rp.acc = 0;
+}
+// to step k: the copy before it, then the steps up to it with no sound or dust
+function repSeek(k) {
+  k = clamp(Math.round(k), 0, rec.n - 1);
+  let sn = rec.snaps[0];
+  for (const s of rec.snaps) { if (s.k > k) break; sn = s; }
+  repRestore(sn);
+  while (rp.k < k) repStep(false);
+  snapVis(true); rp.shot = null; cam.tv = null;
+  repMode();
+}
+function repStep(fx) {
+  const k = rp.k;
+  for (const r of rec.resets) if (r[0] === k) { C.resetCar(W, car, r[1]); if (fx) { snapVis(true); breakSkids(); } }
+  if (fx) savePrev();
+  const f = rec.fl[k], inp = { steer: rec.st[k], thr: rec.th[k], brk: rec.bk[k], hb: !!(f & 1), analog: !!(f & 2), manual: !!(f & 4), shiftUp: !!(f & 8), shiftDown: !!(f & 16) };
+  C.stepCar(W, car, P, inp, STEP);
+  if (fx) stepEvents(); else { car.hitV = 0; car.landV = 0; }
+  rp.inp = inp;
+  if (!!(f & 32) !== lightsOn) setLights(!!(f & 32), true);
+  rp.k++;
+  if (k < rec.kFin) raceT += STEP;
+  if (fx && rp.k === rec.kFin) center(`<div class="mid yel">Finish</div><div class="sub">${fmt(finishT)}</div>`, 2.4);
+}
+function repMode() {
+  mode = rp.k >= rec.kFin ? 'done' : 'race';
+  doneT = Math.max(0, (rp.k + rp.acc / STEP - rec.kFin) * STEP);
+}
+function repTick(dt) {
+  rp.acc += repDt(dt);
+  let steps = 0;
+  while (rp.acc >= STEP && steps < 40) {
+    rp.acc -= STEP; steps++;
+    if (rp.k >= rec.n) { repSeek(0); rp.acc = 0; break; } // from the top again
+    repStep(true);
+  }
+  if (steps >= 40) rp.acc = 0;
+  alpha = rp.acc / STEP;
+  repMode();
+  input = rp.inp; // the brake lights, skids and engine follow the run, not the keys
+}
+// the director (Auto): mostly the trackside cameras, cut now and then with a helicopter, a chase or a wheel shot
+function repCamFor() {
+  const fixed = REP_CAMS[rp.cam][1];
+  if (fixed >= 0) return fixed;
+  if (mode === 'done') return 3; // round the car once it has stopped
+  const sh = rp.shot, rt = rp.k * STEP;
+  if (sh && rt < sh.end && !(sh.tv && car.s > sh.tv.s + 22)) return sh.cm;
+  const n = rp.shotN++, hash = k => (Math.imul(n * 3 + k, 2654435761) >>> 0) / 4294967296, h = hash(1);
+  const tv = tvSpots.find(t => t.s > car.s + 25), tvOK = !!tv && tv.s - car.s < 120;
+  // every other shot is trackside, and a quarter of the rest too
+  let cm = tvOK && (n % 2 === 0 || hash(2) < 0.25) ? 3 : h < 0.36 ? 4 : h < 0.58 ? 0 : h < 0.8 ? 5 : h < 0.9 ? 1 : 2;
+  if (sh && cm === sh.cm && cm !== 3) cm = cm === 4 ? 0 : 4;
+  rp.shot = { cm, tv: cm === 3 ? tv : null, end: rt + (cm === 3 ? 14 : cm === 4 ? 7 : cm === 5 ? 3.5 : 5), side: hash(3) < 0.5 ? 1 : -1 };
+  if (cm === 3) cam.tv = tv;
+  cam.snap = true;
+  return cm;
+}
+function repPlay(on) { rp.play = on == null ? !rp.play : on; rp.idle = 0; repUI(0, true); }
+function repJump(sec) { repSeek(rp.k + sec / STEP); rp.idle = 0; repUI(0, true); }
+function repSpeed(d) { rp.sp = clamp(rp.sp + d, 0, REP_SPEEDS.length - 1); rp.idle = 0; repUI(0, true); }
+function repCam(d) {
+  rp.cam = (rp.cam + d + REP_CAMS.length) % REP_CAMS.length; rp.shot = null; cam.snap = true; rp.idle = 0;
+  $('camTag').textContent = 'Camera · ' + REP_CAMS[rp.cam][0] + ' (C)'; camTagT = 2.5; repUI(0, true);
+}
+function repKey(k) {
+  if (k === 'Space' || k === 'KeyK') repPlay();
+  else if (k === 'ArrowLeft') repJump(-5);
+  else if (k === 'ArrowRight') repJump(5);
+  else if (k === 'ArrowUp') repSpeed(1);
+  else if (k === 'ArrowDown') repSpeed(-1);
+  else if (k === 'KeyC') repCam(1);
+  else if (k === 'Home') repJump(-1e4);
+  else if (k === 'KeyH') $('app').classList.toggle('cine');
+  else if (k === 'Escape' || k === 'Backspace' || k === 'KeyP') repExit();
+  else if (k === 'KeyM') { settings.sound = !settings.sound; saveSettings(); updateToggles(); }
+  rp.idle = 0;
+}
+function repPad(edge) {
+  if (edge(9) || edge(1)) repExit();
+  if (edge(0)) repPlay();
+  if (edge(3)) repCam(1);
+  if (edge(14)) repJump(-5);
+  if (edge(15)) repJump(5);
+  if (edge(4)) repSpeed(-1);
+  if (edge(5)) repSpeed(1);
+}
+// the control bar: it fades out after a few seconds of nobody touching anything (not while paused)
+function repUI(dt, now) {
+  rp.idle += dt; rp.uiT -= dt;
+  $('app').classList.toggle('idle', rp.play && rp.idle > 3);
+  if (rp.uiT > 0 && !now) return;
+  rp.uiT = 0.1;
+  if (!rp.drag) $('repSeek').value = Math.round(rp.k / Math.max(1, rec.n - 1) * 1000);
+  $('repT').innerHTML = `${fmt(mode === 'done' ? finishT : raceT)}<span> / ${fmt(finishT)}</span>`;
+  $('repPlay').classList.toggle('paused', !rp.play); $('repPlay').setAttribute('aria-label', rp.play ? 'Pause' : 'Play');
+  $('repSpeed').textContent = REP_SPEEDS[rp.sp] + '×';
+  $('repCam').textContent = REP_CAMS[rp.cam][0];
+}
+$('rReplay').addEventListener('click', startReplay);
+for (const [id, fn] of [['repPlay', () => repPlay()], ['repBack', () => repJump(-5)], ['repFwd', () => repJump(5)], ['repSpeed', () => repSpeed(rp.sp === REP_SPEEDS.length - 1 ? -9 : 1)], ['repCam', () => repCam(1)], ['repExit', repExit]])
+  $(id).addEventListener('click', e => { fn(); e.currentTarget.blur(); });
+$('repSeek').addEventListener('input', e => { rp.drag = true; repSeek(e.target.value / 1000 * (rec.n - 1)); rp.idle = 0; });
+$('repSeek').addEventListener('change', e => { rp.drag = false; e.target.blur(); });
+for (const ev of ['pointermove', 'pointerdown']) addEventListener(ev, () => { if (rp.on) rp.idle = 0; }, { passive: true });
 
 // ---------- center messages / hints ----------
 let centerT = 0;
@@ -2183,6 +2357,7 @@ addEventListener('keydown', e => {
   if (k === 'Space' && mode === 'menu' && document.activeElement && document.activeElement.tagName === 'BUTTON') return;
   const first = !keys[k]; keys[k] = true;
   if (!first) return;
+  if (rp.on) { repKey(k); return; }
   if (k === 'Escape' || k === 'KeyP') togglePause();
   else if (k === 'KeyC' && mode !== 'menu') { settings.cam = (settings.cam + 1) % 4; saveSettings(); showCamTag(); }
   else if (k === 'KeyR') manualReset();
@@ -2225,6 +2400,7 @@ function readInput() {
     thr = Math.max(thr, bv(7)); brk = Math.max(brk, bv(6));
     if (bv(0) > 0.5 || bv(2) > 0.5) hb = true;
     const edge = i => { const now = bv(i) > 0.5; const was = padPrev[p.index + ':' + i]; padPrev[p.index + ':' + i] = now; return now && !was; };
+    if (rp.on) { repPad(edge); break; }
     if (edge(9) && $('welcome').hidden) { if (mode === 'menu') menuGo(); else if (resultsShown && !$('results').hidden) retry(); else togglePause(); }
     if (edge(3) && mode !== 'menu') { settings.cam = (settings.cam + 1) % 4; saveSettings(); showCamTag(); }
     if (edge(8)) manualReset();
@@ -2279,7 +2455,7 @@ const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 42
 class Engine extends AudioWorkletProcessor {
   static get parameterDescriptors() {
     const k = (name, def, max) => ({ name, defaultValue: def, minValue: 0, maxValue: max, automationRate: 'k-rate' });
-    return [k('rpm', 900, 21000), k('load', 0, 1), k('boost', 0, 2), k('cut', 0, 1), k('inside', 0, 1), k('pop', 0, 1)];
+    return [k('rpm', 600, 26000), k('load', 0, 1), k('boost', 0, 2), k('cut', 0, 1), k('inside', 0, 1), k('pop', 0, 1)];
   }
   constructor(o) {
     super();
@@ -2951,11 +3127,12 @@ function updateAudio(dt) {
   const rpm = pv ? A.revRpm : car.rpm, thr = racing ? car.thrE || input.thr : pv ? A.revThr : 0, boost = pv ? A.revB : car.boost;
   const tune = getTune(P.id), sport = tune.exhaust === 'sport';
   const lim = car.limiter > 0 ? 0.35 : 1;
-  A.pz.gain.setTargetAtTime(mode === 'paused' ? 0 : 1, t, mode === 'paused' ? 0.03 : 0.08);
+  const hush = mode === 'paused' || (rp.on && !rp.play);
+  A.pz.gain.setTargetAtTime(hush ? 0 : 1, t, hush ? 0.03 : 0.08);
   updateBeat(c, t);
   // ---- where the car is for the listener (the camera) ----
   buildReverb();
-  const onboard = settings.cam === 2 && racing;
+  const onboard = camMode() === 2 && racing;
   const ldx = vis.x - cam.pos[0], ldy = vis.y + 0.6 - cam.pos[1], ldz = vis.z - cam.pos[2], dist = Math.max(0.5, Math.hypot(ldx, ldy, ldz));
   const cfx = cam.look[0] - cam.pos[0], cfz = cam.look[2] - cam.pos[2], cfl = Math.hypot(cfx, cfz) || 1, crx = -cfz / cfl, crz = cfx / cfl;
   if (dt > 0) {
@@ -2964,7 +3141,8 @@ function updateAudio(dt) {
   }
   // doppler: the car's speed away from the listener (only really moves off 1 on the TV camera, the others travel with it)
   const vr = ((car.vx - A.camVel[0]) * ldx + (car.vz - A.camVel[2]) * ldz) / dist;
-  A.dopp += (clamp(343 / (343 + (racing || mode === 'done' ? vr : 0)), 0.82, 1.22) - A.dopp) * Math.min(1, dt * 6);
+  // (a replay in slow motion plays everything lower, as a slowed recording would)
+  A.dopp += (clamp(343 / (343 + (racing || mode === 'done' ? vr : 0)), 0.82, 1.22) * (rp.on ? REP_PITCH[rp.sp] : 1) - A.dopp) * Math.min(1, dt * 6);
   const dk = dist <= 9 ? 1 : Math.pow(9 / dist, 0.9);
   A.car.gain.setTargetAtTime(dk, t, 0.05);
   A.carLp.frequency.setTargetAtTime(clamp(20000 / (1 + Math.pow(dist / 40, 1.5)), 900, 20000), t, 0.06);
@@ -2979,7 +3157,7 @@ function updateAudio(dt) {
     // overrun crackle: a little on any car, more with anti-lag, a lot with the sport exhaust just after a lift
     const pop = (sport ? 0.3 : V.antilag > 0 ? 0.1 : 0.04) + (A.alT > 0 ? (sport ? 0.6 : 0.25 * V.antilag) : 0);
     if (pr.get('pop')) pr.get('pop').setTargetAtTime(pop, t, 0.05);
-    pr.get('inside').setTargetAtTime(settings.cam === 2 ? 1 : 0, t, 0.1);
+    pr.get('inside').setTargetAtTime(camMode() === 2 ? 1 : 0, t, 0.1);
     Vc.eg.gain.setTargetAtTime(active ? Vc.EN.gain * (0.75 + (rpm / E.redline) * 0.35) * (1.45 - 0.45 * thr) : 0, t, 0.03);
   } else {
     const f0 = rpm / 60;
@@ -3026,7 +3204,7 @@ function updateAudio(dt) {
   A.sqg.gain.setTargetAtTime(sq * 0.07, t, 0.04);
   A.wg.gain.setTargetAtTime(active ? Math.pow(spd / 55, 2) * 0.16 + (S.E.blizzard ? 0.05 : 0) : S.E.blizzard ? 0.03 : 0, t, 0.1);
   const wetOn = S.E.rain ? 1 : 0;
-  A.rng.gain.setTargetAtTime(wetOn * (settings.cam === 2 && racing ? 0.05 : 0.03), t, 0.3);
+  A.rng.gain.setTargetAtTime(wetOn * (camMode() === 2 && racing ? 0.05 : 0.03), t, 0.3);
   A.wsg.gain.setTargetAtTime(wetOn && active && !car.air ? clamp(spd / 30, 0, 1.2) * 0.08 : 0, t, 0.08);
   // rubbing a canyon wall or a snowbank
   // or another car: panels grinding along each other
@@ -3417,7 +3595,7 @@ function updateCamera(dt) {
     clampCam();
     return;
   }
-  const cm = mode === 'done' && doneT > 0.3 ? 3 : settings.cam;
+  const cm = rp.on ? (rp.cm = repCamFor()) : mode === 'done' && doneT > 0.3 ? 3 : settings.cam;
   if (cm === 0 || cm === 1) {
     const [dist0, hgt, ahead] = camOffsets[cm];
     // the car pulls away a little under power and the camera closes in under braking, so g-forces read on screen
@@ -3448,6 +3626,24 @@ function updateCamera(dt) {
     const p = sh.cam ? mulPoint(carMat, 0, sh.cam[0], sh.cam[1]) : mulPoint(carMat, 0, sh.hoodB + 0.22, sh.zW + 0.14), l = mulPoint(carMat, 0, sh.cam ? sh.cam[2] : sh.hoodB + 0.05, 14);
     cam.pos = p; cam.look = l; fovT = 66 + clamp(spd * 0.12, 0, 8);
     rollT = susp.roll * 0.6; // onboard: the camera is bolted to the body, so it rolls with it (partly, for comfort)
+  } else if (cm === 4) {
+    // replays, helicopter: high off one side and behind, following on a lag, so the car slides across the picture
+    const sd = rp.shot ? rp.shot.side : 1, up = W.st.town ? 30 : 13;
+    const vdir = spd > 4 ? Math.atan2(car.vx, car.vz) : vis.h;
+    if (cam.snap) cam.yaw = vdir;
+    cam.yaw += wrapA(vdir - cam.yaw) * (1 - Math.exp(-dt * 0.7));
+    const sy = Math.sin(cam.yaw), cy = Math.cos(cam.yaw);
+    const tgt = [vis.x - sy * 28 + cy * 14 * sd, vis.y + up, vis.z - cy * 28 - sy * 14 * sd];
+    if (cam.snap || !cam.hp) cam.hp = tgt;
+    for (let a = 0; a < 3; a++) cam.hp[a] += (tgt[a] - cam.hp[a]) * (1 - Math.exp(-dt * 1.4));
+    cam.pos = cam.hp.slice();
+    cam.look = [vis.x + fx * 5, vis.y + 0.8, vis.z + fz * 5];
+    fovT = clamp(2 * Math.atan(9 / Math.max(1, Math.hypot(cam.pos[0] - vis.x, cam.pos[1] - vis.y, cam.pos[2] - vis.z))) * 180 / Math.PI, 16, 50);
+  } else if (cm === 5) {
+    // replays, wheel camera: low off a rear corner, looking forward along the flank
+    const sd = rp.shot ? rp.shot.side : 1, hx = (halfTrack(carModel.shape, 2) + 0.95) * sd;
+    cam.pos = mulPoint(carMat, hx, 0.5, carModel.rz - 1.7); cam.look = mulPoint(carMat, hx * 0.3, 0.55, 12);
+    fovT = 58; rollT = susp.roll * 0.6;
   } else {
     // TV / trackside
     if (!cam.tv || car.s > cam.tv.s + 22 || car.s < cam.tv.s - 160) cam.tv = tvSpots.find(t => t.s > car.s + 8) || tvSpots[tvSpots.length - 1];
@@ -3467,7 +3663,7 @@ function updateCamera(dt) {
   if (evt.land > 3) cam.shake = Math.max(cam.shake, Math.min(0.5, evt.land * 0.04));
   const rough = car.air || (!car.onRoad && !W.st.town) ? 0.03 : (W.st.tarmac ? 0.003 : W.st.kind === 'pine' ? 0.012 : W.st.kind === 'frost' ? 0.007 : 0.003);
   const sk = cam.shake + rough * clamp(spd / 30, 0, 1.5);
-  if (cm !== 3 && sk > 0.0005) {
+  if (cm !== 3 && cm !== 4 && sk > 0.0005) {
     // smooth multi-sine shake rather than per-frame noise, so it reads as a jolt and not as jitter
     const t = time, s = sk * 0.5;
     cam.pos[0] += (Math.sin(t * 31.7) * 0.6 + Math.sin(t * 53.1 + 1.3) * 0.4) * s;
@@ -3483,7 +3679,7 @@ function updateCamera(dt) {
   const cr = Math.cos(cam.roll), sr = Math.sin(cam.roll);
   cam.up = [rx * sr, cr, rz * sr];
   // speed blur at the screen edges, only well above town speed and not on the TV camera
-  const blurT = mode === 'race' && cm !== 3 ? clamp((spd - 30) / 25, 0, 1) : 0;
+  const blurT = mode === 'race' && cm !== 3 && cm !== 4 ? clamp((spd - 30) / 25, 0, 1) : 0;
   cam.blur += (blurT - cam.blur) * Math.min(1, dt * 3);
   cam.snap = false;
   clampCam();
@@ -3611,9 +3807,11 @@ function onImpact(e) {
   susp.rv += (Math.random() < 0.5 ? -1 : 1) * Math.min(1.1, v * 0.065);
   susp.hv += Math.min(0.8, v * 0.035);
   cam.shake = Math.max(cam.shake, Math.min(0.45, 0.05 + v * 0.028));
-  if (v > 7) hitFlash = Math.max(hitFlash, Math.min(0.7, 0.22 + (v - 7) * 0.06));
-  rumble(Math.min(1, v / 14), Math.min(1, v / 9), 120 + Math.min(300, v * 18));
-  if (isTouch && v > 7 && navigator.vibrate) try { navigator.vibrate(Math.round(Math.min(90, 25 + v * 3))); } catch (err) { /* not supported */ }
+  if (!rp.on) { // a replay shows the hit, it doesn't hit you
+    if (v > 7) hitFlash = Math.max(hitFlash, Math.min(0.7, 0.22 + (v - 7) * 0.06));
+    rumble(Math.min(1, v / 14), Math.min(1, v / 9), 120 + Math.min(300, v * 18));
+    if (isTouch && v > 7 && navigator.vibrate) try { navigator.vibrate(Math.round(Math.min(90, 25 + v * 3))); } catch (err) { /* not supported */ }
+  }
   sfx.crash(v, e.kind);
   const hx = e.x, hz = e.z, hy = vis.gy + 0.55, nx = e.nx, nz = e.nz;
   const n = Math.round(clamp(v * 1.3, 3, 24));
@@ -3844,7 +4042,8 @@ function updateHUD(dt) {
       if (mode === 'race' && lb && lap.n > 0 && ls > 30) { const d = t - refTimeAt(lb.sArr, ls); dEl.className = 'd ' + (d <= 0 ? 'ahead' : 'behind'); dEl.innerHTML = `<small>${info}</small>${fmtD(d)}`; }
       else { dEl.className = 'd'; dEl.innerHTML = `<small>${info}</small>${lap.last != null ? 'last ' + fmt(lap.last) : lb ? fmt(lb.t) : '–'}`; }
     } else if (mode === 'race' && car.s > T.startS + 30) {
-      const ref = chal || pb || rival;
+      // (a replay of a new best would compare the run with itself)
+      const ref = chal || (pb && !(rp.on && Math.abs(pb.t - finishT) < 1e-6) ? pb : null) || rival;
       const d = raceT - refTimeAt(ref.sArr, car.s);
       dEl.className = 'd ' + (d <= 0 ? 'ahead' : 'behind');
       dEl.innerHTML = `<small>${refLabel()}</small>${fmtD(d)}`;
@@ -3862,7 +4061,7 @@ function updateHUD(dt) {
 // ---------- race logic per frame ----------
 function raceChecks(dt) {
   const T = W.T;
-  if (mode !== 'race') { hint(''); return; }
+  if (mode !== 'race' || rp.on) { hint(''); return; }
   const off = Math.abs(car.lat) - T.hw;
   const spd = Math.hypot(car.vx, car.vz);
   offT = off > 7 ? offT + dt : 0;
@@ -3876,7 +4075,7 @@ function raceChecks(dt) {
   else hint('');
 }
 const escapeHTML = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-const refLabel = () => chal ? 'vs ' + escapeHTML(chal.n) : pb ? 'vs best' : 'vs rival';
+const refLabel = () => chal ? 'vs ' + escapeHTML(chal.n) : pb && !(rp.on && Math.abs(pb.t - finishT) < 1e-6) ? 'vs best' : 'vs rival';
 function onSplit(k) {
   const ref = chal ? chal.s[k] : pb ? pb.splits[k] : rival.splits[k];
   const d = raceT - ref;
@@ -3976,7 +4175,8 @@ function tick(dt, doRender) {
   time += dt;
   readInput();
   evt.hit = 0; evt.land = 0; evt.shift = false; evt.down = false; evt.kind = ''; evt.col = null;
-  if (mode === 'countdown') {
+  if (rp.on) repTick(dt);
+  else if (mode === 'countdown') {
     // online the lights run on the shared clock (and wait until the host has everyone on the line)
     if (netRun()) cdT = net.race.greenL ? 3.6 + (nowMs() - net.race.greenL) / 1000 : -1; else cdT += dt;
     const n = cdT < 0 ? 5 : cdT < 0.6 ? 4 : cdT < 1.6 ? 3 : cdT < 2.6 ? 2 : cdT < 3.6 ? 1 : 0;
@@ -3999,7 +4199,7 @@ function tick(dt, doRender) {
     car.thrE = input.thr; car.boost += (input.thr * 0.3 - car.boost) * Math.min(1, dt * 2);
     savePrev(); alpha = 1;
   }
-  if (mode === 'race' || mode === 'done') {
+  if (!rp.on && (mode === 'race' || mode === 'done')) {
     acc += dt; let steps = 0;
     const wtF = netRun() && net.race.greenL ? netWT() : 0;
     while (acc >= STEP && steps < 12) {
@@ -4013,12 +4213,10 @@ function tick(dt, doRender) {
         if (net.pause) { const v = car.vF; inp = { steer: 0, thr: v < -0.5 ? 1 : 0, brk: v > 0.5 ? 1 : 0, hb: Math.abs(v) < 3, analog: true }; }
       }
       if (mode === 'done') { const ai = C.aiDrive(W, car, P, aiDone); inp = { steer: ai.steer, thr: 0, brk: 1, hb: false, analog: true }; }
+      if (rec.on) recStep(inp);
       C.stepCar(W, car, P, inp, STEP);
       if (wtF) netCollide(wtF - acc);
-      if (car.hitV > evt.hit) { evt.hit = car.hitV; evt.kind = car.hitKind; evt.x = car.hitX; evt.z = car.hitZ; evt.nx = car.hitNx; evt.nz = car.hitNz; evt.front = car.hitFront; }
-      car.hitV = 0;
-      evt.land = Math.max(evt.land, car.landV); car.landV = 0;
-      if (car.shifted === 1) evt.shift = true;
+      stepEvents();
       if (mode === 'race') {
         raceT += STEP; ghostTimer += STEP;
         if (ghostTimer >= 0.05) { ghostTimer -= 0.05; ghostRec.push(car.x, car.y, car.z, car.h); }
@@ -4040,26 +4238,28 @@ function tick(dt, doRender) {
     if (mode === 'done') { doneT += dt; if (doneT > 2.2 && !resultsShown) { resultsShown = true; net.pause = false; setScreen('results'); } }
   }
   if (mode === 'paused') { alpha = 1; }
-  updateVis(dt);
+  // a replay's world runs at its speed: slow motion, or held still while it's paused
+  const fdt = rp.on ? repDt(dt) : dt;
+  updateVis(fdt);
   if (netRun()) netSample();
   if (mode !== 'paused') {
     if (netRun()) netContactFrame(dt);
     if (evt.hit > 3 && (mode === 'race' || mode === 'done')) onImpact(evt);
-    if (evt.land > 5) rumble(Math.min(1, evt.land / 16), Math.min(0.6, evt.land / 20), 140);
+    if (evt.land > 5 && !rp.on) rumble(Math.min(1, evt.land / 16), Math.min(0.6, evt.land / 20), 140);
     // a pad hums softly through a slide, more the further the tail is out (light motor only, a few times a second)
     slideRumbleT -= dt;
-    if (mode === 'race' && slideRumbleT <= 0 && !car.air) {
+    if (mode === 'race' && !rp.on && slideRumbleT <= 0 && !car.air) {
       const sl = clamp((Math.abs(car.beta) - 0.12) / 0.45, 0, 1) * clamp(Math.hypot(car.vx, car.vz) / 14, 0, 1);
       if (sl > 0.05) { rumble(0, 0.12 + 0.35 * sl, 140); slideRumbleT = 0.12; }
     }
-    updateDirt(dt);
-    S.E.hitK *= Math.exp(-dt * 2.2);
+    updateDirt(fdt);
+    S.E.hitK *= Math.exp(-fdt * 2.2);
     if (hitFlash > 0.002 || flashShown) { hitFlash *= Math.exp(-dt * 5); flashEl.style.opacity = hitFlash.toFixed(3); flashShown = hitFlash > 0.002; }
-    updateCamera(dt);
+    updateCamera(fdt);
     netUpdate(dt);
-    emitEffects(dt); dust.update(dt); chips.update(dt); updateSkids();
-    if (S.E.snowfall) updateSnow(dt);
-    if (S.E.rain) updateRain(dt);
+    emitEffects(fdt); dust.update(fdt); chips.update(fdt); updateSkids();
+    if (S.E.snowfall) updateSnow(fdt);
+    if (S.E.rain) updateRain(fdt);
     if (gq().scenery && S.updateFans) S.updateFans(time, vis.x, vis.z);
   }
   updateAudio(dt);
@@ -4067,6 +4267,7 @@ function tick(dt, doRender) {
   if (S.amber) { const k = clamp(Math.sin(time * 5.7) * 2.2 + 0.4, 0, 1); S.amber.tint = [0.1 + 2.5 * k, 0.06 + 1.55 * k, 0.012 + 0.34 * k]; }
   if (flameT > 0) flameT -= dt;
   if (!$('hud').hidden) { raceChecks(dt); updateHUD(dt); }
+  if (rp.on) repUI(dt);
   if (doRender) render();
 }
 
@@ -4077,7 +4278,7 @@ function render() {
   const G = gq();
   E.time = time; E.shadows = G.shadows; R.env.lowq = G.detail === false;
   const w = dyn.sw, h = dyn.sh;
-  M4.persp(proj, cam.fov * Math.PI / 180, w / h, settings.cam === 2 && mode !== 'menu' ? 0.08 : 0.25, 4500);
+  M4.persp(proj, cam.fov * Math.PI / 180, w / h, (camMode() === 2 || camMode() === 5) && mode !== 'menu' ? 0.08 : 0.25, 4500);
   M4.lookAt(view, cam.pos, cam.look, cam.up);
   M4.mul(R.env.vp, proj, view);
   M4.inv(R.env.ivp, R.env.vp);
@@ -4171,7 +4372,7 @@ function drawWorld(E, G, mir) {
     if (carModel.spk) { M4.trs(spkT, 0, 0, -spkPump(), 0, 0, 0, 1); M4.mul(spkM, carMat, spkT); R.drawLit(carModel.spk, { model: spkM, dirt: dirt * 0.4, carY: baseY, dirtCol: dcol }); }
     for (let i = 0; i < 4; i++) R.drawLit(wheelMesh(carModel, i), { model: wheelMatrix(i), mode: 11, tex: carModel.tyreTex, dirt: dirt * 0.9, carY: baseY, dirtCol: dcol });
     for (let i = 0; i < 4; i++) R.drawLit(carModel.caliper, { model: wheelMatrix(i, true), dirt: dirt * 0.6, carY: baseY, dirtCol: dcol });
-    if (!(settings.cam === 2 && (mode === 'race' || mode === 'countdown'))) R.drawLit(carModel.lightF, { model: carMat, mode: 4, tint: lightsOn ? (E.night ? [2.6, 2.6, 2.6] : [1.9, 1.9, 1.9]) : [0.3, 0.3, 0.3] });
+    if (!(camMode() === 2 && (mode === 'race' || mode === 'countdown'))) R.drawLit(carModel.lightF, { model: carMat, mode: 4, tint: lightsOn ? (E.night ? [2.6, 2.6, 2.6] : [1.9, 1.9, 1.9]) : [0.3, 0.3, 0.3] });
     if (flameT > 0) R.drawLit(carModel.flame, { model: carMat, mode: 4, tint: [2.6 + Math.random(), 1.6 + Math.random() * 0.6, 0.9] });
     const braking = (mode === 'race' && input.brk > 0.1) || mode === 'done' || (mode === 'race' && input.hb);
     // the F1's only lamp is its rain light: on in the rain and at night, not a brake light
@@ -4239,7 +4440,7 @@ function drawWorld(E, G, mir) {
 // ---- the rear-view mirror (top of the screen): online races by default, Options → Always / Off, B in a run ----
 // A camera on the roof of your car looking back (it moves with the body, pitch and roll included), drawn into a small
 // target of its own and from there into the frame the page puts at the top of the HUD (#hMirror)
-const mirShown = () => !!W && mirWanted() && !$('hud').hidden;
+const mirShown = () => !!W && mirWanted() && !$('hud').hidden && !rp.on;
 // vertical field of view (°); the frame's inner corner radius (CSS px, as in page.html); how much nearer trees and terrain
 // switch to their simpler levels (a mirror pixel covers about three times the angle of a screen pixel)
 const MIR_FOV = 20, MIR_RAD = 9, MIR_LOD = 3;
@@ -4329,5 +4530,5 @@ if (location.protocol === 'file:') window.__rally = {
   setDirt(v) { dirt = v; },
   // graphics: a preset name or levels to mix into the current ones; draw(n) renders the same frame n times
   gfx(v) { if (typeof v === 'string') setGfx(v); else if (v) { settings.g = Object.assign({}, gq(), v); settings.gfx = 'custom'; applyGfx(true); } return { gfx: settings.gfx, g: gq(), auto: gAuto.lv, scale: dyn.scale, w: dyn.sw, h: dyn.sh }; },
-  draw(n) { for (let i = 0; i < n; i++) render(); }, get R() { return R; }, get S() { return S; }, get mode() { return mode; }, get dbg() { return { dirt, hitFlash, dust: dust.n, chips: chips.n, hitK: S.E.hitK, shake: cam.shake, evt: Object.assign({}, evt) }; }, get car() { return car; }, get W() { return W; }, startRace, settings, keys, toMenu, get raceT() { return raceT; }, net, netJoin, netCreate, netStart, netLeave, netRows: () => (netRun() ? netRows() : null) };
+  draw(n) { for (let i = 0; i < n; i++) render(); }, get R() { return R; }, get S() { return S; }, get mode() { return mode; }, get dbg() { return { dirt, hitFlash, dust: dust.n, chips: chips.n, hitK: S.E.hitK, shake: cam.shake, evt: Object.assign({}, evt) }; }, get car() { return car; }, get W() { return W; }, startRace, settings, keys, toMenu, get raceT() { return raceT; }, get finishT() { return finishT; }, get rp() { return rp; }, get rec() { return rec; }, get cam() { return cam; }, startReplay, repSeek, repExit, net, netJoin, netCreate, netStart, netLeave, netRows: () => (netRun() ? netRows() : null) };
 })();
