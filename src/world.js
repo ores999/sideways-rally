@@ -2528,31 +2528,36 @@ function buildScene(R, W) {
   if (chR.length) add(R.mesh(cg, instData(chR, o => [o.x, o.y, o.z, o.rot, 1, 1, 0, 0, 1, 1, 1])), { mode: 2, tex: R.texture(chevronCanvas(1)) }, true);
   // spectators (dynamic)
   const shirts = ['#d8262e', '#1f5fbf', '#f2c230', '#f4f4f0', '#2f9e55', '#f07a1c', '#7a3fb0', '#1a1a1a', '#e85d9f', '#22a6b3', '#b3d334', '#c7c2b8'].map(lin);
-  S.fans = O.fans.map(f => ({ ...f, col: shirts[f.c % shirts.length], jump: 0 }));
+  S.fans = O.fans.map(f => ({ ...f, col: shirts[f.c % shirts.length] }));
   // The crowd is redrawn from scratch every frame (they jump as the car passes): only the fans in view and inside the
   // fog are written, the near ones with the full figure and the rest with a simple one. Drawing every fan of the stage
   // with the full figure was the dearest thing in the frame at Monaco and Spa (1100-1300 fans, 2.6 M vertices).
   const nearD = new Float32Array(S.fans.length * 11), farD = new Float32Array(S.fans.length * 11);
+  // how excited each fan is (0–1, by the car within 45 m) and how high it hops: kept in typed arrays, not on the fan
+  // objects (a number stored on 1100 objects a frame boxed every value, and Math.hypot allocates its arguments)
+  const jump = S.fanJump = new Float64Array(S.fans.length), hop = new Float64Array(S.fans.length);
   const updateFans = (time, carX, carZ) => {
-    for (const f of S.fans) {
-      const ex = Math.hypot(f.x - carX, f.z - carZ) < 45 ? 1 : 0;
-      f.jump += (ex - f.jump) * 0.08;
-      f.hop = f.jump * Math.max(0, Math.sin(time * 9 + f.ph)) * 0.35;
+    const F = S.fans;
+    for (let i = 0; i < F.length; i++) {
+      const f = F[i], dx = f.x - carX, dz = f.z - carZ, ex = dx * dx + dz * dz < 2025 ? 1 : 0;
+      jump[i] += (ex - jump[i]) * 0.08;
+      hop[i] = jump[i] * Math.max(0, Math.sin(time * 9 + f.ph)) * 0.35;
     }
   };
   // vp: the camera's view-projection (a frame old is fine: there's a margin), cam: its position, fogEnd: past it nothing shows
   const cullFans = (vp, cam, fogEnd) => {
     let nn = 0, nf = 0;
     const n2 = FAN_NEAR * FAN_NEAR, f2 = (fogEnd + 5) * (fogEnd + 5);
-    for (const f of S.fans) {
-      const dx = f.x - cam[0], dz = f.z - cam[2], d2 = dx * dx + dz * dz;
+    const F = S.fans;
+    for (let i = 0; i < F.length; i++) {
+      const f = F[i], dx = f.x - cam[0], dz = f.z - cam[2], d2 = dx * dx + dz * dz;
       if (d2 > f2) continue;
       const y = f.y + 0.9, w = vp[3] * f.x + vp[7] * y + vp[11] * f.z + vp[15];
       if (w < -2) continue;
       const m = w * 1.08 + 2.5, cx = vp[0] * f.x + vp[4] * y + vp[8] * f.z + vp[12], cy = vp[1] * f.x + vp[5] * y + vp[9] * f.z + vp[13];
       if (cx > m || cx < -m || cy > m || cy < -m) continue;
       const a = d2 < n2 ? nearD : farD, o = (d2 < n2 ? nn++ : nf++) * 11;
-      a[o] = f.x; a[o + 1] = f.y + (f.hop || 0); a[o + 2] = f.z; a[o + 3] = f.rot; a[o + 4] = 1; a[o + 5] = f.h; a[o + 6] = 0; a[o + 7] = 0;
+      a[o] = f.x; a[o + 1] = f.y + hop[i]; a[o + 2] = f.z; a[o + 3] = f.rot; a[o + 4] = 1; a[o + 5] = f.h; a[o + 6] = 0; a[o + 7] = 0;
       a[o + 8] = f.col[0]; a[o + 9] = f.col[1]; a[o + 10] = f.col[2];
     }
     R.setInstances(S.fanNear, nearD.subarray(0, nn * 11)); R.setInstances(S.fanFar, farD.subarray(0, nf * 11));

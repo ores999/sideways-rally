@@ -3,6 +3,7 @@ const GFX = (() => {
 'use strict';
 
 // ---------- mat4 (column-major) ----------
+const M4T = new Float32Array(16);
 const M4 = {
   create() { const m = new Float32Array(16); m[0] = m[5] = m[10] = m[15] = 1; return m; },
   persp(o, fovy, asp, n, f) {
@@ -28,7 +29,7 @@ const M4 = {
     return o;
   },
   mul(o, a, b) {
-    const r = new Float32Array(16);
+    const r = M4T; // o may be a or b: the product goes through a scratch matrix (no longer a new one per call)
     for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
       r[j * 4 + i] = a[i] * b[j * 4] + a[4 + i] * b[j * 4 + 1] + a[8 + i] * b[j * 4 + 2] + a[12 + i] * b[j * 4 + 3];
     }
@@ -180,6 +181,22 @@ vec2 cloudUV(vec3 o, vec3 d, float t){ return (o.xz / 900.0 + d.xz / (d.y + 0.12
 float cloudLo(float cover){ return 0.7 - cover * 0.3; }
 // density with cauliflower rims: billowy detail eats into the edge
 float cloudN(vec2 uv, float k){ float bd = cbillow(uv * 5.3 + 7.0) * 0.6 + cbillow(uv * 11.7 - 3.0) * 0.4; return cfbm(uv, k) - (1.0 - bd) * 0.11 * k; }
+// cloudN where it can reach lo; under lo it stops as soon as the octaves left can't lift it there (they add at most
+// 0.15k + 0.08k, the rims only take away) and returns something under lo. Clear sky and the ground under it skip most
+// of the noise: the caller only cares whether it reaches lo
+float cloudNlo(vec2 uv, float k, float lo){
+  vec2 p = uv + (vnoise(uv*0.6 + 3.1) - 0.5) * 0.9;
+  float s = vnoise(p) * 0.5; p = p * 2.03 + vec2(17.1, 9.2);
+  s += vnoise(p) * 0.27; p = p * 2.01 + vec2(-3.3, 5.7);
+  float den = 0.77 + 0.23 * k;
+  if ((s + 0.23 * k) / den < lo - 0.001) return lo - 1.0;
+  s += vnoise(p) * 0.15 * k; p = p * 2.02 + vec2(8.4, -6.1);
+  s += vnoise(p) * 0.08 * k;
+  float f = s / den;
+  if (f < lo) return f;
+  float bd = cbillow(uv * 5.3 + 7.0) * 0.6 + cbillow(uv * 11.7 - 3.0) * 0.4;
+  return f - (1.0 - bd) * 0.11 * k;
+}
 `;
 
 // The lit shaders' per-frame uniforms live in one uniform buffer (std140), shared by the vertex and fragment stage and
@@ -243,11 +260,12 @@ void main(){
   vec3 nw = normalize(mat3(u_model) * n);
   v_sp = u_svp * vec4(wp.xyz + nw * u_shNo.x, 1.0);
   v_sp2 = u_svp2 * vec4(wp.xyz + nw * u_shNo.y, 1.0);
-  // cloud shadow: is there cloud between this point and the sun? (per vertex: the field is hundreds of metres wide)
+  // cloud shadow: is there cloud between this point and the sun? (per vertex: the field is hundreds of metres wide;
+  // a texture of it round the camera, read here, measured slower than this with cloudNlo's early stop)
   v_cs = 1.0;
   if (u_cld > 0.0) {
     float lo = cloudLo(u_cld);
-    v_cs = 1.0 - smoothstep(lo - 0.005, lo + 0.03, cloudN(cloudUV(wp.xyz, u_sunDir, u_time), 1.0)) * (0.7 + 0.3 * u_cld) * 0.68;
+    v_cs = 1.0 - smoothstep(lo - 0.005, lo + 0.03, cloudNlo(cloudUV(wp.xyz, u_sunDir, u_time), 1.0, lo - 0.005)) * (0.7 + 0.3 * u_cld) * 0.68;
   }
   gl_Position = u_vp * wp;
 }`;
@@ -263,7 +281,7 @@ uniform int u_mode;
 uniform vec3 u_tint;
 uniform float u_alpha;
 uniform sampler2D u_tex;
-uniform sampler2DShadow u_shadow;
+uniform sampler2DShadow u_shadow, u_shadow2;
 uniform float u_dirt, u_carY; uniform vec3 u_dirtCol;
 uniform vec4 u_fogLo;
 uniform sampler2DArray u_arr; uniform vec4 u_fac[16];
@@ -282,25 +300,25 @@ vec3 envRefl(vec3 R){
   sky = mix(sky, u_skyline, (1.0 - smoothstep(hz - 0.015, hz + 0.004, R.y)) * smoothstep(-0.06, 0.0, R.y));
   return mix(u_gnd * 0.5, sky, smoothstep(-0.03, 0.025, R.y));
 }
-// two cascades side by side in one depth atlas (left: near, sharp; right: far). 12 Poisson taps rotated per
+// two cascades, each its own depth map (u_shadow near, sharp; u_shadow2 far). 12 Poisson taps rotated per
 // pixel, each a hardware 2x2 compare, give a soft edge without the blocky steps of a fixed grid. The first four
 // sit on the rim of the disc about 90 degrees apart: when they agree, the pixel is fully lit or fully in shadow
 // and the other eight are skipped. Only penumbrae pay for all twelve (most of the screen costs a third).
 const vec2 PD[12] = vec2[12](vec2(-0.696, 0.457), vec2(0.519, 0.767), vec2(0.962, -0.195), vec2(-0.322, -0.933),
   vec2(-0.326, -0.406), vec2(-0.840, -0.074), vec2(-0.203, 0.621), vec2(0.473, -0.480), vec2(0.185, -0.893),
   vec2(0.507, 0.064), vec2(0.896, 0.412), vec2(-0.792, -0.598));
-float pcf(vec3 sp, float x0, float rad, float bias){
+float pcf(highp sampler2DShadow t, vec3 sp, float rad, float bias){
   float a = hash12(gl_FragCoord.xy) * 6.2832, ca = cos(a), sa = sin(a);
-  vec2 k = vec2(2.0 * u_shTex.x, u_shTex.y) * rad;
+  vec2 k = vec2(u_shTex.y) * rad;
   float s = 0.0;
   for (int i = 0; i < 4; i++) {
     vec2 o = vec2(ca * PD[i].x - sa * PD[i].y, sa * PD[i].x + ca * PD[i].y) * k;
-    s += textureLod(u_shadow, vec3(clamp(sp.x + o.x, 0.002, 0.998) * 0.5 + x0, sp.y + o.y, sp.z - bias), 0.0);
+    s += textureLod(t, vec3(clamp(sp.x + o.x, 0.002, 0.998), sp.y + o.y, sp.z - bias), 0.0);
   }
   if (s < 0.001 || s > 3.999) return s * 0.25;
   for (int i = 4; i < 12; i++) {
     vec2 o = vec2(ca * PD[i].x - sa * PD[i].y, sa * PD[i].x + ca * PD[i].y) * k;
-    s += textureLod(u_shadow, vec3(clamp(sp.x + o.x, 0.002, 0.998) * 0.5 + x0, sp.y + o.y, sp.z - bias), 0.0);
+    s += textureLod(t, vec3(clamp(sp.x + o.x, 0.002, 0.998), sp.y + o.y, sp.z - bias), 0.0);
   }
   return s / 12.0;
 }
@@ -312,9 +330,9 @@ float shadowF(){
   float m0 = max(abs(s0.x - 0.5), abs(s0.y - 0.5));
   float far = 1.0, k = 1.0;
   if (m0 < 0.48 && s0.z < 1.0) k = smoothstep(0.38, 0.48, m0);
-  if (k > 0.0) far = mix(pcf(s1, 0.5, 1.3, 0.0004), 1.0, smoothstep(0.42, 0.5, m1));
+  if (k > 0.0) far = mix(pcf(u_shadow2, s1, 1.3, 0.0004), 1.0, smoothstep(0.42, 0.5, m1));
   if (k >= 1.0) return far;
-  return mix(pcf(s0, 0.0, 1.7, 0.0003), far, k);
+  return mix(pcf(u_shadow, s0, 1.7, 0.0003), far, k);
 }
 void main(){
   if (u_lodB.x > -1e8 || u_lodB.z < 1e8) {
@@ -759,6 +777,16 @@ ${COMMON}
 ${OUTC}
 ${CLOUDS}
 float lum(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+#ifdef LOWQ
+// the low-detail levels (Performance, Minimum): the cumulus' self-shadow sample from the first two octaves (the rest at
+// their mean), no altocumulus sheet, two-octave cirrus. The clouds keep their shapes: those come from n0
+float cfbmLo(vec2 p, float k){
+  p += (vnoise(p*0.6 + 3.1) - 0.5) * 0.9;
+  float s = vnoise(p) * 0.5; p = p * 2.03 + vec2(17.1, 9.2);
+  s += vnoise(p) * 0.27 + 0.115 * k;
+  return s / (0.77 + 0.23 * k);
+}
+#endif
 void main(){
   vec4 w = u_ivp * vec4(v_p, 1.0, 1.0);
   vec3 d = normalize(w.xyz / w.w - u_cam);
@@ -790,22 +818,36 @@ void main(){
 
   float sunVis = 1.0;
   if (y > 0.0) {
-    // high cirrus: thin streaks stretched along the wind, lit from the sun side
-    vec2 cu = u_cam.xz / 8000.0 + d.xz / (y + 0.06);
-    vec2 cq = vec2(cu.x * 0.5 + u_time * 0.003, cu.y * 1.8);
-    float ci = vnoise(cq) * 0.55 + vnoise(cq * vec2(2.1, 2.6) + 4.0) * 0.3 + vnoise(cq * vec2(4.3, 5.5)) * 0.15;
-    ci = smoothstep(0.5, 0.88, ci) * smoothstep(0.08, 0.42, y) * (0.3 + 0.5 * u_clouds);
-    vec3 cic = mix(u_cloud, u_glow, 0.25 * lowSun) * (0.75 + 0.7 * pow(sd, 3.0));
-    c = mix(c, cic, ci * 0.4);
-    sunVis -= ci * 0.2;
+    // high cirrus: thin streaks stretched along the wind, lit from the sun side (none under 0.08: skipped there)
+    if (y > 0.08) {
+      vec2 cu = u_cam.xz / 8000.0 + d.xz / (y + 0.06);
+      vec2 cq = vec2(cu.x * 0.5 + u_time * 0.003, cu.y * 1.8);
+#ifdef LOWQ
+      float ci = vnoise(cq) * 0.55 + vnoise(cq * vec2(2.1, 2.6) + 4.0) * 0.3 + 0.075;
+#else
+      float ci = vnoise(cq) * 0.55 + vnoise(cq * vec2(2.1, 2.6) + 4.0) * 0.3 + vnoise(cq * vec2(4.3, 5.5)) * 0.15;
+#endif
+      ci = smoothstep(0.5, 0.88, ci) * smoothstep(0.08, 0.42, y) * (0.3 + 0.5 * u_clouds);
+      vec3 cic = mix(u_cloud, u_glow, 0.25 * lowSun) * (0.75 + 0.7 * pow(sd, 3.0));
+      c = mix(c, cic, ci * 0.4);
+      sunVis -= ci * 0.2;
+    }
 
-    // altocumulus: a higher sheet of small puffs in patches, drifting a little faster than the cumulus
-    vec2 ua = (u_cam.xz / 4000.0 + d.xz / (y + 0.05)) * 4.2 + vec2(u_time * 0.006, u_time * 0.001) + 13.0;
-    float na = vnoise(ua) * 0.6 + vnoise(ua * 2.3 + 5.0) * 0.28 + vnoise(ua * 5.1) * 0.12;
-    float aa = smoothstep(0.66, 0.8, na) * smoothstep(0.45, 0.75, vnoise(ua * 0.17 + 2.0)) * smoothstep(0.1, 0.4, y) * u_clouds * 0.55;
-    vec3 ac = mix(u_cloud * vec3(0.86, 0.89, 0.96), u_cloud * (1.0 + 0.4 * pow(sd, 4.0)), smoothstep(0.66, 0.85, na));
-    c = mix(c, mix(ac, hor, (1.0 - smoothstep(0.1, 0.5, y)) * 0.5), aa);
-    sunVis -= aa * 0.3;
+    // altocumulus: a higher sheet of small puffs in patches, drifting a little faster than the cumulus (the patch
+    // mask first: outside a patch, and under 0.1, there's nothing to draw)
+#ifndef LOWQ
+    if (u_clouds > 0.0 && y > 0.1) {
+      vec2 ua = (u_cam.xz / 4000.0 + d.xz / (y + 0.05)) * 4.2 + vec2(u_time * 0.006, u_time * 0.001) + 13.0;
+      float pa = smoothstep(0.45, 0.75, vnoise(ua * 0.17 + 2.0));
+      if (pa > 0.0) {
+        float na = vnoise(ua) * 0.6 + vnoise(ua * 2.3 + 5.0) * 0.28 + vnoise(ua * 5.1) * 0.12;
+        float aa = smoothstep(0.66, 0.8, na) * pa * smoothstep(0.1, 0.4, y) * u_clouds * 0.55;
+        vec3 ac = mix(u_cloud * vec3(0.86, 0.89, 0.96), u_cloud * (1.0 + 0.4 * pow(sd, 4.0)), smoothstep(0.66, 0.85, na));
+        c = mix(c, mix(ac, hor, (1.0 - smoothstep(0.1, 0.5, y)) * 0.5), aa);
+        sunVis -= aa * 0.3;
+      }
+    }
+#endif
 
     // cumulus layer: projected on a plane, density sampled twice (here and toward the sun)
     // for self-shadowing; thin edges facing the sun get a silver lining
@@ -813,11 +855,15 @@ void main(){
       float k = smoothstep(0.03, 0.3, y);
       vec2 uv = cloudUV(u_cam, d, u_time);
       float lo = cloudLo(u_clouds);
-      float n0 = cloudN(uv, k);
+      float n0 = cloudNlo(uv, k, lo);
       float a0 = smoothstep(lo, lo + 0.1, n0);
       if (a0 > 0.002) {
         vec2 toSun = normalize(S.xz + 1e-5) * mix(0.3, 0.1, S.y);
+#ifdef LOWQ
+        float n1 = cfbmLo(uv + toSun, k);
+#else
         float n1 = cfbm(uv + toSun, k);
+#endif
         float lit = clamp(0.6 + (n0 - n1) * 4.5, 0.0, 1.0);
         vec3 tint = mix(vec3(1.0), u_sunCol / max(max(u_sunCol.r, max(u_sunCol.g, u_sunCol.b)), 1e-3), 0.55);
         vec3 bright = u_cloud * tint * (0.95 + 0.5 * pow(sd, 3.0));
@@ -1104,7 +1150,7 @@ function createRenderer(canvas) {
     if (!P.ready()) return false;
     gl.uniformBlockBinding(P.p, gl.getUniformBlockIndex(P.p, 'Frame'), 0);
     gl.useProgram(P.p); litCur = null;
-    gl.uniform1i(P.u.u_tex, 0); gl.uniform1i(P.u.u_shadow, 1); gl.uniform1i(P.u.u_arr, 2);
+    gl.uniform1i(P.u.u_tex, 0); gl.uniform1i(P.u.u_shadow, 1); gl.uniform1i(P.u.u_arr, 2); gl.uniform1i(P.u.u_shadow2, 3);
     return true;
   }
   function litProg(m) {
@@ -1117,12 +1163,20 @@ function createRenderer(canvas) {
   function litUse(P, m) {
     if (litCur !== P) {
       gl.useProgram(P.p); litCur = P;
-      if (P.frame !== litFrame) { P.frame = litFrame; const u = P.u; for (let i = 0; i < litCalls.length; i += 3) gl[litCalls[i]](u[litCalls[i + 1]], ...litCalls[i + 2]); }
+      if (P.frame !== litFrame) { P.frame = litFrame; const u = P.u; for (let i = 0; i < litCalls.length; i += 3) gl[litCalls[i]](u[litCalls[i + 1]], ...litCalls[i + 2]); P.cD = 0; }
     }
     if (P === litUber) gl.uniform1i(P.u.u_mode, m);
     return P.u;
   }
-  function useProg(p) { gl.useProgram(p); litCur = null; }
+  function useProg(p) { gl.useProgram(p); litCur = null; tex0 = null; }
+  // What a draw would send again is skipped: a program keeps its uniforms, so each lit variant remembers the last model,
+  // tint, alpha, sway and dirt it was given (cM/cT/cA/cS/cD); tex0 is the 2D texture on unit 0 while lit draws run
+  // (forgotten whenever another program or a new texture binds); the constant instance attributes of plain meshes are
+  // context state, set once (cva). On Windows every GL call goes through ANGLE to Direct3D 11, several times dearer
+  // than here: this takes a frame from ~1500 calls to ~1000.
+  let tex0 = null, cva = false;
+  function same(c, v, n) { for (let i = 0; i < n; i++) if (c[i] !== v[i]) { for (; i < n; i++) c[i] = v[i]; return false; } return true; }
+  const ONE3 = [1, 1, 1];
   // wait for every program now (behind a loading screen) rather than on the first frame that needs it; the driver has
   // been compiling them in the background since the renderer started
   function warm() {
@@ -1133,6 +1187,7 @@ function createRenderer(canvas) {
   const prog = {
     depth: compile(DEPTH_VS, DEPTH_FS),
     sky: compile(SKY_VS, SKY_FS),
+    skyLo: compile(SKY_VS, SKY_FS.replace('#version 300 es\n', '#version 300 es\n#define LOWQ\n')),
     pt: compile(PT_VS, PT_FS),
     tr: compile(TR_VS, TR_FS),
     ln: compile(TR_VS, LN_FS),
@@ -1146,21 +1201,26 @@ function createRenderer(canvas) {
   };
   for (const k in prog) { const P = prog[k]; Object.defineProperty(P, 'U', { get() { if (!P.ready()) throw new Error(k + ' shader failed'); return P.u; } }); }
 
-  // shadow map
+  // shadow maps: one depth texture per cascade (near, far), so each pass clears all of its own and a frame can keep the
+  // far one from before (a shared atlas cleared in halves made tiled GPUs load the whole atlas back every frame)
   const SHADOW = 2048;
-  const shTex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, shTex);
-  gl.texStorage2D(gl.TEXTURE_2D, 1, gl.DEPTH_COMPONENT24, SHADOW * 2, SHADOW);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
-  const shFbo = gl.createFramebuffer();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, shFbo);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, shTex, 0);
-  gl.drawBuffers([gl.NONE]); gl.readBuffer(gl.NONE);
+  const shTex = [], shFbo = [];
+  for (let c = 0; c < 2; c++) {
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.DEPTH_COMPONENT24, SHADOW, SHADOW);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
+    const f = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, t, 0);
+    gl.drawBuffers([gl.NONE]); gl.readBuffer(gl.NONE);
+    shTex.push(t); shFbo.push(f);
+  }
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
   // white 1x1 texture as default
@@ -1513,7 +1573,7 @@ function createRenderer(canvas) {
         let L = 0;
         if (cullDistOn) {
           const b = c.box, dx = Math.max(b[0] - cullCam[0], 0, cullCam[0] - b[3]), dz = Math.max(b[2] - cullCam[2], 0, cullCam[2] - b[5]);
-          const d = Math.hypot(dx, dz) * K; L = d > ld[1] ? 2 : d > ld[0] ? 1 : 0;
+          const d = Math.sqrt(dx * dx + dz * dz) * K; L = d > ld[1] ? 2 : d > ld[0] ? 1 : 0;
         }
         const r = c.lods[L];
         if (r.first === re && re > rs) re += r.count;
@@ -1530,38 +1590,62 @@ function createRenderer(canvas) {
       // view where a pixel covers more (the rear-view mirror)
       const L = m.lods, K = env.lodK || 1;
       if (!cullDistOn) { const last = L[L.length - 1].m; gl.bindVertexArray(last.vao); instRuns(m, last, maxD, null); return; }
-      const u = litCur.u.u_lodB;
+      const u = litCur.u.u_lodB, ch = m.chunks, n = ch.length;
+      // which chunks are in view and how far their ground spans: once, for every level
+      if (cVis.length < n) { cVis = new Uint8Array(n * 2); cLo = new Float32Array(n * 2); cHi = new Float32Array(n * 2); }
+      for (let k = 0; k < n; k++) {
+        const b = ch[k].box;
+        if (!(cVis[k] = !cullOn || boxVisible(b, maxD) ? 1 : 0)) continue;
+        cLo[k] = groundDist(b); cHi[k] = groundDistMax(b);
+      }
       for (let i = 0; i < L.length; i++) {
         const a = i ? L[i - 1] : null, b = i < L.length - 1 ? L[i] : null;
         const aD = a ? a.dist / K : 0, aB = a ? a.band / K : 0, bD = b ? b.dist / K : 0, bB = b ? b.band / K : 0;
         const lo = a ? aD - aB : -1, hi = b ? bD + bB : Infinity;
         gl.uniform4f(u, a ? aD - aB : -1e9, a ? aD + aB : -1e9 + 1, b ? bD - bB : 1e9, b ? bD + bB : 1e9 + 1);
         gl.bindVertexArray(L[i].m.vao);
-        instRuns(m, L[i].m, maxD, c => groundDistMax(c.box) >= lo && groundDist(c.box) <= hi);
+        instRunsIn(m, L[i].m, lo, hi);
       }
       gl.uniform4f(u, -1e9, -1e9 + 1, 1e9, 1e9 + 1);
       return;
     }
     instRuns(m, m, maxD, null);
   }
-  function groundDistMax(b) { const dx = Math.max(Math.abs(cullCam[0] - b[0]), Math.abs(cullCam[0] - b[3])), dz = Math.max(Math.abs(cullCam[2] - b[2]), Math.abs(cullCam[2] - b[5])); return Math.hypot(dx, dz); }
-  function groundDist(b) { const dx = Math.max(b[0] - cullCam[0], 0, cullCam[0] - b[3]), dz = Math.max(b[2] - cullCam[2], 0, cullCam[2] - b[5]); return Math.hypot(dx, dz); }
+  let cVis = new Uint8Array(0), cLo = new Float32Array(0), cHi = new Float32Array(0);
+  // instRuns over the chunks marked in view (cVis) whose ground span meets [lo, hi]
+  function instRunsIn(src, tgt, lo, hi) {
+    const ch = src.chunks, n = ch.length, ok = k => cVis[k] && cHi[k] >= lo && cLo[k] <= hi;
+    gl.bindBuffer(gl.ARRAY_BUFFER, tgt.instBuf);
+    let i = 0;
+    while (i < n) {
+      if (!ok(i)) { i++; continue; }
+      let j = i + 1;
+      while (j < n && ok(j)) j++;
+      instDraw(tgt, ch[i].first, ch[j - 1].first + ch[j - 1].count - ch[i].first);
+      i = j;
+    }
+  }
+  function instDraw(tgt, first, count) {
+    const o = first * 44;
+    gl.vertexAttribPointer(4, 4, gl.FLOAT, false, 44, o); gl.vertexAttribPointer(5, 4, gl.FLOAT, false, 44, o + 16); gl.vertexAttribPointer(6, 3, gl.FLOAT, false, 44, o + 32);
+    if (tgt.indexed) gl.drawElementsInstanced(gl.TRIANGLES, tgt.count, gl.UNSIGNED_INT, 0, count);
+    else gl.drawArraysInstanced(gl.TRIANGLES, 0, tgt.count, count);
+  }
+  // (Math.sqrt, not Math.hypot: hypot allocates an array for its arguments on every call)
+  function groundDistMax(b) { const dx = Math.max(Math.abs(cullCam[0] - b[0]), Math.abs(cullCam[0] - b[3])), dz = Math.max(Math.abs(cullCam[2] - b[2]), Math.abs(cullCam[2] - b[5])); return Math.sqrt(dx * dx + dz * dz); }
+  function groundDist(b) { const dx = Math.max(b[0] - cullCam[0], 0, cullCam[0] - b[3]), dz = Math.max(b[2] - cullCam[2], 0, cullCam[2] - b[5]); return Math.sqrt(dx * dx + dz * dz); }
   // runs of consecutive chunks of `src` that are visible (and pass `pred`), drawn with `tgt`'s geometry and instances
   function instRuns(src, tgt, maxD, pred) {
     const ch = src.chunks, n = ch.length, ok = c => (!cullOn || boxVisible(c.box, maxD)) && (!pred || pred(c));
+    if (tgt.inst) gl.bindBuffer(gl.ARRAY_BUFFER, tgt.instBuf);
     let i = 0;
     while (i < n) {
       if (!ok(ch[i])) { i++; continue; }
       let j = i + 1;
       while (j < n && ok(ch[j])) j++;
       const first = ch[i].first, count = ch[j - 1].first + ch[j - 1].count - first;
-      if (tgt.inst) {
-        gl.bindBuffer(gl.ARRAY_BUFFER, tgt.instBuf);
-        const o = first * 44;
-        gl.vertexAttribPointer(4, 4, gl.FLOAT, false, 44, o); gl.vertexAttribPointer(5, 4, gl.FLOAT, false, 44, o + 16); gl.vertexAttribPointer(6, 3, gl.FLOAT, false, 44, o + 32);
-        if (tgt.indexed) gl.drawElementsInstanced(gl.TRIANGLES, tgt.count, gl.UNSIGNED_INT, 0, count);
-        else gl.drawArraysInstanced(gl.TRIANGLES, 0, tgt.count, count);
-      } else gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_INT, first * 4);
+      if (tgt.inst) instDraw(tgt, first, count);
+      else gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_INT, first * 4);
       i = j;
     }
   }
@@ -1595,7 +1679,7 @@ function createRenderer(canvas) {
   }
   function texture(canvasOrImg, opts) {
     opts = opts || {};
-    const t = gl.createTexture();
+    const t = gl.createTexture(); tex0 = null;
     gl.bindTexture(gl.TEXTURE_2D, t);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     if (canvasOrImg.data && canvasOrImg.w) gl.texImage2D(gl.TEXTURE_2D, 0, opts.linear ? gl.RGBA8 : gl.SRGB8_ALPHA8, canvasOrImg.w, canvasOrImg.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, canvasOrImg.data);
@@ -1614,7 +1698,7 @@ function createRenderer(canvas) {
 
   // a stack of same-size layers { data, w, h, n } (rows bottom-up), repeating and mipmapped, read as u_arr
   function textureArray(L) {
-    const t = gl.createTexture();
+    const t = gl.createTexture(); tex0 = null;
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, t);
     gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.SRGB8_ALPHA8, L.w, L.h, L.n, 0, gl.RGBA, gl.UNSIGNED_BYTE, L.data);
     gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
@@ -1705,7 +1789,7 @@ function createRenderer(canvas) {
     F('u_fogCol', E.fogCol); F('u_cam', env.cam); F('u_exp', E.exp);
     F('u_zen', E.zen); F('u_hor', E.fogCol);
     F('u_fol', [E.folFade ? E.folFade[0] : 60, E.folFade ? E.folFade[1] : 90, (mir.on ? mir.samples : post.on ? post.samples : ldr.on ? ldr.samples : 0) > 1 ? 1 : 0]);
-    F('u_time', E.time); F('u_shOn', E.shadows ? 1 : 0); F('u_shTex', [1 / (2 * SHADOW), 1 / SHADOW]);
+    F('u_time', E.time); F('u_shOn', E.shadows ? 1 : 0); F('u_shTex', [1 / SHADOW, 1 / SHADOW]);
     F('u_r1', E.r1); F('u_r2', E.r2); F('u_r3', E.r3);
     F('u_lines', E.lines === 2 ? 2 : E.lines ? 1 : 0); F('u_icy', E.icy || 0);
     F('u_verge', E.verge || E.r3); F('u_tt', E.tt || [1, 1, 1]);
@@ -1725,9 +1809,10 @@ function createRenderer(canvas) {
     U('uniform2fv', 'u_fog', E.fog); U('uniform1f', 'u_hdr', env.hdr || 0); U('uniform1f', 'u_dirt', 0);
     U('uniform4f', 'u_lodB', -1e9, -1e9 + 1, 1e9, 1e9 + 1);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D_ARRAY, whiteArr);
-    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, shTex);
+    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, shTex[1]);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, shTex[0]);
     gl.activeTexture(gl.TEXTURE0);
-    litCur = null;
+    litCur = null; tex0 = null;
   }
   // a uniform that draws may change: kept (values copied) and set on every lit variant the first time it's used this frame
   function U(f, n, ...a) { litCalls.push(f, n, a.map(v => v && v.length != null ? Array.from(v) : v)); }
@@ -1735,20 +1820,23 @@ function createRenderer(canvas) {
   function drawLit(m, o) {
     if (m.instBuf && !m.inst) return; // an instanced mesh with none to draw this frame (the crowd out of view)
     o = o || {};
-    const u = litUse(litProg(o.mode || 0), o.mode || 0);
-    gl.uniformMatrix4fv(u.u_model, false, o.model || I4);
-    gl.uniform3fv(u.u_tint, o.tint || [1, 1, 1]);
-    gl.uniform1f(u.u_alpha, o.alpha == null ? 1 : o.alpha);
-    gl.uniform1f(u.u_sway, o.sway || 0);
-    if (o.dirt != null) { gl.uniform1f(u.u_dirt, o.dirt); gl.uniform1f(u.u_carY, o.carY || 0); gl.uniform3fv(u.u_dirtCol, o.dirtCol || [0.3, 0.25, 0.2]); }
+    const P = litProg(o.mode || 0), u = litUse(P, o.mode || 0);
+    if (!P.cM) { P.cM = new Float64Array(16).fill(NaN); P.cT = new Float64Array(3).fill(NaN); P.cA = P.cS = NaN; }
+    const mm = o.model || I4, tt = o.tint || ONE3, al = o.alpha == null ? 1 : o.alpha, sw = o.sway || 0, dd = o.dirt == null ? 0 : o.dirt;
+    if (!same(P.cM, mm, 16)) gl.uniformMatrix4fv(u.u_model, false, mm);
+    if (!same(P.cT, tt, 3)) gl.uniform3fv(u.u_tint, tt);
+    if (P.cA !== al) { P.cA = al; gl.uniform1f(u.u_alpha, al); }
+    if (P.cS !== sw) { P.cS = sw; gl.uniform1f(u.u_sway, sw); }
+    if (P.cD !== dd) { P.cD = dd; gl.uniform1f(u.u_dirt, dd); }
+    if (o.dirt != null) { gl.uniform1f(u.u_carY, o.carY || 0); gl.uniform3fv(u.u_dirtCol, o.dirtCol || [0.3, 0.25, 0.2]); }
     if (o.fog) gl.uniform2fv(u.u_fog, o.fog);
     if (o.fogLo) gl.uniform4fv(u.u_fogLo, o.fogLo);
     if (o.a2c) gl.enable(gl.SAMPLE_ALPHA_TO_COVERAGE);
-    gl.bindTexture(gl.TEXTURE_2D, o.tex || white);
+    const tx = o.tex || white; if (tx !== tex0) { tex0 = tx; gl.bindTexture(gl.TEXTURE_2D, tx); }
     if (o.arr) { gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D_ARRAY, o.arr); gl.activeTexture(gl.TEXTURE0); }
     if (o.fac) gl.uniform4fv(u['u_fac[0]'], o.fac);
     gl.bindVertexArray(m.vao);
-    if (!m.inst) { gl.vertexAttrib4f(4, 0, 0, 0, 0); gl.vertexAttrib4f(5, 1, 1, 0, 0); gl.vertexAttrib3f(6, 1, 1, 1); }
+    if (!m.inst && !cva) constAttrs();
     if (m.chunks) drawRuns(m);
     else if (m.inst) {
       if (m.indexed) gl.drawElementsInstanced(gl.TRIANGLES, m.count, gl.UNSIGNED_INT, 0, m.inst);
@@ -1760,14 +1848,16 @@ function createRenderer(canvas) {
     if (o.fog) gl.uniform2fv(u.u_fog, o.fogRestore);
     if (o.fogLo) gl.uniform4f(u.u_fogLo, 0, 0, 1, 0);
     if (o.a2c) gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);
-    if (o.dirt != null) gl.uniform1f(u.u_dirt, 0);
   }
+  // a plain mesh's instance attributes (4–6, arrays off): one instance at the origin, unscaled, white
+  function constAttrs() { gl.vertexAttrib4f(4, 0, 0, 0, 0); gl.vertexAttrib4f(5, 1, 1, 0, 0); gl.vertexAttrib3f(6, 1, 1, 1); cva = true; }
   function drawDepth(m, model) {
-    const u = prog.depth.U;
+    const D = prog.depth, u = D.U;
     if (m.instBuf && !m.inst) return;
-    gl.uniformMatrix4fv(u.u_model, false, model || I4);
+    if (!D.cM) D.cM = new Float64Array(16).fill(NaN);
+    if (!same(D.cM, model || I4, 16)) gl.uniformMatrix4fv(u.u_model, false, model || I4);
     gl.bindVertexArray(m.vao);
-    if (!m.inst) { gl.vertexAttrib4f(4, 0, 0, 0, 0); gl.vertexAttrib4f(5, 1, 1, 0, 0); }
+    if (!m.inst && !cva) constAttrs();
     if (m.chunks) drawRuns(m);
     else if (m.inst) {
       if (m.indexed) gl.drawElementsInstanced(gl.TRIANGLES, m.count, gl.UNSIGNED_INT, 0, m.inst);
@@ -1777,12 +1867,11 @@ function createRenderer(canvas) {
       else gl.drawArrays(gl.TRIANGLES, 0, m.count);
     }
   }
-  // cascade 0 = near (left half of the atlas), 1 = far (right half); call 0 first, it clears the whole atlas
+  // cascade 0 = near, 1 = far, each into its own map (a frame may redraw the near one and keep the far one)
   function beginShadow(cascade) {
     const c = cascade || 0, m = c ? env.svp2 : env.svp;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, shFbo);
-    if (!c) { gl.viewport(0, 0, SHADOW * 2, SHADOW); gl.clear(gl.DEPTH_BUFFER_BIT); }
-    gl.viewport(c * SHADOW, 0, SHADOW, SHADOW);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, shFbo[c]);
+    gl.viewport(0, 0, SHADOW, SHADOW); gl.clear(gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
     gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.5, 2.0);
     useProg(prog.depth.p);
@@ -1796,8 +1885,8 @@ function createRenderer(canvas) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
   function drawSky(E) {
-    const u = prog.sky.U;
-    useProg(prog.sky.p);
+    const S = env.lowq ? prog.skyLo : prog.sky, u = S.U;
+    useProg(S.p);
     gl.uniformMatrix4fv(u.u_ivp, false, env.ivp);
     gl.uniform3fv(u.u_cam, env.cam);
     gl.uniform3fv(u.u_zen, E.zen); gl.uniform3fv(u.u_hor, E.fogCol); gl.uniform3fv(u.u_sunDir, E.sunDir);

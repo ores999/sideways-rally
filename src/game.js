@@ -4,6 +4,12 @@
 const C = RallyCore, { M4, lin } = GFX;
 const $ = id => document.getElementById(id);
 const canvas = $('view');
+// the canvas' size in CSS pixels, kept by a ResizeObserver: read from the element every frame it forced a layout
+// right after the HUD's writes (the same for innerWidth / innerHeight, used for the name tags)
+const cvCss = { w: canvas.clientWidth, h: canvas.clientHeight, live: !!window.ResizeObserver };
+if (cvCss.live) new ResizeObserver(() => { cvCss.w = canvas.clientWidth; cvCss.h = canvas.clientHeight; }).observe(canvas);
+function cssW() { return cvCss.live ? cvCss.w : canvas.clientWidth; }
+function cssH() { return cvCss.live ? cvCss.h : canvas.clientHeight; }
 const clamp = C.clamp, lerp = C.lerp, wrapA = C.wrapA;
 
 let R = null;
@@ -1769,7 +1775,7 @@ function netDrawTransparent(E, mir) {
 function placeNetTags() {
   const box = $('netTags');
   if (!netRun() || !(mode === 'race' || mode === 'countdown' || mode === 'done') || $('hud').hidden) { if (box.childElementCount) { box.textContent = ''; if (net.race) for (const o of net.race.others.values()) o.tag = null; } return; }
-  const vp = R.env.vp, w0 = innerWidth, h0 = innerHeight;
+  const vp = R.env.vp, w0 = cssW(), h0 = cssH();
   for (const o of net.race.others.values()) {
     if (!o.tag) { o.tag = el('span', null, o.n); o.tag.style.background = o.col; box.append(o.tag); }
     const p = o.pose, d = o.dc;
@@ -1826,7 +1832,7 @@ function netHUD(dt) {
   for (const o of nr.others.values()) {
     if (!o.bar) { o.bar = el('em', 'np'); o.bar.style.background = o.col; $('hProgBar').append(o.bar); }
     o.bar.hidden = o.s == null || !!o.out;
-    if (o.s != null) o.bar.style.left = clamp((o.s - T.startS) / span, 0, 1) * 100 + '%';
+    if (o.s != null) { const v = `translateX(${(clamp((o.s - T.startS) / span, 0, 1) * progW.w).toFixed(1)}px)`; if (o.barT !== v) { o.barT = v; o.bar.style.transform = v; } }
   }
   net.hudT -= dt; if (net.hudT > 0) return; net.hudT = 0.25;
   box.hidden = false; box.textContent = '';
@@ -3112,6 +3118,20 @@ function spkPump() {
   for (const k of A.kicks) if (k <= t) p = Math.max(p, Math.exp(-(t - k) * 13));
   return p * 0.014;
 }
+// the fans within 110 m of the camera, weighted by distance: total weight, side (weighted, -1 left … 1 right) and
+// excitement. A small function of its own so the engine optimises it (inside updateAudio every number in this loop
+// over ~1100 fans was a fresh heap object)
+const crowdAcc = { w: 0, x: 0, e: 0 };
+function crowdNear(crx, crz) {
+  let cw = 0, cx = 0, ex = 0;
+  const F = S && S.fans, J = S && S.fanJump, px = cam.pos[0], pz = cam.pos[2];
+  if (F) for (let i = 0; i < F.length; i++) {
+    const f = F[i], fx2 = f.x - px, fz2 = f.z - pz, d2 = fx2 * fx2 + fz2 * fz2; if (d2 > 12100) continue;
+    const d = Math.sqrt(d2), w = Math.exp(-d / 24); cw += w; cx += w * (fx2 * crx + fz2 * crz) / Math.max(d, 1); ex += w * J[i];
+  }
+  crowdAcc.w = cw; crowdAcc.x = cx; crowdAcc.e = ex;
+  return crowdAcc;
+}
 function updateAudio(dt) {
   if (!A.ctx || !A.voice) return;
   const c = A.ctx, t = c.currentTime, Vc = A.voice, V = Vc.V, E = P.engine;
@@ -3235,11 +3255,7 @@ function updateAudio(dt) {
   if (racing && input.hb && !A.hbPrev) sfx.burst(t, 0.05, 'bandpass', 700, 2, 0.07);
   A.hbPrev = racing && input.hb;
   // ---- the crowd: louder the more fans are close to you, and when the car is passing them ----
-  let cw = 0, cx = 0, ex = 0;
-  if (S && S.fans) for (const f of S.fans) {
-    const fx2 = f.x - cam.pos[0], fz2 = f.z - cam.pos[2], d = Math.hypot(fx2, fz2); if (d > 110) continue;
-    const w = Math.exp(-d / 24); cw += w; cx += w * (fx2 * crx + fz2 * crz) / Math.max(d, 1); ex += w * f.jump;
-  }
+  const { w: cw, x: cx, e: ex } = crowdNear(crx, crz);
   // only out on the stage: in the menu the start-line crowd stays quiet
   const crowdL = (1 - Math.exp(-cw / 3)) * (racing || mode === 'done' ? 1 : 0), excite = cw > 0 ? ex / cw : 0;
   A.crowd.gain.setTargetAtTime(crowdL * (0.18 + 0.32 * excite) * (onboard ? 0.6 : 1), t, 0.25);
@@ -3580,7 +3596,7 @@ function updateCamera(dt) {
   let fovT = 60, rollT = 0;
   if (mode === 'menu' || mode === 'loading' || mode === 'boot') {
     const a = time * 0.14 + 2.2;
-    const wide = canvas.clientWidth > 760;
+    const wide = cssW() > 760;
     const r = wide ? 9.2 : 9.5;
     cam.pos = [vis.x + Math.sin(a) * r, vis.y + 1.9, vis.z + Math.cos(a) * r];
     const ang = Math.atan2(vis.x - cam.pos[0], vis.z - cam.pos[2]);
@@ -3657,7 +3673,7 @@ function updateCamera(dt) {
       fovT = clamp(2 * Math.atan(7 / Math.max(d, 1)) * 180 / Math.PI, 9, 62);
     }
   }
-  const asp = canvas.clientWidth / Math.max(1, canvas.clientHeight);
+  const asp = cssW() / Math.max(1, cssH());
   if (asp < 1.1 && cm !== 3) fovT *= 1 + clamp(1.1 - asp, 0, 0.65) * 0.6;
   cam.fov += (fovT - cam.fov) * (cam.snap ? 1 : Math.min(1, dt * 4));
   if (evt.land > 3) cam.shake = Math.max(cam.shake, Math.min(0.5, evt.land * 0.04));
@@ -3969,19 +3985,22 @@ function drawMinimap() {
   mm.beginPath(); mm.moveTo(0, -12); mm.lineTo(8, 9); mm.lineTo(0, 5); mm.lineTo(-8, 9); mm.closePath(); mm.fill(); mm.stroke();
   mm.restore();
 }
-function drawGauge() {
-  const g = gauge, w = 440, cx = 220, cy = 228, r = 172;
-  const E = P.engine, red = E.redline, maxR = Math.ceil((red + 700) / 1000) * 1000;
-  g.clearRect(0, 0, w, w);
+// the dial, ticks and figures only change with the car (redline), the gearbox and the fonts: drawn once into a layer of
+// their own. Each frame copies it and draws what moves on top (rpm arc, shift lights, speed, gear, boost), and skips
+// the whole thing when none of those changed; the full dial was ~25 text draws a frame
+const gaugeL = { cv: null, key: '', dyn: '' };
+function gaugeStatic(E, maxR, na) {
+  const key = `${E.redline}|${maxR}|${na}|${settings.gearbox}|${document.fonts ? document.fonts.status : ''}`;
+  if (gaugeL.key === key) return gaugeL.cv;
+  const cv = gaugeL.cv || (gaugeL.cv = document.createElement('canvas')); cv.width = cv.height = 440;
+  const g = cv.getContext('2d'), cx = 220, cy = 228, r = 172, red = E.redline;
+  const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25, ang = v => a0 + (a1 - a0) * v / maxR;
+  g.clearRect(0, 0, 440, 440);
   g.fillStyle = 'rgba(11,14,19,0.82)'; g.beginPath(); g.arc(cx, cy, r + 30, 0, 7); g.fill();
   g.strokeStyle = 'rgba(236,232,220,0.14)'; g.lineWidth = 2; g.stroke();
-  const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
-  const ang = v => a0 + (a1 - a0) * v / maxR;
   g.lineCap = 'butt';
   g.lineWidth = 16; g.strokeStyle = 'rgba(236,232,220,0.12)'; g.beginPath(); g.arc(cx, cy, r, a0, a1); g.stroke();
   g.strokeStyle = 'rgba(255,93,79,0.5)'; g.beginPath(); g.arc(cx, cy, r, ang(red), a1); g.stroke();
-  const rpm = clamp(car.rpm, 0, maxR);
-  g.strokeStyle = rpm > red - 150 ? '#ff5d4f' : '#ffd23a'; g.beginPath(); g.arc(cx, cy, r, a0, ang(rpm)); g.stroke();
   g.fillStyle = 'rgba(236,232,220,0.7)'; g.font = '600 24px "Barlow Semi Condensed", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
   const step = maxR > 12000 ? 2000 : 1000; // the F1 revs to 19,000: a figure every two thousand
   for (let k = 0; k <= maxR / 1000; k += step / 1000) {
@@ -3989,49 +4008,72 @@ function drawGauge() {
     g.strokeStyle = 'rgba(236,232,220,0.6)'; g.lineWidth = 3; g.beginPath(); g.moveTo(cx + Math.cos(a) * (r - 14), cy + Math.sin(a) * (r - 14)); g.lineTo(cx + Math.cos(a) * (r - 26), cy + Math.sin(a) * (r - 26)); g.stroke();
     g.fillText(String(k), cx + Math.cos(a) * (r - 46), cy + Math.sin(a) * (r - 46));
   }
+  g.fillStyle = 'rgba(236,232,220,0.55)'; g.font = '700 21px "Barlow Semi Condensed", sans-serif'; g.fillText('KM/H', cx, cy + 44);
+  g.fillStyle = 'rgba(236,232,220,0.6)'; g.font = '700 18px "Barlow Semi Condensed", sans-serif';
+  g.fillText(settings.gearbox === 'manual' ? 'MAN' : 'AUTO', cx + 62, cy + 95);
+  g.fillStyle = 'rgba(236,232,220,0.12)'; g.fillRect(cx - 120, cy + 128, 240, 8);
+  gaugeL.key = key; gaugeL.dyn = '';
+  return cv;
+}
+function drawGauge() {
+  const g = gauge, cx = 220, cy = 228, r = 172;
+  const E = P.engine, red = E.redline, maxR = Math.ceil((red + 700) / 1000) * 1000;
+  const na = !E.boostBar, bg = gaugeStatic(E, maxR, na);
+  const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
+  const ang = v => a0 + (a1 - a0) * v / maxR;
+  const rpm = clamp(car.rpm, 0, maxR), hot = rpm > red - 150;
   // shift lights
   const on = clamp((rpm - (red - 1500)) / 1300, 0, 1) * 5;
   const flash = rpm > red - 200 && Math.floor(time * 16) % 2 === 0;
+  const kmh = Math.round(Math.abs(car.vF) * 3.6);
+  const gear = car.gear < 0 ? 'R' : (Math.abs(car.vF) < 0.5 && input.thr < 0.1 && settings.gearbox !== 'manual' ? 'N' : String(car.gear));
+  // boost (a normally aspirated engine shows the throttle instead)
+  const bar = na ? clamp(car.thrE || 0, 0, 1) : clamp(car.boost, 0, 1);
+  const btxt = na ? `THROTTLE ${Math.round(bar * 100)} %` : `BOOST ${(car.boost * E.boostBar).toFixed(1)} BAR`;
+  const dyn = `${Math.round(rpm / maxR * 1500)}|${hot}|${Math.ceil(on)}|${flash}|${kmh}|${gear}|${hot && mode === 'race'}|${Math.round(bar * 480)}|${btxt}`;
+  if (dyn === gaugeL.dyn) return;
+  gaugeL.dyn = dyn;
+  g.clearRect(0, 0, 440, 440); g.drawImage(bg, 0, 0);
+  g.lineCap = 'butt'; g.lineWidth = 16;
+  g.strokeStyle = hot ? '#ff5d4f' : '#ffd23a'; g.beginPath(); g.arc(cx, cy, r, a0, ang(rpm)); g.stroke();
   for (let i = 0; i < 5; i++) {
     const lit = flash || i < on;
     g.fillStyle = !lit ? 'rgba(236,232,220,0.12)' : (i < 2 ? '#49d686' : i < 4 ? '#ffd23a' : '#ff5d4f');
     if (flash) g.fillStyle = '#ff5d4f';
     g.beginPath(); g.arc(cx - 64 + i * 32, cy - 82, 10, 0, 7); g.fill();
   }
-  const kmh = Math.round(Math.abs(car.vF) * 3.6);
+  g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillStyle = '#efece4'; g.font = '700 92px "Chivo Mono", monospace'; g.fillText(String(kmh), cx, cy - 8);
-  g.fillStyle = 'rgba(236,232,220,0.55)'; g.font = '700 21px "Barlow Semi Condensed", sans-serif'; g.fillText('KM/H', cx, cy + 44);
-  const gear = car.gear < 0 ? 'R' : (Math.abs(car.vF) < 0.5 && input.thr < 0.1 && settings.gearbox !== 'manual' ? 'N' : String(car.gear));
-  g.fillStyle = rpm > red - 150 && mode === 'race' ? '#ff5d4f' : '#ffd23a';
+  g.fillStyle = hot && mode === 'race' ? '#ff5d4f' : '#ffd23a';
   g.fillRect(cx - 30, cy + 66, 60, 54);
   g.fillStyle = '#16130a'; g.font = '900 46px "Big Shoulders Display", sans-serif'; g.fillText(gear, cx, cy + 95);
-  g.fillStyle = 'rgba(236,232,220,0.6)'; g.font = '700 18px "Barlow Semi Condensed", sans-serif';
-  g.fillText(settings.gearbox === 'manual' ? 'MAN' : 'AUTO', cx + 62, cy + 95);
-  // boost (a normally aspirated engine shows the throttle instead)
-  const na = !E.boostBar, bar = na ? clamp(car.thrE || 0, 0, 1) : clamp(car.boost, 0, 1);
-  g.textAlign = 'center';
-  g.fillStyle = 'rgba(236,232,220,0.12)'; g.fillRect(cx - 120, cy + 128, 240, 8);
   g.fillStyle = na ? '#49d686' : '#8fb6ff'; g.fillRect(cx - 120, cy + 128, 240 * bar, 8);
-  g.fillStyle = 'rgba(236,232,220,0.6)'; g.font = '700 16px "Barlow Semi Condensed", sans-serif'; g.fillText(na ? `THROTTLE ${Math.round(bar * 100)} %` : `BOOST ${(car.boost * E.boostBar).toFixed(1)} BAR`, cx, cy + 152);
+  g.fillStyle = 'rgba(236,232,220,0.6)'; g.font = '700 16px "Barlow Semi Condensed", sans-serif'; g.fillText(btxt, cx, cy + 152);
 }
 let deltaT = 0;
+// the HUD writes only what changed, and moves things with transforms: a width or a left set every frame meant a
+// layout every frame. The progress bar's width in px comes from a ResizeObserver
+const hudV = {}, progW = { w: 0 };
+function hudSet(id, k, v) { const c = id + k; if (hudV[c] === v) return; hudV[c] = v; $(id).style[k] = v; }
+function progAt(id, f) { hudSet(id, 'transform', `translateX(${(clamp(f, 0, 1) * (progW.w || (progW.w = $('hProgBar').clientWidth))).toFixed(1)}px)`); }
+if (window.ResizeObserver) new ResizeObserver(() => { progW.w = $('hProgBar').clientWidth; for (const k in hudV) if (k.endsWith('transform')) delete hudV[k]; }).observe($('hProgBar'));
 function updateHUD(dt) {
   const T = W.T;
   const laps = lapsOn();
   const t = mode === 'done' ? finishT : mode === 'countdown' ? 0 : raceT - (laps ? lap.t0 : 0);
-  $('hTime').textContent = fmt(t);
+  const tt = fmt(t); if (hudV.time !== tt) { hudV.time = tt; $('hTime').textContent = tt; }
   const span = laps ? T.lap : T.finishS - T.startS;
   const prog = clamp((car.s - (laps ? lap.next - T.lap : T.startS)) / span, 0, 1);
-  $('hProg').style.width = (prog * 100) + '%';
+  hudSet('hProg', 'clipPath', `inset(0 ${((1 - prog) * 100).toFixed(2)}% 0 0 round 3px)`);
   if (settings.ghost && !laps && (mode === 'race' || mode === 'done')) {
     const rs = rival.sArr[clamp(Math.floor(raceT / 0.05) - 1, 0, rival.sArr.length - 1)];
-    $('hRival').style.left = clamp((rs - T.startS) / span, 0, 1) * 100 + '%'; $('hRival').hidden = false;
-    if (pb) { const bs = pb.sArr[clamp(Math.floor(raceT / 0.05) - 1, 0, pb.sArr.length - 1)]; $('hPB').style.left = clamp((bs - T.startS) / span, 0, 1) * 100 + '%'; }
-    if (chal) { const cs = chal.sArr[clamp(Math.floor(raceT / 0.05) - 1, 0, chal.sArr.length - 1)]; $('hChal').style.left = clamp((cs - T.startS) / span, 0, 1) * 100 + '%'; }
+    progAt('hRival', (rs - T.startS) / span); $('hRival').hidden = false;
+    if (pb) { const bs = pb.sArr[clamp(Math.floor(raceT / 0.05) - 1, 0, pb.sArr.length - 1)]; progAt('hPB', (bs - T.startS) / span); }
+    if (chal) { const cs = chal.sArr[clamp(Math.floor(raceT / 0.05) - 1, 0, chal.sArr.length - 1)]; progAt('hChal', (cs - T.startS) / span); }
   } else { $('hRival').hidden = true; $('hPB').hidden = true; $('hChal').hidden = true; }
   const showLead = settings.leadGhost && lead && !laps && (mode === 'race' || mode === 'done');
   $('hLead').hidden = !showLead;
-  if (showLead) { const ls = lead.sArr[clamp(Math.floor(raceT / 0.05) - 1, 0, lead.sArr.length - 1)]; $('hLead').style.left = clamp((ls - T.startS) / span, 0, 1) * 100 + '%'; }
+  if (showLead) { const ls = lead.sArr[clamp(Math.floor(raceT / 0.05) - 1, 0, lead.sArr.length - 1)]; progAt('hLead', (ls - T.startS) / span); }
   deltaT -= dt;
   if (deltaT <= 0) {
     deltaT = 0.1;
@@ -4144,7 +4186,7 @@ const resFloor = () => gq().res ? 0.6 : gq().scenery ? 0.9 : 0.7; // never under
 function resize() {
   const out = Math.min(window.devicePixelRatio || 1, 2), dpr = out * RES_K[gq().res] * dyn.scale;
   dyn.dpr = dpr;
-  const w = Math.max(1, Math.floor(canvas.clientWidth * out)), h = Math.max(1, Math.floor(canvas.clientHeight * out));
+  const w = Math.max(1, Math.floor(cssW() * out)), h = Math.max(1, Math.floor(cssH() * out));
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   const k = dpr / out;
   dyn.sw = k > 0.98 ? w : Math.max(1, Math.round(w * k)); dyn.sh = k > 0.98 ? h : Math.max(1, Math.round(h * k));
@@ -4272,11 +4314,14 @@ function tick(dt, doRender) {
 }
 
 const ghostP = {}, spkT = M4.create(), spkM = M4.create();
+let flatUI = null; // the panels' frosted glass is off below Quality (body.flat, page.html)
+let frameN = 0; const shFar = { S: null, n: -9, x: 0, z: 0, t: 0 }; // the far shadow cascade: when and where it was drawn
 function render() {
-  resize();
+  resize(); frameN++;
   const E = S.E;
   const G = gq();
   E.time = time; E.shadows = G.shadows; R.env.lowq = G.detail === false;
+  const flat = !(G.post && G.rays); if (flat !== flatUI) { flatUI = flat; document.body.classList.toggle('flat', flat); }
   const w = dyn.sw, h = dyn.sh;
   M4.persp(proj, cam.fov * Math.PI / 180, w / h, (camMode() === 2 || camMode() === 5) && mode !== 'menu' ? 0.08 : 0.25, 4500);
   M4.lookAt(view, cam.pos, cam.look, cam.up);
@@ -4317,9 +4362,16 @@ function render() {
       M4.mul(out, lightProj, lightView);
       return texel;
     };
-    const t0 = cascade(R.env.svp, 16, 7, 200), t1 = cascade(R.env.svp2, 70, 30, 200);
-    R.env.shNo = [t0 * 1.2, t1 * 1.2];
-    for (let k = 0; k < 2; k++) {
+    // The far cascade is in world space, so the one drawn a frame ago still lands where it should: it's redrawn every
+    // other frame (~half the shadow pass), at once when it would have moved more than 6 m (a reset, a new stage) or
+    // when it was skipped for a while (shadows switched off), and every frame in an online race (the others' cars cast
+    // into it). Your own car is always inside the near cascade, drawn every frame
+    const t0 = cascade(R.env.svp, 16, 7, 200);
+    const fcx = vis.x + fx * 30, fcz = vis.z + fz * 30;
+    const farDue = shFar.S !== S || frameN - shFar.n !== 1 || Math.hypot(fcx - shFar.x, fcz - shFar.z) > 6 || netRun();
+    if (farDue) { shFar.t = cascade(R.env.svp2, 70, 30, 200); shFar.S = S; shFar.n = frameN; shFar.x = fcx; shFar.z = fcz; }
+    R.env.shNo = [t0 * 1.2, shFar.t * 1.2];
+    for (let k = 0; k < (farDue ? 2 : 1); k++) {
       R.beginShadow(k);
       for (const c of S.shadowCasters) if (G.scenery || !(S.fanMeshes && S.fanMeshes.has(c.m))) R.drawDepth(c.m, c.model);
       R.drawDepth(carModel.body, carMat);
@@ -4451,7 +4503,7 @@ function mirrorBox() {
   // and whenever the canvas changes size, not every frame (that would force a layout)
   const b = mirBox;
   if (b.t > performance.now() && b.cw === canvas.width && b.ch === canvas.height) return b;
-  const el = $('hMirror'), r = el.getBoundingClientRect(), k = canvas.width / (canvas.clientWidth || 1);
+  const el = $('hMirror'), r = el.getBoundingClientRect(), k = canvas.width / (cssW() || 1);
   b.w = Math.round(el.clientWidth * k); b.h = Math.round(el.clientHeight * k);
   b.x = Math.round((r.left + el.clientLeft) * k); b.y = canvas.height - Math.round((r.top + el.clientTop) * k) - b.h;
   b.rad = MIR_RAD * k; b.t = performance.now() + 500; b.cw = canvas.width; b.ch = canvas.height;
@@ -4488,7 +4540,7 @@ function placeLeadTag(p) {
   const nx = (vp[0] * p.x + vp[4] * y + vp[8] * p.z + vp[12]) / w, ny = (vp[1] * p.x + vp[5] * y + vp[9] * p.z + vp[13]) / w;
   if (Math.abs(nx) > 1.1 || Math.abs(ny) > 1.1) { tag.hidden = true; return; }
   const txt = `No. 1 · ${lead.n} · ${fmt(lead.t)}`; if (tag.textContent !== txt) tag.textContent = txt;
-  tag.hidden = false; tag.style.transform = `translate(${((nx * 0.5 + 0.5) * innerWidth).toFixed(1)}px, ${((0.5 - ny * 0.5) * innerHeight).toFixed(1)}px) translate(-50%, -100%)`;
+  tag.hidden = false; tag.style.transform = `translate(${((nx * 0.5 + 0.5) * cssW()).toFixed(1)}px, ${((0.5 - ny * 0.5) * cssH()).toFixed(1)}px) translate(-50%, -100%)`;
   tag.style.opacity = String(clamp((d - 5) / 6, 0, 1) * clamp((160 - d) / 40, 0, 1));
 }
 function mixLight(E) {
