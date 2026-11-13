@@ -3545,11 +3545,19 @@ let tvSpots = [];
 function buildTvSpots() {
   const T = W.T; tvSpots = [];
   const cols = W.O.cols, city = !!W.st.town;
+  // Monaco's tunnel (world.js: walls 6.4 m off the axis, the ceiling 6.6 m up) has no camera walls: beside and over
+  // the tube is rock to the sight lines, and a camera in it hangs under the ceiling on the outside of the bend (on the
+  // pavement by the wall, the wall filled a third of the shot)
+  const LP = city && W.O.street, at = LP && W.st.street.at;
+  const tun = at && at.tunnel0 != null ? [Math.round(at.tunnel0 * LP.N), Math.round(at.tunnel1 * LP.N)] : null;
+  const tubeAt = (x, z, m = 0) => { const n = C.loopNear(LP, x, z, 30); return n.s >= tun[0] - m && n.s <= tun[1] + m ? n : null; };
+  const inRock = (x, y, z) => { if (!tun) return false; const n = tubeAt(x, z); return !!n && (n.d > 6.2 || y > LP.Y[n.s] + 6.4); };
   const blocked = (ax, ay, az, bx, by, bz) => {
     if (C.rayWalls(W, ax, az, bx, bz) < 1) return true;
     const n = 14;
     for (let i = 1; i < n; i++) {
       const t = i / n, x = ax + (bx - ax) * t, z = az + (bz - az) * t, y = ay + (by - ay) * t;
+      if (inRock(x, y, z)) return true;
       const gx = Math.floor(x / C.CELL), gz = Math.floor(z / C.CELL);
       for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
         const arr = cols.get(C.hkey(gx + a, gz + b)); if (!arr) continue;
@@ -3567,14 +3575,22 @@ function buildTvSpots() {
   let side = 1;
   for (let s = 70; s < T.L - 30; s += 75) {
     let best = null;
+    const p = C.sampleAt(T, s), tube = tun && tubeAt(p.x, p.z, 6);
+    // in the tunnel (or a few metres out of a portal): under the ceiling over the kerb, the outside of the bend first
+    // (it sees furthest round it)
+    let sides = [side, -side], offs = city ? [1.4, 2.6] : [6.5, 9, 12], hgts = city ? [2.2, 9.6] : [4, 7];
+    if (tube) {
+      const dh = Math.atan2(Math.sin(C.sampleAt(T, s + 30).h - C.sampleAt(T, s - 30).h), Math.cos(C.sampleAt(T, s + 30).h - C.sampleAt(T, s - 30).h));
+      sides = dh > 0 ? [1, -1] : [-1, 1]; offs = [0.1]; hgts = [5.3, 4.2];
+    }
     // in the city: a cameraman on the sidewalk, under the trees, or a first-floor window over them
-    for (const sd of [side, -side]) for (const off of city ? [1.4, 2.6] : [6.5, 9, 12]) for (const hgt of city ? [2.2, 9.6] : [4, 7]) {
+    for (const sd of sides) for (const off of offs) for (const hgt of hgts) {
       if (best) break;
-      const p = C.sampleAt(T, s); const rx = -Math.cos(p.h) * sd, rz = Math.sin(p.h) * sd;
+      const rx = -Math.cos(p.h) * sd, rz = Math.sin(p.h) * sd;
       const x = p.x + rx * (T.hw + off), z = p.z + rz * (T.hw + off);
-      const y = Math.max(C.terrainH(W.TR, x, z), p.y) + hgt;
-      let ok = true;
-      for (const ds of city ? [-60, -30, 0, 20] : [-25, 0, 25, 45]) { const q = C.sampleAt(T, s + ds); if (blocked(x, y, z, q.x, q.y + 1, q.z)) { ok = false; break; } }
+      const y = (tube ? p.y : Math.max(C.terrainH(W.TR, x, z), p.y)) + hgt;
+      let ok = !inRock(x, y, z);
+      if (ok) for (const ds of city ? [-60, -30, 0, 20] : [-25, 0, 25, 45]) { const q = C.sampleAt(T, s + ds); if (blocked(x, y, z, q.x, q.y + 1, q.z)) { ok = false; break; } }
       if (ok) best = { s, x, y, z };
     }
     if (best) tvSpots.push(best);
@@ -4582,5 +4598,5 @@ if (location.protocol === 'file:') window.__rally = {
   setDirt(v) { dirt = v; },
   // graphics: a preset name or levels to mix into the current ones; draw(n) renders the same frame n times
   gfx(v) { if (typeof v === 'string') setGfx(v); else if (v) { settings.g = Object.assign({}, gq(), v); settings.gfx = 'custom'; applyGfx(true); } return { gfx: settings.gfx, g: gq(), auto: gAuto.lv, scale: dyn.scale, w: dyn.sw, h: dyn.sh }; },
-  draw(n) { for (let i = 0; i < n; i++) render(); }, get R() { return R; }, get S() { return S; }, get mode() { return mode; }, get dbg() { return { dirt, hitFlash, dust: dust.n, chips: chips.n, hitK: S.E.hitK, shake: cam.shake, evt: Object.assign({}, evt) }; }, get car() { return car; }, get W() { return W; }, startRace, settings, keys, toMenu, get raceT() { return raceT; }, get finishT() { return finishT; }, get rp() { return rp; }, get rec() { return rec; }, get cam() { return cam; }, startReplay, repSeek, repExit, net, netJoin, netCreate, netStart, netLeave, netRows: () => (netRun() ? netRows() : null) };
+  draw(n) { for (let i = 0; i < n; i++) render(); }, get R() { return R; }, get S() { return S; }, get mode() { return mode; }, get dbg() { return { dirt, hitFlash, dust: dust.n, chips: chips.n, hitK: S.E.hitK, shake: cam.shake, evt: Object.assign({}, evt) }; }, get car() { return car; }, get W() { return W; }, startRace, settings, keys, toMenu, get raceT() { return raceT; }, get finishT() { return finishT; }, get rp() { return rp; }, get rec() { return rec; }, get cam() { return cam; }, get tvSpots() { return tvSpots; }, startReplay, repSeek, repExit, net, netJoin, netCreate, netStart, netLeave, netRows: () => (netRun() ? netRows() : null) };
 })();
