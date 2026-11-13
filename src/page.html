@@ -283,9 +283,9 @@ dl.spec dd em { font-style: normal; color: var(--mute); }
 .stagebar .nm { font-family: var(--f-display); font-weight: 800; font-size: 20px; letter-spacing: 0.06em; text-transform: uppercase; text-shadow: 0 1px 10px rgba(0,0,0,.6); }
 .stagebar .nm em { font-style: normal; color: var(--accent); margin-left: 8px; font-size: 15px; }
 .prog { position: relative; height: 6px; background: rgba(0,0,0,.45); border-radius: 3px; box-shadow: inset 0 0 0 1px var(--line); }
-.prog i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--signal); border-radius: 3px; }
+.prog i { position: absolute; left: 0; top: 0; bottom: 0; width: 100%; background: var(--signal); border-radius: 3px; clip-path: inset(0 100% 0 0 round 3px); }
 .prog b { position: absolute; top: -3px; width: 2px; height: 12px; background: var(--paper); opacity: .7; }
-.prog em { position: absolute; top: -4px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; border: 2px solid #b8d3ff; box-sizing: border-box; }
+.prog em { position: absolute; left: 0; top: -4px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; border: 2px solid #b8d3ff; box-sizing: border-box; }
 .prog em.pb { border-color: var(--gold); }
 .prog em.ch { border-color: #ff6b8a; }
 .prog em.ld { border-color: #ffd36a; background: #ffd36a; box-shadow: 0 0 8px rgba(255, 211, 106, .7); }
@@ -351,6 +351,10 @@ dl.spec dd em { font-style: normal; color: var(--mute); }
 
 /* ---------- overlays ---------- */
 .overlay { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; background: radial-gradient(ellipse at 50% 45%, rgba(6, 8, 11, 0.35), rgba(6, 8, 11, 0.7)); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+/* Frosted glass only at Quality: the browser blurs what's under each glass panel again on every frame the 3D view
+   changes (on a laptop's integrated chip that's a pass per panel). Below it the panels are a little more opaque instead */
+body.flat { --glass: none; --panel: rgba(12, 15, 20, 0.82); }
+body.flat .overlay { backdrop-filter: none; -webkit-backdrop-filter: none; background: radial-gradient(ellipse at 50% 45%, rgba(6, 8, 11, 0.45), rgba(6, 8, 11, 0.78)); }
 .card { width: min(460px, 100%); box-sizing: border-box; padding: 22px; background: linear-gradient(180deg, rgba(24, 29, 37, 0.94), rgba(14, 17, 22, 0.96)); border: 1px solid var(--line-2); border-radius: 12px; display: flex; flex-direction: column; gap: 16px; box-shadow: var(--sheen), 0 30px 80px rgba(0,0,0,.5); max-height: calc(100% - 32px); overflow-y: auto; }
 .res-time { font-family: var(--f-mono); font-weight: 700; font-size: 54px; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
 .res-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
