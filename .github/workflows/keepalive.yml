@@ -1,0 +1,39 @@
+# Keeps the online board's Supabase project awake: the free plan pauses a project after about a week without requests
+# (it did on 2026-11-12: friends' times and online rooms went down). Once a day this reads one row of the board through
+# the REST API, with the same project URL and publishable key the game uses (ONLINE in src/game.js). If the project
+# doesn't answer (paused, deleted, down) the run fails and GitHub emails the repo owner.
+# Note: GitHub turns scheduled workflows off in a public repo after 60 days without commits (it emails first);
+# re-enable it from the Actions tab.
+name: Keep Supabase awake
+
+on:
+  schedule:
+    - cron: '23 12 * * *'   # every day, 09:23 in Buenos Aires
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: src/game.js
+          sparse-checkout-cone-mode: false
+      - name: Read one row of the board
+        run: |
+          line=$(grep -m1 "^const ONLINE = " src/game.js)
+          url=$(printf '%s' "$line" | sed -E "s/.*url: '([^']*)'.*/\1/")
+          key=$(printf '%s' "$line" | sed -E "s/.*key: '([^']*)'.*/\1/")
+          if [ -z "$url" ] || [ -z "$key" ]; then echo "No ONLINE config in src/game.js: nothing to keep awake"; exit 0; fi
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -H "apikey: $key" "$url/rest/v1/best_times?select=stage&limit=1" || true)
+            echo "try $i: HTTP $code"
+            [ "$code" = 200 ] && exit 0
+            sleep 60
+          done
+          echo "::error::The Supabase project didn't answer (paused or down?). Resume it at https://supabase.com/dashboard"
+          exit 1

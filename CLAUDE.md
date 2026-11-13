@@ -11,6 +11,7 @@ A browser rally game in a single HTML file. It has 6 stages (each also in revers
 - Public repo: https://github.com/ores999/sideways-rally (gh CLI is logged in as `ores999`). Played by the owner's friends at https://ores999.github.io/sideways-rally/.
 - **Every push to `main` goes live**: `.github/workflows/pages.yml` runs `build.py` and deploys `dist/test.html` as `index.html` to GitHub Pages. Only push builds that work. `dist/` is in `.gitignore`.
 - The menu has a small "GitHub ↗" link to the repo (`.brand`/`.repo` in page.html).
+- **Supabase keep-alive** (2026-11-13): the free plan pauses the project after ~7 days without requests (it did on 2026-11-12: the host gave NXDOMAIN, friends' times and rooms went down; resumed from the dashboard the next day, data intact). `.github/workflows/keepalive.yml` reads one row of `best_times` every day at 12:23 UTC with the URL and key from `ONLINE` in game.js (3 tries); a failed run means the project is paused or down, and GitHub emails the owner. GitHub turns schedules off in a public repo after 60 days without commits (re-enable in the Actions tab). Pushing it also redeploys Pages (same build).
 
 ## Layout
 ```
